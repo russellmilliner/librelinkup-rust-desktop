@@ -1363,7 +1363,6 @@ inline void inspect_item_tree(
         QStringLiteral("displaySettingsCard"),
         QStringLiteral("alertsSettingsCard"),
         QStringLiteral("accountSecurityCard"),
-        QStringLiteral("supportAboutCard"),
         QStringLiteral("aboutHeaderCard"),
         QStringLiteral("aboutLinksCard"),
         QStringLiteral("overlayPill"),

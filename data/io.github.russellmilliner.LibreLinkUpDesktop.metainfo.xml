@@ -1,0 +1,29 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<component type="desktop-application">
+  <id>io.github.russellmilliner.LibreLinkUpDesktop</id>
+  <name>LibreLinkUp Desktop</name>
+  <summary>KDE Plasma 6 Blood Glucose Monitor for LibreLinkUp</summary>
+  <metadata_license>CC0-1.0</metadata_license>
+  <project_license>Apache-2.0</project_license>
+  <developer id="io.github.russellmilliner">
+    <name>Russell Milliner</name>
+  </developer>
+  <description>
+    <p>
+      Native Rust + KDE Plasma 6 Kirigami desktop client for monitoring continuous glucose readings from LibreLinkUp.
+    </p>
+    <ul>
+      <li>AES-256-GCM + PBKDF2-HMAC-SHA256 encrypted credential storage</li>
+      <li>Dynamic system tray badge showing live blood glucose value and/or rich hover tooltip</li>
+      <li>Native KDE Plasma 6 Light, Dark, and System theme support</li>
+      <li>Interactive 12-hour CGM trend graph and floating desktop overlay widget</li>
+      <li>Built-in diagnostic Log Viewer with filtering, search, and export</li>
+    </ul>
+  </description>
+  <launchable type="desktop-id">io.github.russellmilliner.LibreLinkUpDesktop.desktop</launchable>
+  <url type="homepage">https://github.com/russellmilliner/librelinkup-kde</url>
+  <content_rating type="oars-1.1" />
+  <releases>
+    <release version="0.2.0" date="2026-10-19"/>
+  </releases>
+</component>

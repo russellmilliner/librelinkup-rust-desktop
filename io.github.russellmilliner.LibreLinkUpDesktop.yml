@@ -1,0 +1,42 @@
+app-id: io.github.russellmilliner.LibreLinkUpDesktop
+runtime: org.kde.Platform
+runtime-version: '6.11'
+sdk: org.kde.Sdk
+sdk-extensions:
+  - org.freedesktop.Sdk.Extension.rust-stable
+  - org.freedesktop.Sdk.Extension.llvm22
+command: librelinkup-kde
+finish-args:
+  - --share=ipc
+  - --share=network
+  - --socket=wayland
+  - --socket=fallback-x11
+  - --device=dri
+  - --talk-name=org.kde.StatusNotifierWatcher
+  - --talk-name=org.freedesktop.Notifications
+  - --filesystem=xdg-config/kdeglobals:ro
+  - --filesystem=xdg-config/librelinkup-kde:create
+  - --filesystem=xdg-data/librelinkup-kde:create
+  - --filesystem=xdg-config/autostart:create
+  - --filesystem=~/.var/app/rocks.poopjournal.librelinkupdesktop:ro
+
+build-options:
+  append-path: /usr/lib/sdk/rust-stable/bin:/usr/lib/sdk/llvm22/bin
+  env:
+    CARGO_HOME: /run/build/librelinkup-kde/cargo
+
+modules:
+  - name: librelinkup-kde
+    buildsystem: simple
+    build-options:
+      build-args:
+        - --share=network
+    build-commands:
+      - cargo build --release
+      - install -Dm755 target/release/librelinkup-kde /app/bin/librelinkup-kde
+      - install -Dm644 data/io.github.russellmilliner.LibreLinkUpDesktop.desktop /app/share/applications/io.github.russellmilliner.LibreLinkUpDesktop.desktop
+      - install -Dm644 data/io.github.russellmilliner.LibreLinkUpDesktop.metainfo.xml /app/share/metainfo/io.github.russellmilliner.LibreLinkUpDesktop.metainfo.xml
+      - install -Dm644 data/icons/io.github.russellmilliner.LibreLinkUpDesktop.svg /app/share/icons/hicolor/scalable/apps/io.github.russellmilliner.LibreLinkUpDesktop.svg
+    sources:
+      - type: dir
+        path: .

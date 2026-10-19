@@ -1,0 +1,11 @@
+[Desktop Entry]
+Name=LibreLinkUp Desktop
+Comment=KDE Plasma 6 Blood Glucose Monitor for LibreLinkUp
+Exec=librelinkup-kde
+Icon=io.github.russellmilliner.LibreLinkUpDesktop
+Terminal=false
+Type=Application
+Categories=Utility;MedicalSoftware;Qt;KDE;
+StartupNotify=true
+StartupWMClass=io.github.russellmilliner.LibreLinkUpDesktop
+Keywords=glucose;blood sugar;librelinkup;cgm;diabetes;kde;

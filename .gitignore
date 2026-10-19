@@ -1,0 +1,10 @@
+/target
+/.flatpak-builder
+/flatpak-build
+/flatpak-repo
+*.flatpak
+*.sha256
+*.enc
+*.enc.json
+*.key
+*.log

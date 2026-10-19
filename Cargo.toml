@@ -1,0 +1,38 @@
+[package]
+name = "librelinkup-kde"
+version = "0.2.0"
+edition = "2021"
+license = "Apache-2.0"
+description = "KDE Plasma 6 / Kirigami Blood Glucose Monitor for LibreLinkUp"
+homepage = "https://github.com/russellmilliner/librelinkup-kde"
+repository = "https://github.com/russellmilliner/librelinkup-kde"
+
+[lib]
+name = "librelinkup_core"
+path = "src/lib.rs"
+
+[[bin]]
+name = "librelinkup-kde"
+path = "src/main.rs"
+
+[dependencies]
+# Qt 6 / QML Bridge (KDAB CXX-Qt)
+cxx = "1.0.130"
+cxx-qt = "0.7.2"
+cxx-qt-lib = { version = "0.7.2", features = ["qt_gui", "qt_qml"] }
+
+# Async Runtime & HTTP Client
+tokio = { version = "1.41", features = ["rt-multi-thread", "macros", "sync", "time", "net", "io-util"] }
+reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls", "blocking"] }
+
+# Authenticated Encryption (AES-256-GCM, PBKDF2-HMAC-SHA256, SHA-256, CSPRNG) & Memory Zeroization
+ring = "0.17"
+zeroize = "1.8"
+
+# Serialization & Timestamps
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+chrono = "0.4"
+
+[build-dependencies]
+cxx-qt-build = { version = "0.7.2", features = ["link_qt_object_files"] }

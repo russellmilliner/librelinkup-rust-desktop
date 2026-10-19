@@ -18,6 +18,28 @@ Kirigami.ApplicationWindow {
     color: Kirigami.Theme.backgroundColor
 
     readonly property bool isLightTheme: (0.2126 * root.color.r + 0.7152 * root.color.g + 0.0722 * root.color.b) > 0.45
+
+    // Width the header needs with every label shown, measured from the real layout at
+    // startup (depends on fonts/scaling, so it can't be hard-coded). 0 = not measured yet.
+    property real fullHeaderWidth: 0
+    readonly property real headerSideMargins: 16
+    // Collapse header labels to icons only when the window is narrower than the full header.
+    readonly property bool headerCompact: fullHeaderWidth > 0
+        && root.width < fullHeaderWidth + headerSideMargins
+
+    function measureHeaderAndFitWindow() {
+        fullHeaderWidth = 0 // force full labels for the measurement
+        Qt.callLater(function() {
+            fullHeaderWidth = Math.ceil(headerRow.implicitWidth)
+            const needed = fullHeaderWidth + headerSideMargins
+            const maxWidth = Screen.desktopAvailableWidth > 0 ? Screen.desktopAvailableWidth - 40 : needed
+            if (root.width < needed) {
+                root.width = Math.min(needed, maxWidth)
+            }
+        })
+    }
+
+    Component.onCompleted: measureHeaderAndFitWindow()
     property string activeTab: "dashboard"
     readonly property alias controller: appController
 
@@ -132,7 +154,7 @@ Kirigami.ApplicationWindow {
 
             Kirigami.Heading {
                 level: 4
-                text: qsTr("LibreLinkUp Rust")
+                text: root.headerCompact ? qsTr("LibreLinkUp") : qsTr("LibreLinkUp Rust")
                 font.bold: true
             }
 
@@ -150,9 +172,9 @@ Kirigami.ApplicationWindow {
                 QQC2.Label {
                     id: vaultLabel
                     anchors.centerIn: parent
-                    text: appController.credentialsEncrypted
-                        ? qsTr("🔒 AES-256")
-                        : qsTr("🔓 Unset")
+                    text: root.headerCompact
+                        ? (appController.credentialsEncrypted ? "🔒" : "🔓")
+                        : (appController.credentialsEncrypted ? qsTr("🔒 AES-256") : qsTr("🔓 Unset"))
                     font.pointSize: 8
                     font.bold: true
                     color: Kirigami.Theme.textColor
@@ -163,6 +185,9 @@ Kirigami.ApplicationWindow {
 
             QQC2.ToolButton {
                 objectName: "tabButtonDashboard"
+                display: root.headerCompact ? QQC2.AbstractButton.IconOnly : QQC2.AbstractButton.TextBesideIcon
+                QQC2.ToolTip.visible: root.headerCompact && hovered
+                QQC2.ToolTip.text: text
                 icon.name: "view-statistics"
                 text: qsTr("Dashboard")
                 checkable: true
@@ -172,6 +197,9 @@ Kirigami.ApplicationWindow {
 
             QQC2.ToolButton {
                 objectName: "tabButtonGeneral"
+                display: root.headerCompact ? QQC2.AbstractButton.IconOnly : QQC2.AbstractButton.TextBesideIcon
+                QQC2.ToolTip.visible: root.headerCompact && hovered
+                QQC2.ToolTip.text: text
                 icon.name: "configure"
                 text: qsTr("Settings")
                 checkable: true
@@ -181,6 +209,9 @@ Kirigami.ApplicationWindow {
 
             QQC2.ToolButton {
                 objectName: "tabButtonAlerts"
+                display: root.headerCompact ? QQC2.AbstractButton.IconOnly : QQC2.AbstractButton.TextBesideIcon
+                QQC2.ToolTip.visible: root.headerCompact && hovered
+                QQC2.ToolTip.text: text
                 icon.name: "preferences-desktop-notification-bell"
                 text: qsTr("Alerts")
                 checkable: true
@@ -190,6 +221,9 @@ Kirigami.ApplicationWindow {
 
             QQC2.ToolButton {
                 objectName: "tabButtonAccount"
+                display: root.headerCompact ? QQC2.AbstractButton.IconOnly : QQC2.AbstractButton.TextBesideIcon
+                QQC2.ToolTip.visible: root.headerCompact && hovered
+                QQC2.ToolTip.text: text
                 icon.name: "user-identity"
                 text: qsTr("Account")
                 checkable: true
@@ -200,9 +234,8 @@ Kirigami.ApplicationWindow {
             QQC2.ToolButton {
                 objectName: "tabButtonLogs"
                 icon.name: "utilities-log-viewer"
-                text: root.width >= 860
-                    ? qsTr("Logs (%1)").arg(appController.eventLogCount)
-                    : qsTr("Logs")
+                text: qsTr("Logs (%1)").arg(appController.eventLogCount)
+                display: root.headerCompact ? QQC2.AbstractButton.IconOnly : QQC2.AbstractButton.TextBesideIcon
                 QQC2.ToolTip.visible: hovered
                 QQC2.ToolTip.text: qsTr("Open Diagnostic Log Viewer (%1 entries)").arg(appController.eventLogCount)
                 onClicked: root.openLogViewer()
@@ -212,7 +245,7 @@ Kirigami.ApplicationWindow {
                 objectName: "tabButtonAbout"
                 icon.name: "help-about"
                 text: qsTr("About")
-                display: root.width >= 880 ? QQC2.AbstractButton.TextBesideIcon : QQC2.AbstractButton.IconOnly
+                display: root.headerCompact ? QQC2.AbstractButton.IconOnly : QQC2.AbstractButton.TextBesideIcon
                 QQC2.ToolTip.visible: hovered
                 QQC2.ToolTip.text: qsTr("About LibreLinkUp Rust Desktop v%1").arg(appController.appVersion)
                 onClicked: root.openAboutDialog()
@@ -231,7 +264,7 @@ Kirigami.ApplicationWindow {
                 QQC2.Label {
                     id: headerKofiLabel
                     anchors.centerIn: parent
-                    text: root.width >= 840 ? qsTr("☕ Ko-fi") : qsTr("☕")
+                    text: root.headerCompact ? qsTr("☕") : qsTr("☕ Ko-fi")
                     font.bold: true
                     font.pointSize: 8.5
                     color: "#ffffff"

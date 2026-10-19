@@ -34,6 +34,7 @@ pub mod qobject {
         fn librelinkup_popup_tray_menu();
         fn librelinkup_trigger_window_alert(bring_to_front: bool, flash_window: bool);
         fn librelinkup_play_alert_sound(custom_sound_path: &QString);
+        fn librelinkup_show_notification(title: &QString, body: &QString, critical: bool);
         fn librelinkup_quit_app();
         fn librelinkup_run_app(start_minimized: bool) -> i32;
         fn librelinkup_run_ui_overflow_tests() -> QString;
@@ -212,16 +213,21 @@ pub mod qobject {
         #[qinvokable]
         fn quit_application(self: Pin<&mut AppController>);
     }
+
+    // Lets background tokio tasks queue result handlers back onto the Qt GUI thread.
+    impl cxx_qt::Threading for AppController {}
 }
 
 use std::fs;
 use std::path::Path;
 use std::pin::Pin;
+use std::sync::OnceLock;
 
-use cxx_qt::CxxQtType;
+use cxx_qt::{CxxQtType, Threading};
 use cxx_qt_lib::QString;
 
-use crate::api::{authenticate_async, fetch_cgm_snapshot_async};
+use crate::alert_sound::default_alert_sound;
+use crate::api::{authenticate_async, fetch_cgm_snapshot_async, ApiError, AuthSuccess};
 use crate::crypto::{
     clear_default_credentials, load_default_credentials, save_default_credentials,
     StoredCredentials,
@@ -236,6 +242,58 @@ use crate::models::{
     GraphPoint, DEFAULT_TARGET_HIGH_MG_DL, DEFAULT_TARGET_LOW_MG_DL,
 };
 use crate::paths::{autostart_desktop_path, credentials_file_path, APP_ID};
+
+/// Single long-lived multi-thread runtime for all LibreView network I/O, so nothing
+/// network-related ever blocks the Qt GUI thread (and connections/TLS can be reused).
+fn background_runtime() -> Option<&'static tokio::runtime::Runtime> {
+    static RUNTIME: OnceLock<Option<tokio::runtime::Runtime>> = OnceLock::new();
+    RUNTIME
+        .get_or_init(|| {
+            tokio::runtime::Builder::new_multi_thread()
+                .worker_threads(2)
+                .thread_name("librelinkup-net")
+                .enable_all()
+                .build()
+                .map_err(|e| log_error("SYSTEM", format!("Failed to start async runtime: {e}")))
+                .ok()
+        })
+        .as_ref()
+}
+
+/// Result of a background CGM refresh, delivered back on the Qt thread.
+struct RefreshOutcome {
+    result: Result<GlucoseSnapshot, ApiError>,
+    /// Present when the token was refreshed via re-authentication and must be persisted.
+    renewed_creds: Option<StoredCredentials>,
+}
+
+/// Fires all enabled alert channels: window raise/flash, audio, and a desktop notification.
+fn fire_alert(settings: &AppSettings, title: &str, body: &str) {
+    if settings.bring_to_front_enabled || settings.flash_window_enabled {
+        qobject::librelinkup_trigger_window_alert(
+            settings.bring_to_front_enabled,
+            settings.flash_window_enabled,
+        );
+    }
+    if settings.audio_alert_enabled {
+        let custom = settings.custom_sound_path.trim();
+        let sound_path = if settings.use_custom_sound && !custom.is_empty() && Path::new(custom).is_file() {
+            custom.to_string()
+        } else {
+            if settings.use_custom_sound && !custom.is_empty() {
+                log_warn(
+                    "ALERT",
+                    format!("Custom alert sound not found ({custom}); using built-in alarm."),
+                );
+            }
+            default_alert_sound()
+                .map(|p| p.to_string_lossy().into_owned())
+                .unwrap_or_default()
+        };
+        qobject::librelinkup_play_alert_sound(&QString::from(sound_path.as_str()));
+    }
+    qobject::librelinkup_show_notification(&QString::from(title), &QString::from(body), true);
+}
 
 pub struct AppControllerRust {
     logged_in: bool,
@@ -291,6 +349,13 @@ pub struct AppControllerRust {
     app_version: QString,
     snapshot: GlucoseSnapshot,
     creds: Option<StoredCredentials>,
+    /// Sequence id of the running background CGM refresh (prevents overlapping polls).
+    active_refresh: Option<u64>,
+    refresh_seq: u64,
+    /// A background login is running.
+    login_in_flight: bool,
+    /// Bumped on login/logout; background results tagged with an older value are dropped.
+    session_generation: u64,
 }
 
 impl Default for AppControllerRust {
@@ -359,6 +424,10 @@ impl Default for AppControllerRust {
             app_version: QString::from(env!("CARGO_PKG_VERSION")),
             snapshot: GlucoseSnapshot::default(),
             creds: None,
+            active_refresh: None,
+            refresh_seq: 0,
+            login_in_flight: false,
+            session_generation: 0,
         }
     }
 }
@@ -620,6 +689,14 @@ impl qobject::AppController {
         self.as_mut().sync_logs_to_properties();
     }
 
+    fn update_busy_flag(mut self: Pin<&mut Self>) {
+        let busy = self.rust().login_in_flight || self.rust().active_refresh.is_some();
+        self.as_mut().set_busy(busy);
+    }
+
+    /// Starts an asynchronous LibreLinkUp login. Returns `true` when the request was
+    /// started; the outcome is reported through `loggedIn`, `errorMessage` and
+    /// `statusMessage` once the background task completes (the GUI never blocks).
     pub fn login(
         mut self: Pin<&mut Self>,
         username: QString,
@@ -640,6 +717,10 @@ impl qobject::AppController {
             language.to_string().trim().to_lowercase()
         };
 
+        if self.rust().login_in_flight {
+            return false;
+        }
+
         if user_str.len() < 2 || pass_str.len() < 2 {
             let msg = "Please enter both your LibreLinkUp email and password.";
             self.as_mut().set_error_message(QString::from(msg));
@@ -648,7 +729,20 @@ impl qobject::AppController {
             return false;
         }
 
-        self.as_mut().set_busy(true);
+        let Some(runtime) = background_runtime() else {
+            let msg = "Failed to initialize async runtime.";
+            self.as_mut().set_error_message(QString::from(msg));
+            log_error("SYSTEM", msg);
+            self.as_mut().sync_logs_to_properties();
+            return false;
+        };
+
+        // A new session supersedes any refresh still running for the previous one.
+        let generation = self.rust().session_generation.wrapping_add(1);
+        self.as_mut().rust_mut().session_generation = generation;
+        self.as_mut().rust_mut().active_refresh = None;
+        self.as_mut().rust_mut().login_in_flight = true;
+        self.as_mut().update_busy_flag();
         self.as_mut().set_error_message(QString::from(""));
         self.as_mut()
             .set_status_message(QString::from("Signing in to LibreLinkUp..."));
@@ -656,31 +750,44 @@ impl qobject::AppController {
             "AUTH",
             format!("Attempting LibreLinkUp login for '{user_str}' (region: {country_str})"),
         );
+        self.as_mut().sync_logs_to_properties();
 
-        let rt = tokio::runtime::Builder::new_current_thread()
-            .enable_all()
-            .build();
-        let auth_res = match rt {
-            Ok(runtime) => runtime.block_on(authenticate_async(&country_str, &user_str, &pass_str)),
-            Err(e) => {
-                self.as_mut().set_busy(false);
-                let msg = format!("Failed to initialize async runtime: {e}");
-                self.as_mut().set_error_message(QString::from(msg.as_str()));
-                log_error("SYSTEM", msg);
-                self.as_mut().sync_logs_to_properties();
-                return false;
+        let qt_thread = self.qt_thread();
+        runtime.spawn(async move {
+            let auth_res = authenticate_async(&country_str, &user_str, &pass_str).await;
+            let queued = qt_thread.queue(move |qobject| {
+                qobject.apply_login_outcome(generation, user_str, pass_str, lang_str, auth_res);
+            });
+            if queued.is_err() {
+                log_warn("SYSTEM", "Login finished after the controller was destroyed.");
             }
-        };
+        });
+        true
+    }
 
-        self.as_mut().set_busy(false);
+    fn apply_login_outcome(
+        mut self: Pin<&mut Self>,
+        generation: u64,
+        user_str: String,
+        pass_str: String,
+        lang_str: String,
+        auth_res: Result<AuthSuccess, ApiError>,
+    ) {
+        if generation != self.rust().session_generation {
+            // Superseded (e.g. user signed out while the request was running).
+            self.as_mut().update_busy_flag();
+            return;
+        }
+        self.as_mut().rust_mut().login_in_flight = false;
+        self.as_mut().update_busy_flag();
 
         match auth_res {
             Ok(auth) => {
                 let stored = StoredCredentials {
                     username: user_str.clone(),
                     password: pass_str,
-                    token: auth.token,
-                    account_id: auth.account_id,
+                    token: auth.token.clone(),
+                    account_id: auth.account_id.clone(),
                     country: auth.country.clone(),
                     language: lang_str.clone(),
                     patient_id: String::new(),
@@ -713,9 +820,10 @@ impl qobject::AppController {
                     "AUTH",
                     format!("Login succeeded (resolved region: '{}').", auth.country),
                 );
+                self.as_mut()
+                    .set_status_message(QString::from("Signed in — fetching glucose data..."));
                 self.as_mut().refresh_glucose_now();
                 self.as_mut().sync_logs_to_properties();
-                true
             }
             Err(err) => {
                 let msg = err.to_string();
@@ -724,13 +832,18 @@ impl qobject::AppController {
                 self.as_mut()
                     .set_status_message(QString::from("Authentication failed"));
                 self.as_mut().sync_logs_to_properties();
-                false
             }
         }
     }
 
     pub fn logout(mut self: Pin<&mut Self>) {
         let _ = clear_default_credentials();
+        // Invalidate any in-flight login/refresh so their results are ignored.
+        let generation = self.rust().session_generation.wrapping_add(1);
+        self.as_mut().rust_mut().session_generation = generation;
+        self.as_mut().rust_mut().login_in_flight = false;
+        self.as_mut().rust_mut().active_refresh = None;
+        self.as_mut().update_busy_flag();
         self.as_mut().rust_mut().creds = None;
         self.as_mut().rust_mut().snapshot = GlucoseSnapshot::default();
         self.as_mut().set_logged_in(false);
@@ -745,62 +858,97 @@ impl qobject::AppController {
         self.as_mut().sync_logs_to_properties();
     }
 
+    /// Starts an asynchronous CGM refresh (no-op if one is already running).
     pub fn refresh_glucose_now(mut self: Pin<&mut Self>) {
-        let creds_opt = self.rust().creds.clone();
-        let Some(mut creds) = creds_opt else {
+        if self.rust().active_refresh.is_some() || self.rust().login_in_flight {
+            return;
+        }
+        let Some(creds) = self.rust().creds.clone() else {
             return;
         };
         if !creds.has_valid_session() {
             return;
         }
-
-        self.as_mut().set_busy(true);
-        self.as_mut().set_error_message(QString::from(""));
-
-        let rt = tokio::runtime::Builder::new_current_thread()
-            .enable_all()
-            .build();
-        let Ok(runtime) = rt else {
-            self.as_mut().set_busy(false);
+        let Some(runtime) = background_runtime() else {
+            self.as_mut()
+                .set_error_message(QString::from("Failed to initialize async runtime."));
             return;
         };
 
-        let mut fetch_res = runtime.block_on(fetch_cgm_snapshot_async(
-            &creds.country,
-            &creds.token,
-            &creds.account_id,
-        ));
+        let generation = self.rust().session_generation;
+        let seq = self.rust().refresh_seq.wrapping_add(1);
+        self.as_mut().rust_mut().refresh_seq = seq;
+        self.as_mut().rust_mut().active_refresh = Some(seq);
+        self.as_mut().update_busy_flag();
+        self.as_mut().set_error_message(QString::from(""));
 
-        // If token expired and we have encrypted username/password, automatically re-authenticate!
-        if matches!(fetch_res, Err(crate::api::ApiError::Unauthorized))
-            && !creds.username.is_empty()
-            && !creds.password.is_empty()
-        {
-            log_info(
-                "AUTH",
-                "Auth token expired; re-authenticating using encrypted credentials...",
-            );
-            if let Ok(reauth) = runtime.block_on(authenticate_async(
-                &creds.country,
-                &creds.username,
-                &creds.password,
-            )) {
-                creds.token = reauth.token;
-                creds.account_id = reauth.account_id;
-                creds.country = reauth.country;
-                let _ = save_default_credentials(&creds);
-                self.as_mut().rust_mut().creds = Some(creds.clone());
-                fetch_res = runtime.block_on(fetch_cgm_snapshot_async(
-                    &creds.country,
-                    &creds.token,
-                    &creds.account_id,
-                ));
+        let qt_thread = self.qt_thread();
+        runtime.spawn(async move {
+            let mut creds = creds;
+            let mut renewed = false;
+            let mut result =
+                fetch_cgm_snapshot_async(&creds.country, &creds.token, &creds.account_id).await;
+
+            // If the token expired and we have encrypted username/password, re-authenticate.
+            if matches!(result, Err(ApiError::Unauthorized))
+                && !creds.username.is_empty()
+                && !creds.password.is_empty()
+            {
+                log_info(
+                    "AUTH",
+                    "Auth token expired; re-authenticating using encrypted credentials...",
+                );
+                if let Ok(reauth) =
+                    authenticate_async(&creds.country, &creds.username, &creds.password).await
+                {
+                    creds.token = reauth.token;
+                    creds.account_id = reauth.account_id;
+                    creds.country = reauth.country;
+                    renewed = true;
+                    result =
+                        fetch_cgm_snapshot_async(&creds.country, &creds.token, &creds.account_id)
+                            .await;
+                }
             }
+
+            let outcome = RefreshOutcome {
+                result,
+                renewed_creds: renewed.then_some(creds),
+            };
+            let queued = qt_thread.queue(move |qobject| {
+                qobject.apply_refresh_outcome(generation, seq, outcome);
+            });
+            if queued.is_err() {
+                log_warn("SYSTEM", "Refresh finished after the controller was destroyed.");
+            }
+        });
+    }
+
+    fn apply_refresh_outcome(
+        mut self: Pin<&mut Self>,
+        generation: u64,
+        seq: u64,
+        outcome: RefreshOutcome,
+    ) {
+        if self.rust().active_refresh == Some(seq) {
+            self.as_mut().rust_mut().active_refresh = None;
+        }
+        self.as_mut().update_busy_flag();
+        if generation != self.rust().session_generation {
+            // Session changed (logout/re-login) while this refresh was running: drop it.
+            return;
         }
 
-        self.as_mut().set_busy(false);
+        if let Some(renewed) = outcome.renewed_creds {
+            // Persist on the Qt thread, and only for the still-current session, so a
+            // logout during the request can never resurrect the deleted vault.
+            if let Err(e) = save_default_credentials(&renewed) {
+                log_error("CRYPTO", format!("Failed to save renewed credentials: {e}"));
+            }
+            self.as_mut().rust_mut().creds = Some(renewed);
+        }
 
-        match fetch_res {
+        match outcome.result {
             Ok(snap) => {
                 let unit = self.result_unit().to_string();
                 let formatted = format_glucose_value(snap.value_mg_dl, &unit);
@@ -824,6 +972,7 @@ impl qobject::AppController {
                     snap.target_low_mg_dl,
                     snap.target_high_mg_dl,
                 );
+                let eff_low = settings.effective_target_low(snap.target_low_mg_dl);
 
                 self.as_mut().rust_mut().snapshot = snap;
                 self.as_mut()
@@ -836,20 +985,14 @@ impl qobject::AppController {
                             "Glucose reading ({formatted} {unit}) is outside target threshold!"
                         ),
                     );
-                    if settings.bring_to_front_enabled || settings.flash_window_enabled {
-                        qobject::librelinkup_trigger_window_alert(
-                            settings.bring_to_front_enabled,
-                            settings.flash_window_enabled,
-                        );
-                    }
-                    if settings.audio_alert_enabled {
-                        let sound_path = if settings.use_custom_sound {
-                            QString::from(settings.custom_sound_path.as_str())
-                        } else {
-                            QString::from("")
-                        };
-                        qobject::librelinkup_play_alert_sound(&sound_path);
-                    }
+                    let value_mg_dl = self.rust().snapshot.value_mg_dl;
+                    let title = if value_mg_dl < eff_low {
+                        "Low blood glucose"
+                    } else {
+                        "High blood glucose"
+                    };
+                    let body = format!("{formatted} {unit} {arrow} — outside your target range.");
+                    fire_alert(&settings, title, &body);
                 }
             }
             Err(err) => {
@@ -1149,18 +1292,11 @@ impl qobject::AppController {
     pub fn test_alert_now(mut self: Pin<&mut Self>) {
         let settings = current_settings_from_controller(&self);
         log_info("ALERT", "Triggered manual alert test from Settings.");
-        qobject::librelinkup_trigger_window_alert(
-            settings.bring_to_front_enabled,
-            settings.flash_window_enabled,
+        fire_alert(
+            &settings,
+            "LibreLinkUp alert test",
+            "This is how out-of-range glucose alerts will look and sound.",
         );
-        if settings.audio_alert_enabled {
-            let sound_path = if settings.use_custom_sound {
-                QString::from(settings.custom_sound_path.as_str())
-            } else {
-                QString::from("")
-            };
-            qobject::librelinkup_play_alert_sound(&sound_path);
-        }
         self.as_mut().sync_logs_to_properties();
     }
 

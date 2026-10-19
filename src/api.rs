@@ -130,23 +130,63 @@ fn build_common_headers(
     Ok(headers)
 }
 
-/// Executes an HTTP request via system `curl` (OpenSSL + HTTP/2 ALPN) as a fallback
-/// when Cloudflare WAF blocks a `rustls` TLS fingerprint with 403 Forbidden.
-fn curl_fallback_json(
-    method: &str,
-    url: &str,
+/// Escapes a value for a double-quoted string in a curl `--config` file
+/// (curl recognizes `\\`, `\"`, `\t`, `\n`, `\r` and `\v` inside quotes).
+pub fn escape_curl_config_value(value: &str) -> String {
+    let mut out = String::with_capacity(value.len() + 2);
+    for ch in value.chars() {
+        match ch {
+            '\\' => out.push_str("\\\\"),
+            '"' => out.push_str("\\\""),
+            '\n' => out.push_str("\\n"),
+            '\r' => out.push_str("\\r"),
+            '\t' => out.push_str("\\t"),
+            '\u{0b}' => out.push_str("\\v"),
+            c => out.push(c),
+        }
+    }
+    out
+}
+
+/// Builds the curl `--config` document carrying all sensitive request parts
+/// (bearer token, hashed account id, JSON body incl. password). It is written to
+/// curl's stdin so secrets never appear on the process command line (`ps`, `/proc/*/cmdline`).
+pub fn build_curl_secret_config(
     token: Option<&str>,
     account_id: Option<&str>,
     json_payload: Option<&Value>,
-) -> Result<(u16, Value), ApiError> {
-    let mut cmd = Command::new("curl");
-    cmd.arg("-s")
+) -> String {
+    let mut cfg = String::new();
+    if let Some(tok) = token {
+        let header = format!("Authorization: Bearer {}", tok.trim());
+        cfg.push_str(&format!("header = \"{}\"\n", escape_curl_config_value(&header)));
+    }
+    if let Some(acc) = account_id {
+        let header = format!("Account-Id: {}", sha256_account_id(acc));
+        cfg.push_str(&format!("header = \"{}\"\n", escape_curl_config_value(&header)));
+    }
+    if let Some(body) = json_payload {
+        cfg.push_str(&format!(
+            "data-raw = \"{}\"\n",
+            escape_curl_config_value(&body.to_string())
+        ));
+    }
+    cfg
+}
+
+fn run_curl_blocking(method: &str, url: &str, secret_config: &str) -> Result<String, ApiError> {
+    use std::io::Write;
+    use std::process::Stdio;
+
+    let mut child = Command::new("curl")
+        .arg("-s")
         .arg("-S")
+        .arg("--proto")
+        .arg("=https,http")
         .arg("--max-time")
         .arg("15")
         .arg("-X")
         .arg(method)
-        .arg(url)
         .arg("-H")
         .arg(format!("User-Agent: {LLU_USER_AGENT}"))
         .arg("-H")
@@ -162,23 +202,55 @@ fn curl_fallback_json(
         .arg("-H")
         .arg("Cache-Control: no-cache")
         .arg("-w")
-        .arg("\n__HTTP_STATUS__:%{http_code}");
+        .arg("\n__HTTP_STATUS__:%{http_code}")
+        // Sensitive headers/body are read from stdin (see build_curl_secret_config).
+        .arg("--config")
+        .arg("-")
+        .arg("--url")
+        .arg(url)
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .map_err(|e| ApiError::NetworkError(format!("curl fallback failed to start: {e}")))?;
 
-    if let Some(tok) = token {
-        cmd.arg("-H").arg(format!("Authorization: Bearer {}", tok.trim()));
-    }
-    if let Some(acc) = account_id {
-        let hashed = sha256_account_id(acc);
-        cmd.arg("-H").arg(format!("Account-Id: {hashed}"));
-    }
-    if let Some(body) = json_payload {
-        cmd.arg("--data-raw").arg(body.to_string());
+    if let Some(mut stdin) = child.stdin.take() {
+        if let Err(e) = stdin.write_all(secret_config.as_bytes()) {
+            let _ = child.kill();
+            let _ = child.wait();
+            return Err(ApiError::NetworkError(format!("curl fallback stdin error: {e}")));
+        }
+        // stdin dropped here -> EOF, curl proceeds with the request.
     }
 
-    let output = cmd
-        .output()
+    let output = child
+        .wait_with_output()
         .map_err(|e| ApiError::NetworkError(format!("curl fallback failed: {e}")))?;
-    let stdout = String::from_utf8_lossy(&output.stdout);
+    Ok(String::from_utf8_lossy(&output.stdout).into_owned())
+}
+
+/// Executes an HTTP request via system `curl` (OpenSSL + HTTP/2 ALPN) as a fallback
+/// when Cloudflare WAF blocks a `rustls` TLS fingerprint with 403 Forbidden.
+/// Runs on tokio's blocking pool so it never stalls async worker threads.
+async fn curl_fallback_json(
+    method: &str,
+    url: &str,
+    token: Option<&str>,
+    account_id: Option<&str>,
+    json_payload: Option<&Value>,
+) -> Result<(u16, Value), ApiError> {
+    let method_owned = method.to_string();
+    let url_owned = url.to_string();
+    let mut secret_config = build_curl_secret_config(token, account_id, json_payload);
+
+    let stdout = tokio::task::spawn_blocking(move || {
+        let res = run_curl_blocking(&method_owned, &url_owned, &secret_config);
+        zeroize::Zeroize::zeroize(&mut secret_config);
+        res
+    })
+    .await
+    .map_err(|e| ApiError::NetworkError(format!("curl fallback task failed: {e}")))??;
+
     let (body_str, status_code) = if let Some((b, s)) = stdout.rsplit_once("\n__HTTP_STATUS__:") {
         let code = s.trim().parse::<u16>().unwrap_or(500);
         (b.trim(), code)
@@ -226,18 +298,6 @@ async fn send_json_request(
             let status_u16 = status.as_u16();
             let text = resp.text().await.unwrap_or_default();
 
-            // If Cloudflare WAF returned 403 Forbidden (e.g. TLS JA3/JA4 block on rustls),
-            // retry transparently using system curl (OpenSSL + HTTP/2).
-            if status_u16 == 403 && !text.trim_start().starts_with('{') {
-                if let Ok((code, val)) =
-                    curl_fallback_json(method.as_str(), url, token, account_id, json_payload)
-                {
-                    if (200..300).contains(&code) || val.get("status").is_some() {
-                        return Ok(val);
-                    }
-                }
-            }
-
             if let Ok(json_val) = serde_json::from_str::<Value>(&text) {
                 if status.is_success() || json_val.get("status").is_some() {
                     return Ok(json_val);
@@ -252,10 +312,11 @@ async fn send_json_request(
                 });
             }
 
-            // Try curl fallback one last time on 403 even if body was empty or non-LibreView JSON
+            // Cloudflare WAF returned 403 Forbidden without a LibreView JSON body
+            // (e.g. TLS JA3/JA4 block on rustls): retry once via system curl (OpenSSL + HTTP/2).
             if status_u16 == 403 {
                 if let Ok((code, val)) =
-                    curl_fallback_json(method.as_str(), url, token, account_id, json_payload)
+                    curl_fallback_json(method.as_str(), url, token, account_id, json_payload).await
                 {
                     if (200..300).contains(&code) || val.get("status").is_some() {
                         return Ok(val);
@@ -266,11 +327,15 @@ async fn send_json_request(
             Err(ApiError::ServerError(status_u16, status.to_string()))
         }
         Err(e) => {
-            if let Ok((code, val)) =
-                curl_fallback_json(method.as_str(), url, token, account_id, json_payload)
-            {
-                if (200..300).contains(&code) || val.get("status").is_some() {
-                    return Ok(val);
+            // Timeouts and connection failures (offline, DNS) would fail identically via
+            // curl and only add another 15 s of waiting, so skip the fallback for them.
+            if !e.is_timeout() && !e.is_connect() {
+                if let Ok((code, val)) =
+                    curl_fallback_json(method.as_str(), url, token, account_id, json_payload).await
+                {
+                    if (200..300).contains(&code) || val.get("status").is_some() {
+                        return Ok(val);
+                    }
                 }
             }
             Err(ApiError::NetworkError(e.to_string()))
@@ -619,4 +684,37 @@ pub async fn fetch_cgm_snapshot_async(
     .await?;
 
     parse_graph_response(&graph_body, &patient_id, &first_name, &last_name)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn curl_config_escaping_handles_quotes_backslashes_and_controls() {
+        assert_eq!(escape_curl_config_value(r#"a"b\c"#), r#"a\"b\\c"#);
+        assert_eq!(escape_curl_config_value("x\ny\rz\t"), "x\\ny\\rz\\t");
+        assert_eq!(escape_curl_config_value("plain-token.123"), "plain-token.123");
+    }
+
+    #[test]
+    fn curl_secret_config_carries_token_account_and_body() {
+        let body = serde_json::json!({"email": "me@example.com", "password": "p\"w\\d"});
+        let cfg = build_curl_secret_config(Some(" tok123 "), Some("acc-1"), Some(&body));
+        let lines: Vec<&str> = cfg.lines().collect();
+        assert_eq!(lines.len(), 3);
+        assert_eq!(lines[0], "header = \"Authorization: Bearer tok123\"");
+        assert_eq!(
+            lines[1],
+            format!("header = \"Account-Id: {}\"", sha256_account_id("acc-1"))
+        );
+        assert!(lines[2].starts_with("data-raw = \""));
+        // Password quote/backslash must be escaped twice (JSON, then curl config).
+        assert!(lines[2].contains(r#"p\\\"w\\\\d"#), "{}", lines[2]);
+    }
+
+    #[test]
+    fn curl_secret_config_empty_without_secrets() {
+        assert!(build_curl_secret_config(None, None, None).is_empty());
+    }
 }

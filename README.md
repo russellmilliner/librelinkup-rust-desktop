@@ -67,7 +67,8 @@ flatpak run io.github.russellmilliner.LibreLinkUpDesktop
   - **Overlay Dark Theme**: Switch between a sleek dark slate card with color-coded status accents (`#0f172a`) or a classic full-status-color card—either from Settings, the Dashboard quick toggle, or directly on the overlay widget.
   - **Adjustable Overlay Transparency**: Configure opacity from `20%` to `100%` in Settings or by scrolling the mouse wheel directly over the floating overlay.
 - **AES-256-GCM Encrypted Credential Vault**:
-  - All stored credentials and session tokens are encrypted at rest in `~/.local/share/librelinkup-kde/credentials.enc` using **AES-256-GCM** with a 100,000-iteration **PBKDF2-HMAC-SHA256** key derived from machine identity (`ring`) and strict `0600` permissions.
+  - All stored credentials and session tokens are encrypted at rest in `$XDG_CONFIG_HOME/librelinkup-kde/credentials.enc.json` (host: `~/.config/librelinkup-kde/`; Flatpak: `~/.var/app/io.github.russellmilliner.LibreLinkUpDesktop/config/librelinkup-kde/`) using **AES-256-GCM** with a 100,000-iteration **PBKDF2-HMAC-SHA256** key derived from machine identity (`ring`) and strict `0600` permissions.
+  - Flatpak builds copy an existing host vault/settings from `~/.config/librelinkup-kde/` on first launch when that directory is readable (local builds grant read-only access; Flathub builds start fresh and require one sign-in).
   - Sensitive strings are wiped from memory on drop via `zeroize`.
   - Automatically migrates active tokens from the legacy Electron Flatpak (`rocks.poopjournal.librelinkupdesktop`) on first launch.
 - **Diagnostic Log Viewer**:

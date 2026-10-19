@@ -1,3 +1,4 @@
+pub mod alert_sound;
 pub mod api;
 pub mod bridge {
     pub mod app_controller;

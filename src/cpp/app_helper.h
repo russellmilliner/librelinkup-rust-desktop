@@ -564,6 +564,21 @@ public:
         }
     }
 
+    // On Plasma, QSystemTrayIcon (StatusNotifierItem backend) delivers this through
+    // org.freedesktop.Notifications, so it appears as a regular desktop notification.
+    void showNotification(const QString& title, const QString& body, bool critical) {
+        ensureInitialized();
+        if (!m_tray || !QSystemTrayIcon::supportsMessages()) {
+            return;
+        }
+        m_tray->showMessage(
+            title,
+            body,
+            critical ? QSystemTrayIcon::Critical : QSystemTrayIcon::Information,
+            15000
+        );
+    }
+
     void updateWindowActionsVisibility() {
         const bool shown = is_main_window_shown();
         if (m_showAction) {
@@ -1048,15 +1063,48 @@ inline void librelinkup_trigger_window_alert(bool bring_to_front, bool flash_win
     }
 }
 
+namespace librelinkup {
+// Tries each player in order; advances to the next one if the player fails to start
+// or exits with an error (e.g. no PipeWire/PulseAudio socket), finally beeping.
+inline void play_sound_with_fallback(const QString& path, QStringList players) {
+    if (players.isEmpty()) {
+        QApplication::beep();
+        return;
+    }
+    const QString player = players.takeFirst();
+    auto* proc = new QProcess(QCoreApplication::instance());
+    QObject::connect(proc, &QProcess::errorOccurred, proc,
+        [proc, path, players](QProcess::ProcessError err) {
+            if (err == QProcess::FailedToStart) {
+                proc->deleteLater();
+                play_sound_with_fallback(path, players);
+            }
+        });
+    QObject::connect(proc, &QProcess::finished, proc,
+        [proc, path, players](int exitCode, QProcess::ExitStatus status) {
+            proc->deleteLater();
+            if (status != QProcess::NormalExit || exitCode != 0) {
+                play_sound_with_fallback(path, players);
+            }
+        });
+    proc->start(player, {path});
+}
+} // namespace librelinkup
+
 inline void librelinkup_play_alert_sound(const QString& custom_sound_path) {
     const QString clean = custom_sound_path.trimmed();
     if (!clean.isEmpty() && QFile::exists(clean)) {
-        if (!QProcess::startDetached(QStringLiteral("pw-play"), {clean})) {
-            QProcess::startDetached(QStringLiteral("paplay"), {clean});
-        }
+        // paplay first: Flatpak's --socket=pulseaudio exposes only the PulseAudio socket
+        // (served by pipewire-pulse on modern hosts); pw-play needs the native PipeWire socket.
+        librelinkup::play_sound_with_fallback(
+            clean, {QStringLiteral("paplay"), QStringLiteral("pw-play")});
         return;
     }
     QApplication::beep();
+}
+
+inline void librelinkup_show_notification(const QString& title, const QString& body, bool critical) {
+    librelinkup::TrayManager::instance().showNotification(title, body, critical);
 }
 
 inline void librelinkup_quit_app() {

@@ -68,7 +68,7 @@ flatpak run io.github.russellmilliner.LibreLinkUpDesktop
   - **Adjustable Overlay Transparency**: Configure opacity from `20%` to `100%` in Settings or by scrolling the mouse wheel directly over the floating overlay.
 - **AES-256-GCM Encrypted Credential Vault**:
   - All stored credentials and session tokens are encrypted at rest in `$XDG_CONFIG_HOME/librelinkup-kde/credentials.enc.json` (host: `~/.config/librelinkup-kde/`; Flatpak: `~/.var/app/io.github.russellmilliner.LibreLinkUpDesktop/config/librelinkup-kde/`) using **AES-256-GCM** with a 100,000-iteration **PBKDF2-HMAC-SHA256** key derived from machine identity (`ring`) and strict `0600` permissions.
-  - Flatpak builds copy an existing host vault/settings from `~/.config/librelinkup-kde/` on first launch when that directory is readable (local builds grant read-only access; Flathub builds start fresh and require one sign-in).
+  - Local Flatpak builds (`scripts/build-flatpak.sh`) share the host vault/settings in `~/.config/librelinkup-kde/`; Flathub builds use their private sandbox directory and require one sign-in.
   - Sensitive strings are wiped from memory on drop via `zeroize`.
   - Automatically migrates active tokens from the legacy Electron Flatpak (`rocks.poopjournal.librelinkupdesktop`) on first launch.
 - **Diagnostic Log Viewer**:

@@ -16,9 +16,11 @@ finish-args:
   - --talk-name=org.kde.StatusNotifierWatcher
   - --talk-name=org.freedesktop.Notifications
   - --filesystem=xdg-config/kdeglobals:ro
-  # Read-only: one-time migration of the pre-0.2.1 host vault/settings into
-  # ~/.var/app/io.github.russellmilliner.LibreLinkUpDesktop/config/librelinkup-kde
-  - --filesystem=xdg-config/librelinkup-kde:ro
+  # Local builds share the host vault/settings: Flatpak also exposes these at the app's
+  # XDG_CONFIG_HOME/XDG_DATA_HOME paths, so they must stay writable. Flathub omits them
+  # and uses the private ~/.var/app/<id> directories instead.
+  - --filesystem=xdg-config/librelinkup-kde:create
+  - --filesystem=xdg-data/librelinkup-kde:create
   - --filesystem=xdg-config/autostart:create
   - --filesystem=~/.var/app/rocks.poopjournal.librelinkupdesktop:ro
 

@@ -60,7 +60,8 @@ flatpak build-finish "$WORK_DIR/build-dir" \
   --talk-name=org.kde.StatusNotifierWatcher \
   --talk-name=org.freedesktop.Notifications \
   --filesystem=xdg-config/kdeglobals:ro \
-  --filesystem=xdg-config/librelinkup-kde:ro \
+  --filesystem=xdg-config/librelinkup-kde:create \
+  --filesystem=xdg-data/librelinkup-kde:create \
   --filesystem=xdg-config/autostart:create \
   --filesystem=~/.var/app/rocks.poopjournal.librelinkupdesktop:ro
 

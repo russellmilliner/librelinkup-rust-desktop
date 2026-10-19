@@ -51,8 +51,9 @@ flatpak build-finish "$WORK_DIR/build-dir" \
   --command=librelinkup-kde \
   --share=ipc \
   --share=network \
+  --socket=x11 \
   --socket=wayland \
-  --socket=fallback-x11 \
+  --env=QT_QPA_PLATFORM=xcb \
   --device=dri \
   --talk-name=org.kde.StatusNotifierWatcher \
   --talk-name=org.freedesktop.Notifications \

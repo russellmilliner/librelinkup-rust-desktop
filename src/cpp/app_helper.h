@@ -233,12 +233,86 @@ inline void clamp_window_to_screen(QWindow* win) {
     }
 }
 
+struct OverlayPlacementState {
+    QString screenName;
+    int relX = -1;
+    int relY = -1;
+    int width = 276;
+    int height = 88;
+    bool hasPlacement = false;
+    bool dragging = false;
+    QPoint dragStartCursor;
+    QPoint dragStartWinPos;
+
+    static OverlayPlacementState& instance() {
+        static OverlayPlacementState st;
+        return st;
+    }
+
+    void applyToWindow(QWindow* ovWin) const {
+        if (!ovWin || dragging) {
+            return;
+        }
+        QScreen* targetScreen = nullptr;
+        const QString cleanName = screenName.trimmed();
+        if (!cleanName.isEmpty()) {
+            for (QScreen* sc : QGuiApplication::screens()) {
+                if (sc && sc->name().compare(cleanName, Qt::CaseInsensitive) == 0) {
+                    targetScreen = sc;
+                    break;
+                }
+            }
+        }
+        if (!targetScreen) {
+            targetScreen = QGuiApplication::primaryScreen()
+                ? QGuiApplication::primaryScreen()
+                : ovWin->screen();
+        }
+        if (!targetScreen) {
+            ovWin->setProperty("placementReady", true);
+            return;
+        }
+
+        const QRect scGeom = targetScreen->geometry();
+        const QRect avail = targetScreen->availableGeometry().isValid()
+            ? targetScreen->availableGeometry()
+            : scGeom;
+
+        const int w = std::clamp(width, 240, std::max(240, std::min(600, avail.width())));
+        const int h = std::clamp(height, 80, std::max(80, std::min(260, avail.height())));
+
+        int globalX = avail.right() - w - 24;
+        int globalY = avail.top() + 36;
+        if (relX >= 0 && relY >= 0) {
+            globalX = scGeom.x() + relX;
+            globalY = scGeom.y() + relY;
+        }
+
+        const int minX = avail.left();
+        const int maxX = std::max(avail.left(), avail.right() - w + 1);
+        const int minY = avail.top();
+        const int maxY = std::max(avail.top(), avail.bottom() - h + 1);
+        const int clampedX = std::clamp(globalX, minX, maxX);
+        const int clampedY = std::clamp(globalY, minY, maxY);
+
+        if (ovWin->screen() != targetScreen) {
+            ovWin->setScreen(targetScreen);
+        }
+        if (ovWin->width() != w || ovWin->height() != h) {
+            ovWin->resize(w, h);
+        }
+        if (ovWin->x() != clampedX || ovWin->y() != clampedY) {
+            ovWin->setPosition(clampedX, clampedY);
+        }
+        ovWin->setProperty("placementReady", true);
+    }
+};
+
 inline void ensure_overlay_hooks(QWindow* ovWin) {
     if (!ovWin || ovWin->property("_llu_overlay_hooked").toBool()) {
         return;
     }
     ovWin->setProperty("_llu_overlay_hooked", true);
-    ovWin->setFlags(Qt::Tool | Qt::FramelessWindowHint | Qt::WindowStaysOnTopHint);
     if (ovWin->transientParent() != nullptr) {
         ovWin->setTransientParent(nullptr);
     }
@@ -249,7 +323,21 @@ inline void ensure_overlay_hooks(QWindow* ovWin) {
     });
     QObject::connect(ovWin, &QWindow::visibleChanged, ovWin, [ovWin](bool vis) {
         if (vis) {
-            clamp_window_to_screen(ovWin);
+            if (OverlayPlacementState::instance().hasPlacement) {
+                OverlayPlacementState::instance().applyToWindow(ovWin);
+                QTimer::singleShot(30, ovWin, [ovWin]() {
+                    if (ovWin && ovWin->isVisible()) {
+                        OverlayPlacementState::instance().applyToWindow(ovWin);
+                    }
+                });
+                QTimer::singleShot(120, ovWin, [ovWin]() {
+                    if (ovWin && ovWin->isVisible()) {
+                        OverlayPlacementState::instance().applyToWindow(ovWin);
+                    }
+                });
+            } else {
+                clamp_window_to_screen(ovWin);
+            }
         }
         update_tray_window_actions();
     });
@@ -273,56 +361,102 @@ inline void restore_overlay_placement(
     int width,
     int height
 ) {
+    auto& st = OverlayPlacementState::instance();
+    st.screenName = screen_name.trimmed();
+    st.relX = x;
+    st.relY = y;
+    st.width = width;
+    st.height = height;
+    st.hasPlacement = true;
+
+    if (QWindow* ovWin = find_overlay_window()) {
+        st.applyToWindow(ovWin);
+    }
+}
+
+inline void begin_overlay_drag() {
     QWindow* ovWin = find_overlay_window();
     if (!ovWin) {
         return;
     }
-    ovWin->setProperty("placementReady", false);
+    auto& st = OverlayPlacementState::instance();
+    st.dragging = true;
+    st.dragStartCursor = QCursor::pos();
+    st.dragStartWinPos = ovWin->position();
+}
 
-    QScreen* targetScreen = nullptr;
-    const QString cleanName = screen_name.trimmed();
-    if (!cleanName.isEmpty()) {
-        for (QScreen* sc : QGuiApplication::screens()) {
-            if (sc && sc->name().compare(cleanName, Qt::CaseInsensitive) == 0) {
-                targetScreen = sc;
-                break;
-            }
-        }
+inline void update_overlay_drag() {
+    QWindow* ovWin = find_overlay_window();
+    auto& st = OverlayPlacementState::instance();
+    if (!ovWin || !st.dragging) {
+        return;
     }
-    if (!targetScreen) {
-        targetScreen = ovWin->screen() ? ovWin->screen() : QGuiApplication::primaryScreen();
-    }
-    if (!targetScreen) {
-        ovWin->setProperty("placementReady", true);
+    const QPoint nextPos = st.dragStartWinPos + (QCursor::pos() - st.dragStartCursor);
+    ovWin->setPosition(nextPos);
+}
+
+inline void end_overlay_drag(QObject* controller) {
+    auto& st = OverlayPlacementState::instance();
+    st.dragging = false;
+    QWindow* ovWin = find_overlay_window();
+    if (!ovWin) {
         return;
     }
 
-    ovWin->setScreen(targetScreen);
-    const QRect scGeom = targetScreen->geometry();
-    const QRect avail = targetScreen->availableGeometry().isValid()
-        ? targetScreen->availableGeometry()
-        : scGeom;
-
-    const int w = std::clamp(width, 240, std::max(240, std::min(600, avail.width())));
-    const int h = std::clamp(height, 80, std::max(80, std::min(260, avail.height())));
-
-    int globalX = avail.right() - w - 24;
-    int globalY = avail.top() + 36;
-    if (x >= 0 && y >= 0) {
-        globalX = scGeom.x() + x;
-        globalY = scGeom.y() + y;
+    QScreen* sc = QGuiApplication::screenAt(ovWin->geometry().center());
+    if (!sc) {
+        sc = QGuiApplication::screenAt(QCursor::pos());
+    }
+    if (!sc) {
+        sc = ovWin->screen() ? ovWin->screen() : QGuiApplication::primaryScreen();
+    }
+    if (!sc) {
+        return;
     }
 
+    const QRect scGeom = sc->geometry();
+    const QRect avail = sc->availableGeometry().isValid() ? sc->availableGeometry() : scGeom;
+    const int w = std::min(ovWin->width(), avail.width());
+    const int h = std::min(ovWin->height(), avail.height());
     const int minX = avail.left();
     const int maxX = std::max(avail.left(), avail.right() - w + 1);
     const int minY = avail.top();
     const int maxY = std::max(avail.top(), avail.bottom() - h + 1);
-    const int clampedX = std::clamp(globalX, minX, maxX);
-    const int clampedY = std::clamp(globalY, minY, maxY);
+    const int clampedX = std::clamp(ovWin->x(), minX, maxX);
+    const int clampedY = std::clamp(ovWin->y(), minY, maxY);
 
-    ovWin->resize(w, h);
-    ovWin->setPosition(clampedX, clampedY);
-    ovWin->setProperty("placementReady", true);
+    if (ovWin->screen() != sc) {
+        ovWin->setScreen(sc);
+    }
+    if (ovWin->width() != w || ovWin->height() != h) {
+        ovWin->resize(w, h);
+    }
+    if (ovWin->x() != clampedX || ovWin->y() != clampedY) {
+        ovWin->setPosition(clampedX, clampedY);
+    }
+
+    const int relX = clampedX - scGeom.x();
+    const int relY = clampedY - scGeom.y();
+
+    st.screenName = sc->name();
+    st.relX = relX;
+    st.relY = relY;
+    st.width = w;
+    st.height = h;
+    st.hasPlacement = true;
+
+    if (controller) {
+        QMetaObject::invokeMethod(
+            controller,
+            "saveOverlayPlacement",
+            Qt::DirectConnection,
+            Q_ARG(QString, sc->name()),
+            Q_ARG(int, relX),
+            Q_ARG(int, relY),
+            Q_ARG(int, w),
+            Q_ARG(int, h)
+        );
+    }
 }
 
 inline QWindow* find_log_viewer_window() {
@@ -874,12 +1008,26 @@ inline void librelinkup_restore_overlay_placement(
     std::int32_t height
 ) {
     librelinkup::restore_overlay_placement(screen_name, x, y, width, height);
-    // Re-apply after next event loop tick in case the QML OverlayWidget is just being realized
     const QString scCopy = screen_name;
-    QTimer::singleShot(0, [scCopy, x, y, width, height]() {
-        librelinkup::restore_overlay_placement(scCopy, x, y, width, height);
-        librelinkup::update_tray_window_actions();
-    });
+    for (int delayMs : {0, 40, 140}) {
+        QTimer::singleShot(delayMs, [scCopy, x, y, width, height]() {
+            librelinkup::restore_overlay_placement(scCopy, x, y, width, height);
+            librelinkup::update_tray_window_actions();
+        });
+    }
+}
+
+inline void librelinkup_begin_overlay_drag() {
+    librelinkup::begin_overlay_drag();
+}
+
+inline void librelinkup_update_overlay_drag() {
+    librelinkup::update_overlay_drag();
+}
+
+template <typename ControllerT>
+inline void librelinkup_end_overlay_drag(ControllerT& controller) {
+    librelinkup::end_overlay_drag(&controller);
 }
 
 inline void librelinkup_popup_tray_menu() {
@@ -1374,9 +1522,26 @@ inline QString librelinkup_run_ui_overflow_tests() {
             }
         }
 
-        // Verify overlay window uses Qt::Tool and has no transientParent so it never creates a Task Manager entry
-        if ((ovWin->flags() & Qt::Tool) != Qt::Tool) {
-            violations.append(QStringLiteral("OverlayWidget must have Qt::Tool flag so it does not show an icon in the Task Manager"));
+        // Verify exact coordinate restoration on screen
+        librelinkup::restore_overlay_placement(QStringLiteral(""), 140, 64, 276, 88);
+        librelinkup_uitest::pump_events(30);
+        if (QScreen* sc = ovWin->screen()) {
+            const QRect scGeom = sc->geometry();
+            if (std::abs((ovWin->x() - scGeom.x()) - 140) > 2 ||
+                std::abs((ovWin->y() - scGeom.y()) - 64) > 2) {
+                violations.append(
+                    QStringLiteral("OverlayWidget failed to restore exact relative position (140,64); got (%1,%2)")
+                        .arg(ovWin->x() - scGeom.x())
+                        .arg(ovWin->y() - scGeom.y())
+                );
+            }
+        }
+
+        // Verify overlay window uses Qt::Tool + Qt::BypassWindowManagerHint and has no transientParent
+        // so it never creates a KDE Plasma Task Manager entry
+        if ((ovWin->flags() & Qt::Tool) != Qt::Tool ||
+            (ovWin->flags() & Qt::BypassWindowManagerHint) != Qt::BypassWindowManagerHint) {
+            violations.append(QStringLiteral("OverlayWidget must have Qt::Tool and Qt::BypassWindowManagerHint flags so it never shows an icon in the KDE Plasma Task Manager"));
         }
         if (ovWin->transientParent() != nullptr) {
             violations.append(QStringLiteral("OverlayWidget must have null transientParent so it stays independent of MainWindow"));

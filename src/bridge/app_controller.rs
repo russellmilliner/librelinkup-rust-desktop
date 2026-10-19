@@ -28,6 +28,9 @@ pub mod qobject {
             width: i32,
             height: i32,
         );
+        fn librelinkup_begin_overlay_drag();
+        fn librelinkup_update_overlay_drag();
+        fn librelinkup_end_overlay_drag(controller: Pin<&mut AppController>);
         fn librelinkup_popup_tray_menu();
         fn librelinkup_trigger_window_alert(bring_to_front: bool, flash_window: bool);
         fn librelinkup_play_alert_sound(custom_sound_path: &QString);
@@ -144,6 +147,15 @@ pub mod qobject {
             width: i32,
             height: i32,
         );
+
+        #[qinvokable]
+        fn begin_overlay_drag(self: Pin<&mut AppController>);
+
+        #[qinvokable]
+        fn update_overlay_drag(self: Pin<&mut AppController>);
+
+        #[qinvokable]
+        fn end_overlay_drag(self: Pin<&mut AppController>);
 
         #[qinvokable]
         fn popup_tray_menu_at_cursor(self: Pin<&mut AppController>);
@@ -1010,7 +1022,24 @@ impl qobject::AppController {
             self.as_mut().set_overlay_height(h);
             let settings = current_settings_from_controller(&self);
             let _ = save_default_settings(&settings);
+            log_info(
+                "SYSTEM",
+                format!("Saved overlay placement: screen='{clean_screen}' pos=({x},{y}) size={w}x{h}"),
+            );
+            self.as_mut().sync_logs_to_properties();
         }
+    }
+
+    pub fn begin_overlay_drag(self: Pin<&mut Self>) {
+        qobject::librelinkup_begin_overlay_drag();
+    }
+
+    pub fn update_overlay_drag(self: Pin<&mut Self>) {
+        qobject::librelinkup_update_overlay_drag();
+    }
+
+    pub fn end_overlay_drag(self: Pin<&mut Self>) {
+        qobject::librelinkup_end_overlay_drag(self);
     }
 
     pub fn popup_tray_menu_at_cursor(self: Pin<&mut Self>) {

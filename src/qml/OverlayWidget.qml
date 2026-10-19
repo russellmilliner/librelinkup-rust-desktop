@@ -12,7 +12,7 @@ Window {
     height: controller ? Math.max(80, Math.min(260, controller.overlayHeight)) : 88
     minimumWidth: 240
     minimumHeight: 80
-    flags: Qt.Tool | Qt.FramelessWindowHint | Qt.WindowStaysOnTopHint
+    flags: Qt.Tool | Qt.FramelessWindowHint | Qt.WindowStaysOnTopHint | Qt.BypassWindowManagerHint
     color: "transparent"
     visible: Boolean(controller && controller.overlayVisible)
 
@@ -22,70 +22,6 @@ Window {
     readonly property int opacityPercent: controller ? Math.max(20, Math.min(100, controller.overlayOpacityPercent)) : 88
     readonly property real opacityAlpha: opacityPercent / 100.0
     readonly property color statusAccentColor: Qt.color(controller ? controller.rangeColorHex : "#22c55e")
-
-    function clampAndPersistPlacement() {
-        if (!overlayWindow.visible || !overlayWindow.placementReady || !overlayWindow.controller) {
-            return
-        }
-        const sc = overlayWindow.screen
-        if (!sc) {
-            return
-        }
-        const scName = String(sc.name || "")
-        const scX = Number(sc.virtualX !== undefined ? sc.virtualX : 0)
-        const scY = Number(sc.virtualY !== undefined ? sc.virtualY : 0)
-        const scW = Number(sc.width || 1920)
-        const scH = Number(sc.height || 1080)
-
-        // Ensure the overlay window never overflows outside its monitor bounds
-        const minX = scX
-        const maxX = Math.max(scX, scX + scW - overlayWindow.width)
-        const minY = scY
-        const maxY = Math.max(scY, scY + scH - overlayWindow.height)
-
-        const clampedGlobalX = Math.max(minX, Math.min(maxX, overlayWindow.x))
-        const clampedGlobalY = Math.max(minY, Math.min(maxY, overlayWindow.y))
-
-        if (Math.abs(clampedGlobalX - overlayWindow.x) > 1) {
-            overlayWindow.x = clampedGlobalX
-        }
-        if (Math.abs(clampedGlobalY - overlayWindow.y) > 1) {
-            overlayWindow.y = clampedGlobalY
-        }
-
-        const relX = Math.round(clampedGlobalX - scX)
-        const relY = Math.round(clampedGlobalY - scY)
-        overlayWindow.controller.saveOverlayPlacement(
-            scName,
-            relX,
-            relY,
-            Math.round(overlayWindow.width),
-            Math.round(overlayWindow.height)
-        )
-    }
-
-    Timer {
-        id: savePlacementDebounce
-        interval: 220
-        repeat: false
-        onTriggered: overlayWindow.clampAndPersistPlacement()
-    }
-
-    onXChanged: {
-        if (overlayWindow.visible && overlayWindow.placementReady) {
-            savePlacementDebounce.restart()
-        }
-    }
-    onYChanged: {
-        if (overlayWindow.visible && overlayWindow.placementReady) {
-            savePlacementDebounce.restart()
-        }
-    }
-    onScreenChanged: {
-        if (overlayWindow.visible && overlayWindow.placementReady) {
-            savePlacementDebounce.restart()
-        }
-    }
 
     Rectangle {
         id: overlayPill
@@ -115,7 +51,6 @@ Window {
             id: dragMouseArea
             anchors.fill: parent
             acceptedButtons: Qt.LeftButton | Qt.RightButton
-            property point pressPos: Qt.point(0, 0)
             property bool dragging: false
 
             onPressed: function(mouse) {
@@ -125,26 +60,30 @@ Window {
                     }
                     return
                 }
-                pressPos = Qt.point(mouse.x, mouse.y)
-                dragging = true
-                if (!overlayWindow.startSystemMove()) {
-                    // Fallback manual drag handled in onPositionChanged
+                if (mouse.button === Qt.LeftButton && overlayWindow.controller) {
+                    dragging = true
+                    overlayWindow.controller.beginOverlayDrag()
                 }
             }
             onPositionChanged: function(mouse) {
-                if (dragging && (mouse.buttons & Qt.LeftButton)) {
-                    const dx = mouse.x - pressPos.x
-                    const dy = mouse.y - pressPos.y
-                    if (Math.abs(dx) > 1 || Math.abs(dy) > 1) {
-                        overlayWindow.x += dx
-                        overlayWindow.y += dy
-                    }
+                if (dragging && (mouse.buttons & Qt.LeftButton) && overlayWindow.controller) {
+                    overlayWindow.controller.updateOverlayDrag()
                 }
             }
             onReleased: function() {
                 if (dragging) {
                     dragging = false
-                    overlayWindow.clampAndPersistPlacement()
+                    if (overlayWindow.controller) {
+                        overlayWindow.controller.endOverlayDrag()
+                    }
+                }
+            }
+            onCanceled: function() {
+                if (dragging) {
+                    dragging = false
+                    if (overlayWindow.controller) {
+                        overlayWindow.controller.endOverlayDrag()
+                    }
                 }
             }
             onDoubleClicked: function(mouse) {

@@ -44,6 +44,7 @@ flatpak build \
     install -Dm644 '$REPO_ROOT/data/${APP_ID}.desktop' -t /app/share/applications/
     install -Dm644 '$REPO_ROOT/data/${APP_ID}.metainfo.xml' -t /app/share/metainfo/
     install -Dm644 '$REPO_ROOT/data/icons/${APP_ID}.svg' -t /app/share/icons/hicolor/scalable/apps/
+    install -Dm644 '$REPO_ROOT/LICENSE' '$REPO_ROOT/NOTICE' -t /app/share/licenses/${APP_ID}/
   "
 
 flatpak build-finish "$WORK_DIR/build-dir" \

@@ -37,6 +37,7 @@ modules:
       - install -Dm644 data/io.github.russellmilliner.LibreLinkUpDesktop.desktop /app/share/applications/io.github.russellmilliner.LibreLinkUpDesktop.desktop
       - install -Dm644 data/io.github.russellmilliner.LibreLinkUpDesktop.metainfo.xml /app/share/metainfo/io.github.russellmilliner.LibreLinkUpDesktop.metainfo.xml
       - install -Dm644 data/icons/io.github.russellmilliner.LibreLinkUpDesktop.svg /app/share/icons/hicolor/scalable/apps/io.github.russellmilliner.LibreLinkUpDesktop.svg
+      - install -Dm644 LICENSE NOTICE -t /app/share/licenses/io.github.russellmilliner.LibreLinkUpDesktop/
     sources:
       - type: dir
         path: .

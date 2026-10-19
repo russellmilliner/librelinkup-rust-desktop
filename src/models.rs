@@ -151,6 +151,8 @@ pub struct AppSettings {
     pub country: String,
     pub language: String,
     pub window_mode: String,
+    pub overlay_dark_theme: bool,
+    pub overlay_opacity_percent: i32,
     pub show_glucose_in_tray_icon: bool,
     pub show_glucose_in_tray_tooltip: bool,
     pub tray_icon_theme: String,
@@ -176,6 +178,8 @@ impl Default for AppSettings {
             country: "us".to_string(),
             language: "en".to_string(),
             window_mode: "windowed".to_string(),
+            overlay_dark_theme: true,
+            overlay_opacity_percent: 88,
             show_glucose_in_tray_icon: true,
             show_glucose_in_tray_tooltip: true,
             tray_icon_theme: "auto".to_string(),
@@ -234,10 +238,10 @@ impl AppSettings {
 
     pub fn format_tray_hover_tooltip(&self, snapshot: &GlucoseSnapshot) -> String {
         if !self.show_glucose_in_tray_tooltip {
-            return "LibreLinkUp Desktop".to_string();
+            return "LibreLinkUp Rust Desktop".to_string();
         }
         if snapshot.value_mg_dl <= 0.0 {
-            return "LibreLinkUp Desktop — Waiting for glucose reading...".to_string();
+            return "LibreLinkUp Rust Desktop — Waiting for glucose reading...".to_string();
         }
         let val_str = format_glucose_value(snapshot.value_mg_dl, &self.result_unit);
         let arrow = trend_arrow_symbol(snapshot.trend_arrow);

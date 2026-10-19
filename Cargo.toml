@@ -1,11 +1,11 @@
 [package]
 name = "librelinkup-kde"
-version = "0.2.0"
+version = "0.1.0"
 edition = "2021"
 license = "Apache-2.0"
-description = "KDE Plasma 6 / Kirigami Blood Glucose Monitor for LibreLinkUp"
-homepage = "https://github.com/russellmilliner/librelinkup-kde"
-repository = "https://github.com/russellmilliner/librelinkup-kde"
+description = "LibreLinkUp Rust Desktop — KDE Plasma 6 / Kirigami Blood Glucose Monitor for LibreLinkUp"
+homepage = "https://github.com/russellmilliner/librelinkup-rust-desktop"
+repository = "https://github.com/russellmilliner/librelinkup-rust-desktop"
 
 [lib]
 name = "librelinkup_core"

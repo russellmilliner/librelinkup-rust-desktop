@@ -9,7 +9,7 @@ import io.github.librelinkup 1.0
 Kirigami.ApplicationWindow {
     id: root
     objectName: "librelinkupMainWindow"
-    title: qsTr("LibreLinkUp Desktop v%1 — KDE Plasma 6").arg(appController.appVersion)
+    title: qsTr("LibreLinkUp Rust Desktop v%1 — KDE Plasma 6").arg(appController.appVersion)
     width: 980
     height: 680
     minimumWidth: 780
@@ -45,6 +45,10 @@ Kirigami.ApplicationWindow {
 
     function openLogViewer() {
         logViewerWindow.openLogWindow()
+    }
+
+    function openAboutDialog() {
+        aboutDialogWindow.openAboutWindow()
     }
 
     onClosing: function(close) {
@@ -84,6 +88,11 @@ Kirigami.ApplicationWindow {
         controller: appController
     }
 
+    AboutDialog {
+        id: aboutDialogWindow
+        controller: appController
+    }
+
     OverlayWidget {
         id: overlayWidgetWindow
         controller: appController
@@ -113,7 +122,7 @@ Kirigami.ApplicationWindow {
 
             Kirigami.Heading {
                 level: 4
-                text: qsTr("LibreLinkUp")
+                text: qsTr("LibreLinkUp Rust")
                 font.bold: true
             }
 
@@ -181,8 +190,53 @@ Kirigami.ApplicationWindow {
             QQC2.ToolButton {
                 objectName: "tabButtonLogs"
                 icon.name: "utilities-log-viewer"
-                text: qsTr("Logs (%1)").arg(appController.eventLogCount)
+                text: root.width >= 860
+                    ? qsTr("Logs (%1)").arg(appController.eventLogCount)
+                    : qsTr("Logs")
+                QQC2.ToolTip.visible: hovered
+                QQC2.ToolTip.text: qsTr("Open Diagnostic Log Viewer (%1 entries)").arg(appController.eventLogCount)
                 onClicked: root.openLogViewer()
+            }
+
+            QQC2.ToolButton {
+                objectName: "tabButtonAbout"
+                icon.name: "help-about"
+                text: qsTr("About")
+                display: root.width >= 880 ? QQC2.AbstractButton.TextBesideIcon : QQC2.AbstractButton.IconOnly
+                QQC2.ToolTip.visible: hovered
+                QQC2.ToolTip.text: qsTr("About LibreLinkUp Rust Desktop v%1").arg(appController.appVersion)
+                onClicked: root.openAboutDialog()
+            }
+
+            Rectangle {
+                id: headerKofiBadge
+                objectName: "headerKofiBadge"
+                radius: 12
+                color: headerKofiMouse.containsMouse ? "#c81e1e" : "#d93834"
+                border.color: "#ffffff33"
+                border.width: 1
+                implicitWidth: headerKofiLabel.implicitWidth + 12
+                implicitHeight: 24
+
+                QQC2.Label {
+                    id: headerKofiLabel
+                    anchors.centerIn: parent
+                    text: root.width >= 840 ? qsTr("☕ Ko-fi") : qsTr("☕")
+                    font.bold: true
+                    font.pointSize: 8.5
+                    color: "#ffffff"
+                }
+
+                MouseArea {
+                    id: headerKofiMouse
+                    anchors.fill: parent
+                    hoverEnabled: true
+                    cursorShape: Qt.PointingHandCursor
+                    onClicked: Qt.openUrlExternally("https://ko-fi.com/russellmilliner")
+                }
+
+                QQC2.ToolTip.visible: headerKofiMouse.containsMouse
+                QQC2.ToolTip.text: qsTr("Buy Russell Milliner a coffee on Ko-fi (https://ko-fi.com/russellmilliner)")
             }
 
             QQC2.ToolButton {
@@ -548,7 +602,7 @@ Kirigami.ApplicationWindow {
 
                             RowLayout {
                                 Layout.fillWidth: true
-                                spacing: 8
+                                spacing: 6
                                 Kirigami.Heading {
                                     level: 3
                                     text: appController.patientName.length > 0
@@ -558,6 +612,15 @@ Kirigami.ApplicationWindow {
                                     Layout.fillWidth: true
                                     Layout.preferredWidth: 0
                                     elide: Text.ElideRight
+                                }
+                                QQC2.ToolButton {
+                                    icon.name: appController.overlayDarkTheme ? "weather-clear-night" : "color-picker"
+                                    text: qsTr("Overlay Dark")
+                                    checkable: true
+                                    checked: appController.overlayDarkTheme
+                                    QQC2.ToolTip.visible: hovered
+                                    QQC2.ToolTip.text: qsTr("Toggle dark slate background for the floating desktop overlay")
+                                    onClicked: appController.updateOverlayDarkTheme(!appController.overlayDarkTheme)
                                 }
                                 QQC2.ToolButton {
                                     icon.name: "window-duplicate"
@@ -1193,9 +1256,10 @@ Kirigami.ApplicationWindow {
 
                         Kirigami.Heading {
                             level: 3
-                            text: qsTr("Theme, Units & Window Mode")
+                            text: qsTr("Theme, Units & Desktop Overlay")
                             color: Kirigami.Theme.textColor
                             Layout.fillWidth: true
+                            Layout.preferredWidth: 0
                             wrapMode: Text.WordWrap
                         }
 
@@ -1261,6 +1325,44 @@ Kirigami.ApplicationWindow {
                                     ? 1
                                     : (appController.windowMode === "overlayTransparent" ? 2 : 0)
                                 onActivated: appController.updateWindowMode(currentValue)
+                            }
+                        }
+
+                        QQC2.Switch {
+                            objectName: "overlayDarkThemeSwitch"
+                            text: qsTr("Desktop Overlay Dark Theme (Dark slate background with status accent border)")
+                            checked: appController.overlayDarkTheme
+                            onToggled: appController.updateOverlayDarkTheme(checked)
+                            Layout.fillWidth: true
+                        }
+
+                        RowLayout {
+                            Layout.fillWidth: true
+                            spacing: 12
+                            QQC2.Label {
+                                text: qsTr("Desktop Overlay Opacity (%1%):").arg(appController.overlayOpacityPercent)
+                                Layout.preferredWidth: 190
+                                color: Kirigami.Theme.textColor
+                            }
+                            QQC2.Slider {
+                                id: overlayOpacitySlider
+                                objectName: "overlayOpacitySlider"
+                                Layout.fillWidth: true
+                                Layout.maximumWidth: 220
+                                from: 20
+                                to: 100
+                                stepSize: 5
+                                value: appController.overlayOpacityPercent
+                                onMoved: appController.updateOverlayOpacityPercent(Math.round(value))
+                            }
+                            QQC2.SpinBox {
+                                id: overlayOpacitySpin
+                                objectName: "overlayOpacitySpin"
+                                from: 20
+                                to: 100
+                                stepSize: 5
+                                value: appController.overlayOpacityPercent
+                                onValueModified: appController.updateOverlayOpacityPercent(value)
                             }
                         }
 
@@ -1542,6 +1644,227 @@ Kirigami.ApplicationWindow {
                                     appController.logout()
                                     root.activeTab = "dashboard"
                                 }
+                            }
+                        }
+                    }
+                }
+
+                Rectangle {
+                    objectName: "supportAboutCard"
+                    Layout.fillWidth: true
+                    implicitHeight: supportCol.implicitHeight + 28
+                    radius: 10
+                    color: Kirigami.Theme.alternateBackgroundColor
+                    border.color: Qt.alpha(Kirigami.Theme.textColor, 0.15)
+                    border.width: 1
+
+                    ColumnLayout {
+                        id: supportCol
+                        anchors.left: parent.left
+                        anchors.right: parent.right
+                        anchors.top: parent.top
+                        anchors.margins: 14
+                        spacing: 10
+
+                        RowLayout {
+                            Layout.fillWidth: true
+                            spacing: 12
+
+                            Kirigami.Heading {
+                                level: 3
+                                text: qsTr("About & Support LibreLinkUp Rust Desktop")
+                                color: Kirigami.Theme.textColor
+                                Layout.fillWidth: true
+                                Layout.preferredWidth: 0
+                                wrapMode: Text.WordWrap
+                            }
+
+                            Rectangle {
+                                id: aboutKofiButton
+                                objectName: "aboutKofiButton"
+                                radius: 15
+                                color: aboutKofiMouse.containsMouse ? "#c81e1e" : "#d93834"
+                                border.color: "#ffffff33"
+                                border.width: 1
+                                implicitWidth: aboutKofiRow.implicitWidth + 22
+                                implicitHeight: 32
+
+                                RowLayout {
+                                    id: aboutKofiRow
+                                    anchors.centerIn: parent
+                                    spacing: 6
+
+                                    QQC2.Label {
+                                        text: "☕"
+                                        font.pointSize: 11
+                                    }
+
+                                    QQC2.Label {
+                                        text: qsTr("Buy Me a Coffee")
+                                        font.bold: true
+                                        font.pointSize: 10
+                                        color: "#ffffff"
+                                    }
+                                }
+
+                                MouseArea {
+                                    id: aboutKofiMouse
+                                    anchors.fill: parent
+                                    hoverEnabled: true
+                                    cursorShape: Qt.PointingHandCursor
+                                    onClicked: Qt.openUrlExternally("https://ko-fi.com/russellmilliner")
+                                }
+
+                                QQC2.ToolTip.visible: aboutKofiMouse.containsMouse
+                                QQC2.ToolTip.text: qsTr("Support Russell Milliner on Ko-fi (https://ko-fi.com/russellmilliner)")
+                            }
+                        }
+
+                        QQC2.Label {
+                            text: qsTr("LibreLinkUp Rust Desktop v%1 — Native Rust + KDE Plasma 6 Kirigami blood glucose monitor.").arg(appController.appVersion)
+                            color: Kirigami.Theme.textColor
+                            Layout.fillWidth: true
+                            Layout.preferredWidth: 0
+                            wrapMode: Text.WordWrap
+                        }
+
+                        RowLayout {
+                            Layout.fillWidth: true
+                            spacing: 8
+                            QQC2.Label {
+                                text: qsTr("Author:")
+                                font.bold: true
+                                color: Kirigami.Theme.textColor
+                            }
+                            QQC2.Label {
+                                text: "Russell Milliner (https://github.com/russellmilliner)"
+                                color: root.isLightTheme ? "#0284c7" : "#38bdf8"
+                                font.underline: authorCardMouse.containsMouse
+                                Layout.fillWidth: true
+                                Layout.preferredWidth: 0
+                                elide: Text.ElideRight
+
+                                MouseArea {
+                                    id: authorCardMouse
+                                    anchors.fill: parent
+                                    hoverEnabled: true
+                                    cursorShape: Qt.PointingHandCursor
+                                    onClicked: Qt.openUrlExternally("https://github.com/russellmilliner")
+                                }
+                            }
+                        }
+
+                        RowLayout {
+                            Layout.fillWidth: true
+                            spacing: 8
+                            QQC2.Label {
+                                text: qsTr("GitHub Repository:")
+                                font.bold: true
+                                color: Kirigami.Theme.textColor
+                            }
+                            QQC2.Label {
+                                text: "https://github.com/russellmilliner/librelinkup-rust-desktop"
+                                color: root.isLightTheme ? "#0284c7" : "#38bdf8"
+                                font.underline: ghUrlMouse.containsMouse
+                                Layout.fillWidth: true
+                                Layout.preferredWidth: 0
+                                elide: Text.ElideRight
+
+                                MouseArea {
+                                    id: ghUrlMouse
+                                    anchors.fill: parent
+                                    hoverEnabled: true
+                                    cursorShape: Qt.PointingHandCursor
+                                    onClicked: Qt.openUrlExternally("https://github.com/russellmilliner/librelinkup-rust-desktop")
+                                }
+                            }
+                        }
+
+                        RowLayout {
+                            Layout.fillWidth: true
+                            spacing: 8
+                            QQC2.Label {
+                                text: qsTr("Ko-fi Support:")
+                                font.bold: true
+                                color: Kirigami.Theme.textColor
+                            }
+                            QQC2.Label {
+                                text: "https://ko-fi.com/russellmilliner"
+                                color: root.isLightTheme ? "#0284c7" : "#38bdf8"
+                                font.underline: kofiUrlMouse.containsMouse
+                                Layout.fillWidth: true
+                                Layout.preferredWidth: 0
+                                elide: Text.ElideRight
+
+                                MouseArea {
+                                    id: kofiUrlMouse
+                                    anchors.fill: parent
+                                    hoverEnabled: true
+                                    cursorShape: Qt.PointingHandCursor
+                                    onClicked: Qt.openUrlExternally("https://ko-fi.com/russellmilliner")
+                                }
+                            }
+                        }
+
+                        RowLayout {
+                            Layout.fillWidth: true
+                            spacing: 8
+                            QQC2.Label {
+                                text: qsTr("License & Version:")
+                                font.bold: true
+                                color: Kirigami.Theme.textColor
+                            }
+                            QQC2.Label {
+                                text: qsTr("v%1 • Apache License 2.0 (https://www.apache.org/licenses/LICENSE-2.0)").arg(appController.appVersion)
+                                color: root.isLightTheme ? "#0284c7" : "#38bdf8"
+                                font.underline: licenseCardMouse.containsMouse
+                                Layout.fillWidth: true
+                                Layout.preferredWidth: 0
+                                elide: Text.ElideRight
+
+                                MouseArea {
+                                    id: licenseCardMouse
+                                    anchors.fill: parent
+                                    hoverEnabled: true
+                                    cursorShape: Qt.PointingHandCursor
+                                    onClicked: Qt.openUrlExternally("https://www.apache.org/licenses/LICENSE-2.0")
+                                }
+                            }
+                        }
+
+                        RowLayout {
+                            Layout.fillWidth: true
+                            spacing: 8
+                            QQC2.Label {
+                                text: qsTr("Attribution:")
+                                font.bold: true
+                                color: Kirigami.Theme.textColor
+                            }
+                            QQC2.Label {
+                                text: "Based on Crazy-Marvin/LibreLinkUpDesktop (Apache-2.0)"
+                                color: root.isLightTheme ? "#0284c7" : "#38bdf8"
+                                font.underline: upstreamCardMouse.containsMouse
+                                Layout.fillWidth: true
+                                Layout.preferredWidth: 0
+                                elide: Text.ElideRight
+
+                                MouseArea {
+                                    id: upstreamCardMouse
+                                    anchors.fill: parent
+                                    hoverEnabled: true
+                                    cursorShape: Qt.PointingHandCursor
+                                    onClicked: Qt.openUrlExternally("https://github.com/Crazy-Marvin/LibreLinkUpDesktop")
+                                }
+                            }
+                        }
+
+                        RowLayout {
+                            Layout.fillWidth: true
+                            spacing: 8
+                            QQC2.Button {
+                                icon.name: "help-about"
+                                text: qsTr("Open About LibreLinkUp Rust Desktop")
+                                onClicked: root.openAboutDialog()
                             }
                         }
                     }

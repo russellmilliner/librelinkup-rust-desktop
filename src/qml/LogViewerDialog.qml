@@ -8,7 +8,7 @@ import org.kde.kirigami as Kirigami
 Window {
     id: logViewerDialog
     objectName: "librelinkupLogViewerWindow"
-    title: qsTr("LibreLinkUp Desktop — Diagnostic Log Viewer")
+    title: qsTr("LibreLinkUp Rust Desktop — Diagnostic Log Viewer")
     width: 880
     height: 560
     minimumWidth: 680

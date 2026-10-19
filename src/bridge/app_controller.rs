@@ -57,6 +57,8 @@ pub mod qobject {
         #[qproperty(QString, theme_mode)]
         #[qproperty(QString, window_mode)]
         #[qproperty(bool, overlay_visible)]
+        #[qproperty(bool, overlay_dark_theme)]
+        #[qproperty(i32, overlay_opacity_percent)]
         #[qproperty(bool, show_glucose_in_tray_icon)]
         #[qproperty(bool, show_glucose_in_tray_tooltip)]
         #[qproperty(bool, autostart_enabled)]
@@ -109,6 +111,12 @@ pub mod qobject {
 
         #[qinvokable]
         fn update_overlay_visible(self: Pin<&mut AppController>, visible: bool);
+
+        #[qinvokable]
+        fn update_overlay_dark_theme(self: Pin<&mut AppController>, enabled: bool);
+
+        #[qinvokable]
+        fn update_overlay_opacity_percent(self: Pin<&mut AppController>, opacity_percent: i32);
 
         #[qinvokable]
         fn update_show_glucose_in_tray_icon(self: Pin<&mut AppController>, enabled: bool);
@@ -213,6 +221,8 @@ pub struct AppControllerRust {
     theme_mode: QString,
     window_mode: QString,
     overlay_visible: bool,
+    overlay_dark_theme: bool,
+    overlay_opacity_percent: i32,
     show_glucose_in_tray_icon: bool,
     show_glucose_in_tray_tooltip: bool,
     autostart_enabled: bool,
@@ -269,6 +279,8 @@ impl Default for AppControllerRust {
             window_mode: QString::from(settings.window_mode.as_str()),
             overlay_visible: settings.window_mode == "overlay"
                 || settings.window_mode == "overlayTransparent",
+            overlay_dark_theme: settings.overlay_dark_theme,
+            overlay_opacity_percent: settings.overlay_opacity_percent.clamp(20, 100),
             show_glucose_in_tray_icon: settings.show_glucose_in_tray_icon,
             show_glucose_in_tray_tooltip: settings.show_glucose_in_tray_tooltip,
             autostart_enabled: settings.autostart_enabled,
@@ -302,6 +314,8 @@ fn current_settings_from_controller(ctrl: &qobject::AppController) -> AppSetting
         country: ctrl.country().to_string(),
         language: ctrl.language().to_string(),
         window_mode: ctrl.window_mode().to_string(),
+        overlay_dark_theme: *ctrl.overlay_dark_theme(),
+        overlay_opacity_percent: (*ctrl.overlay_opacity_percent()).clamp(20, 100),
         show_glucose_in_tray_icon: *ctrl.show_glucose_in_tray_icon(),
         show_glucose_in_tray_tooltip: *ctrl.show_glucose_in_tray_tooltip(),
         tray_icon_theme: "auto".to_string(),
@@ -341,7 +355,7 @@ fn sync_autostart_desktop_file(enabled: bool, start_minimized: bool) {
     };
 
     let content = format!(
-        "[Desktop Entry]\nType=Application\nName=LibreLinkUp Desktop\nComment=KDE Plasma 6 Blood Glucose Monitor for LibreLinkUp\nExec={exec_cmd}\nIcon={APP_ID}\nTerminal=false\nStartupNotify=false\nX-KDE-autostart-after=panel\n"
+        "[Desktop Entry]\nType=Application\nName=LibreLinkUp Rust Desktop\nComment=KDE Plasma 6 Blood Glucose Monitor for LibreLinkUp\nExec={exec_cmd}\nIcon={APP_ID}\nTerminal=false\nStartupNotify=false\nX-KDE-autostart-after=panel\n"
     );
     if fs::write(&desktop_path, content).is_ok() {
         log_info(
@@ -825,6 +839,11 @@ impl qobject::AppController {
         let is_overlay = valid == "overlay" || valid == "overlayTransparent";
         self.as_mut().set_window_mode(QString::from(valid.as_str()));
         self.as_mut().set_overlay_visible(is_overlay);
+        if valid == "overlayTransparent" && *self.overlay_opacity_percent() > 75 {
+            self.as_mut().set_overlay_opacity_percent(55);
+        } else if valid == "overlay" && *self.overlay_opacity_percent() < 75 {
+            self.as_mut().set_overlay_opacity_percent(88);
+        }
         let settings = current_settings_from_controller(&self);
         let _ = save_default_settings(&settings);
         log_info("SYSTEM", format!("Set window mode to '{valid}'."));
@@ -846,6 +865,29 @@ impl qobject::AppController {
             format!("Floating desktop overlay visible: {visible}"),
         );
         self.as_mut().sync_tray_and_ui();
+        self.as_mut().sync_logs_to_properties();
+    }
+
+    pub fn update_overlay_dark_theme(mut self: Pin<&mut Self>, enabled: bool) {
+        self.as_mut().set_overlay_dark_theme(enabled);
+        let settings = current_settings_from_controller(&self);
+        let _ = save_default_settings(&settings);
+        log_info(
+            "SYSTEM",
+            format!("Desktop overlay dark theme: {enabled}"),
+        );
+        self.as_mut().sync_logs_to_properties();
+    }
+
+    pub fn update_overlay_opacity_percent(mut self: Pin<&mut Self>, opacity_percent: i32) {
+        let clamped = opacity_percent.clamp(20, 100);
+        self.as_mut().set_overlay_opacity_percent(clamped);
+        let settings = current_settings_from_controller(&self);
+        let _ = save_default_settings(&settings);
+        log_info(
+            "SYSTEM",
+            format!("Desktop overlay opacity set to {clamped}%"),
+        );
         self.as_mut().sync_logs_to_properties();
     }
 

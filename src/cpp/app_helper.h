@@ -11,6 +11,7 @@
 #include <QColor>
 #include <QCoreApplication>
 #include <QDateTime>
+#include <QDesktopServices>
 #include <QDir>
 #include <QEvent>
 #include <QFile>
@@ -220,6 +221,16 @@ inline QWindow* find_log_viewer_window() {
     return nullptr;
 }
 
+inline QWindow* find_about_window() {
+    const auto windows = QGuiApplication::topLevelWindows();
+    for (QWindow* w : windows) {
+        if (w && w->objectName() == QStringLiteral("librelinkupAboutWindow")) {
+            return w;
+        }
+    }
+    return nullptr;
+}
+
 inline bool is_main_window_shown() {
     QWindow* win = find_main_window();
     if (!win) {
@@ -264,6 +275,19 @@ inline void show_log_viewer_window() {
     }
     if (QWindow* mainWin = find_main_window()) {
         QMetaObject::invokeMethod(mainWin, "openLogViewer", Qt::QueuedConnection);
+    }
+}
+
+inline void show_about_window() {
+    if (QWindow* aboutWin = find_about_window()) {
+        aboutWin->showNormal();
+        aboutWin->show();
+        aboutWin->raise();
+        aboutWin->requestActivate();
+        return;
+    }
+    if (QWindow* mainWin = find_main_window()) {
+        QMetaObject::invokeMethod(mainWin, "openAboutDialog", Qt::QueuedConnection);
     }
 }
 
@@ -522,7 +546,22 @@ private:
             show_log_viewer_window();
         });
 
-        m_showAction = m_menu->addAction(QStringLiteral("Show LibreLinkUp Desktop"));
+        QAction* aboutAction = m_menu->addAction(
+            QIcon::fromTheme(QStringLiteral("help-about")),
+            QStringLiteral("About LibreLinkUp Rust Desktop...")
+        );
+        QObject::connect(aboutAction, &QAction::triggered, []() {
+            show_about_window();
+        });
+
+        QAction* kofiAction = m_menu->addAction(
+            QStringLiteral("☕ Buy Me a Coffee (Ko-fi)...")
+        );
+        QObject::connect(kofiAction, &QAction::triggered, []() {
+            QDesktopServices::openUrl(QUrl(QStringLiteral("https://ko-fi.com/russellmilliner")));
+        });
+
+        m_showAction = m_menu->addAction(QStringLiteral("Show LibreLinkUp Rust Desktop"));
         QObject::connect(m_showAction, &QAction::triggered, []() {
             show_main_window();
         });
@@ -536,7 +575,7 @@ private:
 
         QAction* quitAction = m_menu->addAction(
             QIcon::fromTheme(QStringLiteral("application-exit")),
-            QStringLiteral("Quit LibreLinkUp Desktop")
+            QStringLiteral("Quit LibreLinkUp Rust Desktop")
         );
         QObject::connect(quitAction, &QAction::triggered, []() {
             QCoreApplication::quit();
@@ -717,8 +756,8 @@ inline int librelinkup_run_app(bool start_minimized) {
     static char* argv[] = {arg0, nullptr};
 
     QApplication app(argc, argv);
-    QGuiApplication::setApplicationName(QStringLiteral("LibreLinkUp Desktop"));
-    QGuiApplication::setApplicationDisplayName(QStringLiteral("LibreLinkUp Desktop"));
+    QGuiApplication::setApplicationName(QStringLiteral("LibreLinkUp Rust Desktop"));
+    QGuiApplication::setApplicationDisplayName(QStringLiteral("LibreLinkUp Rust Desktop"));
     QGuiApplication::setDesktopFileName(QStringLiteral("io.github.russellmilliner.LibreLinkUpDesktop"));
     QGuiApplication::setQuitOnLastWindowClosed(false);
 
@@ -822,6 +861,7 @@ inline void inspect_item_tree(
         QStringLiteral("displaySettingsCard"),
         QStringLiteral("alertsSettingsCard"),
         QStringLiteral("accountSecurityCard"),
+        QStringLiteral("supportAboutCard"),
         QStringLiteral("overlayPill"),
         QStringLiteral("mainHeaderToolBar")
     };
@@ -1063,7 +1103,23 @@ inline QString librelinkup_run_ui_overflow_tests() {
         logWin->hide();
     }
 
-    // State D: Inspect OverlayWidget (268x96 and minimum 220x80)
+    // State C2: Inspect AboutDialog at default (580x490) and minimum (480x400) sizes
+    if (QQuickWindow* aboutWin = qobject_cast<QQuickWindow*>(librelinkup::find_about_window())) {
+        QMetaObject::invokeMethod(aboutWin, "openAboutWindow", Qt::DirectConnection);
+        for (const QSize& abSz : {QSize(580, 490), QSize(480, 400)}) {
+            aboutWin->resize(abSz);
+            librelinkup_uitest::pump_events(40);
+            librelinkup_uitest::inspect_item_tree(
+                aboutWin->contentItem(),
+                aboutWin,
+                QStringLiteral("AboutDialog %1x%2").arg(abSz.width()).arg(abSz.height()),
+                violations
+            );
+        }
+        aboutWin->hide();
+    }
+
+    // State D: Inspect OverlayWidget (268x96 and minimum 220x80) across dark/color modes and opacities
     QMetaObject::invokeMethod(
         ctrl,
         "updateOverlayVisible",
@@ -1072,15 +1128,29 @@ inline QString librelinkup_run_ui_overflow_tests() {
     );
     librelinkup_uitest::pump_events(50);
     if (QQuickWindow* ovWin = qobject_cast<QQuickWindow*>(librelinkup::find_overlay_window())) {
-        for (const QSize& ovSz : {QSize(268, 96), QSize(220, 80)}) {
-            ovWin->resize(ovSz);
-            librelinkup_uitest::pump_events(40);
-            librelinkup_uitest::inspect_item_tree(
-                ovWin->contentItem(),
-                ovWin,
-                QStringLiteral("OverlayWidget %1x%2").arg(ovSz.width()).arg(ovSz.height()),
-                violations
+        for (bool darkOv : {true, false}) {
+            QMetaObject::invokeMethod(
+                ctrl,
+                "updateOverlayDarkTheme",
+                Qt::DirectConnection,
+                Q_ARG(bool, darkOv)
             );
+            QMetaObject::invokeMethod(
+                ctrl,
+                "updateOverlayOpacityPercent",
+                Qt::DirectConnection,
+                Q_ARG(int, darkOv ? 65 : 90)
+            );
+            for (const QSize& ovSz : {QSize(268, 96), QSize(220, 80)}) {
+                ovWin->resize(ovSz);
+                librelinkup_uitest::pump_events(40);
+                librelinkup_uitest::inspect_item_tree(
+                    ovWin->contentItem(),
+                    ovWin,
+                    QStringLiteral("OverlayWidget(dark=%1) %2x%3").arg(darkOv ? 1 : 0).arg(ovSz.width()).arg(ovSz.height()),
+                    violations
+                );
+            }
         }
         ovWin->hide();
     }

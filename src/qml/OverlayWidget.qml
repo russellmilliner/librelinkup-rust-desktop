@@ -7,7 +7,7 @@ import org.kde.kirigami as Kirigami
 Window {
     id: overlayWindow
     objectName: "librelinkupOverlayWindow"
-    title: qsTr("LibreLinkUp Overlay")
+    title: qsTr("LibreLinkUp Rust Desktop Overlay")
     width: 268
     height: 96
     minimumWidth: 220
@@ -17,19 +17,33 @@ Window {
     visible: Boolean(controller && controller.overlayVisible)
 
     property var controller: null
-    readonly property bool isTransparentMode: Boolean(
-        controller && controller.windowMode === "overlayTransparent"
-    )
+    readonly property bool isDarkOverlay: Boolean(controller ? controller.overlayDarkTheme : true)
+    readonly property int opacityPercent: controller ? Math.max(20, Math.min(100, controller.overlayOpacityPercent)) : 88
+    readonly property real opacityAlpha: opacityPercent / 100.0
+    readonly property color statusAccentColor: Qt.color(controller ? controller.rangeColorHex : "#22c55e")
 
     Rectangle {
+        id: overlayPill
         objectName: "overlayPill"
         anchors.fill: parent
         radius: 14
-        color: overlayWindow.isTransparentMode
-            ? Qt.rgba(0.08, 0.10, 0.14, 0.52)
-            : (controller ? controller.rangeColorHex : "#22c55e")
-        border.color: Qt.rgba(1, 1, 1, 0.35)
-        border.width: 1.5
+        color: overlayWindow.isDarkOverlay
+            ? Qt.rgba(0.06, 0.09, 0.16, overlayWindow.opacityAlpha)
+            : Qt.rgba(
+                overlayWindow.statusAccentColor.r,
+                overlayWindow.statusAccentColor.g,
+                overlayWindow.statusAccentColor.b,
+                overlayWindow.opacityAlpha
+            )
+        border.color: overlayWindow.isDarkOverlay
+            ? Qt.rgba(
+                overlayWindow.statusAccentColor.r,
+                overlayWindow.statusAccentColor.g,
+                overlayWindow.statusAccentColor.b,
+                Math.min(1.0, overlayWindow.opacityAlpha + 0.15)
+            )
+            : Qt.rgba(1, 1, 1, 0.42)
+        border.width: overlayWindow.isDarkOverlay ? 2.0 : 1.5
 
         MouseArea {
             anchors.fill: parent
@@ -40,16 +54,23 @@ Window {
                     overlayWindow.controller.showMainWindow()
                 }
             }
+            onWheel: function(wheel) {
+                if (overlayWindow.controller) {
+                    const step = wheel.angleDelta.y > 0 ? 5 : -5
+                    const nextVal = Math.max(20, Math.min(100, overlayWindow.opacityPercent + step))
+                    overlayWindow.controller.updateOverlayOpacityPercent(nextVal)
+                }
+            }
         }
 
         RowLayout {
             objectName: "overlayRow"
             anchors.fill: parent
-            anchors.leftMargin: 14
-            anchors.rightMargin: 10
-            anchors.topMargin: 8
-            anchors.bottomMargin: 8
-            spacing: 8
+            anchors.leftMargin: 12
+            anchors.rightMargin: 8
+            anchors.topMargin: 6
+            anchors.bottomMargin: 6
+            spacing: 6
 
             ColumnLayout {
                 Layout.fillWidth: true
@@ -58,18 +79,31 @@ Window {
                 RowLayout {
                     Layout.fillWidth: true
                     spacing: 6
+
+                    Rectangle {
+                        visible: overlayWindow.isDarkOverlay
+                        Layout.preferredWidth: 8
+                        Layout.preferredHeight: 8
+                        radius: 4
+                        color: overlayWindow.statusAccentColor
+                    }
+
                     QQC2.Label {
                         text: controller ? controller.glucoseDisplay : "--"
                         font.pointSize: 20
                         font.bold: true
                         color: "#ffffff"
                     }
+
                     QQC2.Label {
                         text: controller ? controller.resultUnit : "mg/dL"
                         font.pointSize: 9.5
                         font.bold: true
-                        color: Qt.rgba(1, 1, 1, 0.9)
+                        color: overlayWindow.isDarkOverlay
+                            ? overlayWindow.statusAccentColor
+                            : Qt.rgba(1, 1, 1, 0.92)
                         Layout.fillWidth: true
+                        Layout.preferredWidth: 0
                         elide: Text.ElideRight
                     }
                 }
@@ -79,9 +113,12 @@ Window {
                         ? (controller.rangeStatusLabel + " • " + controller.trendDescription)
                         : qsTr("Waiting...")
                     font.pointSize: 8.5
-                    color: Qt.rgba(1, 1, 1, 0.88)
+                    color: overlayWindow.isDarkOverlay
+                        ? Qt.rgba(0.88, 0.92, 0.98, 0.92)
+                        : Qt.rgba(1, 1, 1, 0.90)
                     elide: Text.ElideRight
                     Layout.fillWidth: true
+                    Layout.preferredWidth: 0
                 }
             }
 
@@ -89,9 +126,18 @@ Window {
                 Layout.preferredWidth: 36
                 Layout.preferredHeight: 36
                 radius: 18
-                color: Qt.rgba(1, 1, 1, 0.24)
-                border.color: Qt.rgba(1, 1, 1, 0.45)
-                border.width: 1
+                color: overlayWindow.isDarkOverlay
+                    ? Qt.rgba(
+                        overlayWindow.statusAccentColor.r,
+                        overlayWindow.statusAccentColor.g,
+                        overlayWindow.statusAccentColor.b,
+                        0.24
+                    )
+                    : Qt.rgba(1, 1, 1, 0.24)
+                border.color: overlayWindow.isDarkOverlay
+                    ? overlayWindow.statusAccentColor
+                    : Qt.rgba(1, 1, 1, 0.45)
+                border.width: 1.5
 
                 QQC2.Label {
                     anchors.centerIn: parent
@@ -103,23 +149,44 @@ Window {
             }
 
             ColumnLayout {
-                spacing: 2
+                spacing: 1
+
                 QQC2.ToolButton {
-                    icon.name: "window-restore"
-                    implicitWidth: 26
-                    implicitHeight: 26
+                    objectName: "overlayThemeToggleBtn"
+                    display: QQC2.AbstractButton.IconOnly
+                    icon.name: overlayWindow.isDarkOverlay ? "weather-clear-night" : "color-picker"
+                    implicitWidth: 22
+                    implicitHeight: 22
                     QQC2.ToolTip.visible: hovered
-                    QQC2.ToolTip.text: qsTr("Open Main Window")
+                    QQC2.ToolTip.text: overlayWindow.isDarkOverlay
+                        ? qsTr("Overlay Dark Theme ON (Click for Color Fill • Scroll wheel adjusts %1% opacity)").arg(overlayWindow.opacityPercent)
+                        : qsTr("Overlay Color Fill ON (Click for Dark Theme • Scroll wheel adjusts %1% opacity)").arg(overlayWindow.opacityPercent)
+                    onClicked: {
+                        if (overlayWindow.controller) {
+                            overlayWindow.controller.updateOverlayDarkTheme(!overlayWindow.isDarkOverlay)
+                        }
+                    }
+                }
+
+                QQC2.ToolButton {
+                    display: QQC2.AbstractButton.IconOnly
+                    icon.name: "window-restore"
+                    implicitWidth: 22
+                    implicitHeight: 22
+                    QQC2.ToolTip.visible: hovered
+                    QQC2.ToolTip.text: qsTr("Open LibreLinkUp Rust Desktop")
                     onClicked: {
                         if (overlayWindow.controller) {
                             overlayWindow.controller.showMainWindow()
                         }
                     }
                 }
+
                 QQC2.ToolButton {
+                    display: QQC2.AbstractButton.IconOnly
                     icon.name: "window-close"
-                    implicitWidth: 26
-                    implicitHeight: 26
+                    implicitWidth: 22
+                    implicitHeight: 22
                     QQC2.ToolTip.visible: hovered
                     QQC2.ToolTip.text: qsTr("Hide Overlay")
                     onClicked: {

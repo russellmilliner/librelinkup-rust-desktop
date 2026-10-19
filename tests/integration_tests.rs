@@ -163,7 +163,7 @@ fn test_tray_icon_and_hover_tooltip_modes() {
     settings.show_glucose_in_tray_tooltip = false;
     assert_eq!(settings.format_tray_icon_badge(&snap), "118");
     let disabled_tip = settings.format_tray_hover_tooltip(&snap);
-    assert_eq!(disabled_tip, "LibreLinkUp Desktop");
+    assert_eq!(disabled_tip, "LibreLinkUp Rust Desktop");
 
     // Case 3: Tray icon badge disabled, hover info enabled with mmol/L
     settings.show_glucose_in_tray_icon = false;
@@ -209,6 +209,10 @@ fn test_glucose_conversion_settings_persistence_and_alerts() {
         GlucoseRangeStatus::CriticalHigh
     );
 
+    let default_settings = AppSettings::default();
+    assert!(default_settings.overlay_dark_theme);
+    assert_eq!(default_settings.overlay_opacity_percent, 88);
+
     let settings = AppSettings {
         theme_mode: "dark".to_string(),
         result_unit: "mmol/L".to_string(),
@@ -217,6 +221,8 @@ fn test_glucose_conversion_settings_persistence_and_alerts() {
         override_threshold: true,
         custom_target_low: 80.0,
         custom_target_high: 160.0,
+        overlay_dark_theme: false,
+        overlay_opacity_percent: 65,
         ..Default::default()
     };
     assert!(settings.should_trigger_alert(75.0, 70.0, 180.0));
@@ -228,6 +234,8 @@ fn test_glucose_conversion_settings_persistence_and_alerts() {
     save_settings_to_path(&settings, &settings_path).unwrap();
     let loaded_settings = load_settings_from_path(&settings_path);
     assert_eq!(loaded_settings, settings);
+    assert!(!loaded_settings.overlay_dark_theme);
+    assert_eq!(loaded_settings.overlay_opacity_percent, 65);
     let _ = std::fs::remove_file(&settings_path);
 }
 

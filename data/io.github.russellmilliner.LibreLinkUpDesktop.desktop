@@ -1,5 +1,5 @@
 [Desktop Entry]
-Name=LibreLinkUp Desktop
+Name=LibreLinkUp Rust Desktop
 Comment=KDE Plasma 6 Blood Glucose Monitor for LibreLinkUp
 Exec=librelinkup-kde
 Icon=io.github.russellmilliner.LibreLinkUpDesktop

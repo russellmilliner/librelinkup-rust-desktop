@@ -1,7 +1,7 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <component type="desktop-application">
   <id>io.github.russellmilliner.LibreLinkUpDesktop</id>
-  <name>LibreLinkUp Desktop</name>
+  <name>LibreLinkUp Rust Desktop</name>
   <summary>KDE Plasma 6 Blood Glucose Monitor for LibreLinkUp</summary>
   <metadata_license>CC0-1.0</metadata_license>
   <project_license>Apache-2.0</project_license>
@@ -16,14 +16,17 @@
       <li>AES-256-GCM + PBKDF2-HMAC-SHA256 encrypted credential storage</li>
       <li>Dynamic system tray badge showing live blood glucose value and/or rich hover tooltip</li>
       <li>Native KDE Plasma 6 Light, Dark, and System theme support</li>
-      <li>Interactive 12-hour CGM trend graph and floating desktop overlay widget</li>
+      <li>Interactive 12-hour CGM trend graph with point hover inspection</li>
+      <li>Floating desktop overlay widget with Dark Theme and adjustable transparency</li>
       <li>Built-in diagnostic Log Viewer with filtering, search, and export</li>
     </ul>
   </description>
   <launchable type="desktop-id">io.github.russellmilliner.LibreLinkUpDesktop.desktop</launchable>
-  <url type="homepage">https://github.com/russellmilliner/librelinkup-kde</url>
+  <url type="homepage">https://github.com/russellmilliner/librelinkup-rust-desktop</url>
+  <url type="bugtracker">https://github.com/russellmilliner/librelinkup-rust-desktop/issues</url>
+  <url type="donation">https://ko-fi.com/russellmilliner</url>
   <content_rating type="oars-1.1" />
   <releases>
-    <release version="0.2.0" date="2026-10-19"/>
+    <release version="0.1.0" date="2026-10-19"/>
   </releases>
 </component>

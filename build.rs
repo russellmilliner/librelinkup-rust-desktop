@@ -23,6 +23,7 @@ fn main() {
                 "src/qml/Main.qml",
                 "src/qml/LogViewerDialog.qml",
                 "src/qml/OverlayWidget.qml",
+                "src/qml/AboutDialog.qml",
             ],
             qrc_files: &[
                 "src/qml/icons/tray-icon-dark.svg",
@@ -36,6 +37,7 @@ fn main() {
     println!("cargo:rerun-if-changed=src/qml/Main.qml");
     println!("cargo:rerun-if-changed=src/qml/LogViewerDialog.qml");
     println!("cargo:rerun-if-changed=src/qml/OverlayWidget.qml");
+    println!("cargo:rerun-if-changed=src/qml/AboutDialog.qml");
     println!("cargo:rerun-if-changed=src/qml/icons/tray-icon-dark.svg");
     println!("cargo:rerun-if-changed=src/qml/icons/tray-icon-light.svg");
     println!("cargo:rustc-link-lib=KF6ColorScheme");

@@ -287,8 +287,9 @@ Window {
                 }
 
                 delegate: Rectangle {
-                    width: logListView.width - 14
-                    implicitHeight: rowLayout.implicitHeight + 10
+                    width: Math.max(100, logListView.width - 14)
+                    height: rowLayout.implicitHeight + 12
+                    implicitHeight: rowLayout.implicitHeight + 12
                     radius: 6
                     color: index % 2 === 0
                         ? Qt.alpha(Kirigami.Theme.backgroundColor, 0.65)
@@ -298,8 +299,10 @@ Window {
 
                     RowLayout {
                         id: rowLayout
-                        anchors.fill: parent
-                        anchors.margins: 5
+                        anchors.left: parent.left
+                        anchors.right: parent.right
+                        anchors.top: parent.top
+                        anchors.margins: 6
                         spacing: 8
 
                         QQC2.Label {
@@ -349,6 +352,7 @@ Window {
                             wrapMode: Text.WrapAnywhere
                             color: Kirigami.Theme.textColor
                             Layout.fillWidth: true
+                            Layout.preferredWidth: 0
                         }
                     }
                 }

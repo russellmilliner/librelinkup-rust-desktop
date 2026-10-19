@@ -303,14 +303,21 @@ pub fn try_migrate_legacy_leveldb_credentials(leveldb_dir: &Path) -> Option<Stor
         return None;
     }
     let entries = fs::read_dir(leveldb_dir).ok()?;
+    let mut paths: Vec< std::path::PathBuf > = entries
+        .flatten()
+        .map(|e| e.path())
+        .filter(|p| {
+            p.file_name()
+                .and_then(|n| n.to_str())
+                .map(|n| n.ends_with(".ldb") || n.ends_with(".log"))
+                .unwrap_or(false)
+        })
+        .collect();
+    paths.sort();
+
     let mut best: Option<StoredCredentials> = None;
 
-    for entry in entries.flatten() {
-        let path = entry.path();
-        let name = path.file_name()?.to_str()?;
-        if !name.ends_with(".ldb") && !name.ends_with(".log") {
-            continue;
-        }
+    for path in paths {
         let bytes = fs::read(&path).ok()?;
         let lossy = String::from_utf8_lossy(&bytes);
         for chunk in lossy.split("{\"state\":{") {

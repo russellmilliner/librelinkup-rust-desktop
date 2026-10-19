@@ -440,3 +440,45 @@ fn test_all_11_supported_regional_endpoints() {
         assert_eq!(resolve_base_url(region), url);
     }
 }
+
+#[test]
+fn test_live_libreview_waf_no_403_forbidden() {
+    let rt = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .unwrap();
+
+    rt.block_on(async {
+        let res = authenticate_async("us", "nonexistent_probe_user@example.com", "invalid_password_123").await;
+        println!("Live probe result: {:?}", res);
+        // Must return InvalidCredentials (HTTP 200 with {"status":2}), NEVER ServerError(403, ...)
+        assert_eq!(res, Err(ApiError::InvalidCredentials));
+
+        let ldb_dir = librelinkup_core::paths::legacy_flatpak_leveldb_dir();
+        if let Some(creds) = try_migrate_legacy_leveldb_credentials(&ldb_dir) {
+            println!("Migrated creds country={} account_id={}", creds.country, creds.account_id);
+            let snap_res = fetch_cgm_snapshot_async(&creds.country, &creds.token, &creds.account_id).await;
+            println!("Live snapshot result: {:?}", snap_res.as_ref().map(|s| (s.value_mg_dl, s.trend_arrow, &s.first_name, s.graph_points.len())));
+            assert!(snap_res.is_ok(), "Expected live CGM snapshot to succeed, got: {:?}", snap_res);
+        }
+    });
+}
+
+#[test]
+fn test_qml_ui_layout_no_box_or_window_overflow() {
+    let dir = std::env::temp_dir().join(format!("llu_uitest_cfg_{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+    std::env::set_var("LIBRELINKUP_CONFIG_DIR", &dir);
+    std::env::set_var("LIBRELINKUP_DATA_DIR", &dir);
+
+    let report =
+        librelinkup_core::bridge::app_controller::qobject::librelinkup_run_ui_overflow_tests()
+            .to_string();
+    let _ = std::fs::remove_dir_all(&dir);
+
+    assert_eq!(
+        report, "OK",
+        "Detected QML UI box or window width/height overflow violations:\n{report}"
+    );
+}

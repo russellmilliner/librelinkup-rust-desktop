@@ -23,7 +23,7 @@ cxx-qt-lib = { version = "0.7.2", features = ["qt_gui", "qt_qml"] }
 
 # Async Runtime & HTTP Client
 tokio = { version = "1.41", features = ["rt-multi-thread", "macros", "sync", "time", "net", "io-util"] }
-reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls", "blocking"] }
+reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls", "gzip", "blocking"] }
 
 # Authenticated Encryption (AES-256-GCM, PBKDF2-HMAC-SHA256, SHA-256, CSPRNG) & Memory Zeroization
 ring = "0.17"

@@ -1,6 +1,9 @@
+use std::process::Command;
 use std::time::Duration;
 
-use reqwest::header::{HeaderMap, HeaderValue, AUTHORIZATION, CACHE_CONTROL, PRAGMA};
+use reqwest::header::{
+    HeaderMap, HeaderValue, ACCEPT, AUTHORIZATION, CACHE_CONTROL, CONTENT_TYPE, PRAGMA, USER_AGENT,
+};
 use ring::digest::{digest, SHA256};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -12,6 +15,8 @@ use crate::models::{
 
 pub const LLU_PRODUCT: &str = "llu.android";
 pub const LLU_VERSION: &str = "4.16.0";
+pub const LLU_USER_AGENT: &str =
+    "Dalvik/2.1.0 (Linux; U; Android 14; Pixel 8 Build/UQ1A.240205.004)";
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct AuthSuccess {
@@ -37,7 +42,10 @@ impl std::fmt::Display for ApiError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             Self::InvalidCredentials => {
-                write!(f, "Invalid credentials — please check your email and password.")
+                write!(
+                    f,
+                    "Invalid credentials — please check your email and password."
+                )
             }
             Self::PrivacyPolicyAcceptanceRequired => {
                 write!(
@@ -89,8 +97,17 @@ pub fn sha256_account_id(account_id: &str) -> String {
     bytes_to_hex(d.as_ref())
 }
 
-fn build_common_headers(token: Option<&str>, account_id: Option<&str>) -> Result<HeaderMap, ApiError> {
+fn build_common_headers(
+    token: Option<&str>,
+    account_id: Option<&str>,
+) -> Result<HeaderMap, ApiError> {
     let mut headers = HeaderMap::new();
+    headers.insert(USER_AGENT, HeaderValue::from_static(LLU_USER_AGENT));
+    headers.insert(
+        ACCEPT,
+        HeaderValue::from_static("application/json, text/plain, */*"),
+    );
+    headers.insert(CONTENT_TYPE, HeaderValue::from_static("application/json"));
     headers.insert("product", HeaderValue::from_static(LLU_PRODUCT));
     headers.insert("version", HeaderValue::from_static(LLU_VERSION));
     headers.insert(PRAGMA, HeaderValue::from_static("no-cache"));
@@ -113,6 +130,154 @@ fn build_common_headers(token: Option<&str>, account_id: Option<&str>) -> Result
     Ok(headers)
 }
 
+/// Executes an HTTP request via system `curl` (OpenSSL + HTTP/2 ALPN) as a fallback
+/// when Cloudflare WAF blocks a `rustls` TLS fingerprint with 403 Forbidden.
+fn curl_fallback_json(
+    method: &str,
+    url: &str,
+    token: Option<&str>,
+    account_id: Option<&str>,
+    json_payload: Option<&Value>,
+) -> Result<(u16, Value), ApiError> {
+    let mut cmd = Command::new("curl");
+    cmd.arg("-s")
+        .arg("-S")
+        .arg("--max-time")
+        .arg("15")
+        .arg("-X")
+        .arg(method)
+        .arg(url)
+        .arg("-H")
+        .arg(format!("User-Agent: {LLU_USER_AGENT}"))
+        .arg("-H")
+        .arg("Accept: application/json")
+        .arg("-H")
+        .arg("Content-Type: application/json")
+        .arg("-H")
+        .arg(format!("product: {LLU_PRODUCT}"))
+        .arg("-H")
+        .arg(format!("version: {LLU_VERSION}"))
+        .arg("-H")
+        .arg("Pragma: no-cache")
+        .arg("-H")
+        .arg("Cache-Control: no-cache")
+        .arg("-w")
+        .arg("\n__HTTP_STATUS__:%{http_code}");
+
+    if let Some(tok) = token {
+        cmd.arg("-H").arg(format!("Authorization: Bearer {}", tok.trim()));
+    }
+    if let Some(acc) = account_id {
+        let hashed = sha256_account_id(acc);
+        cmd.arg("-H").arg(format!("Account-Id: {hashed}"));
+    }
+    if let Some(body) = json_payload {
+        cmd.arg("--data-raw").arg(body.to_string());
+    }
+
+    let output = cmd
+        .output()
+        .map_err(|e| ApiError::NetworkError(format!("curl fallback failed: {e}")))?;
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let (body_str, status_code) = if let Some((b, s)) = stdout.rsplit_once("\n__HTTP_STATUS__:") {
+        let code = s.trim().parse::<u16>().unwrap_or(500);
+        (b.trim(), code)
+    } else {
+        (stdout.trim(), 500)
+    };
+
+    if status_code == 401 {
+        return Err(ApiError::Unauthorized);
+    }
+
+    if let Ok(json_val) = serde_json::from_str::<Value>(body_str) {
+        return Ok((status_code, json_val));
+    }
+
+    if !(200..300).contains(&status_code) {
+        return Err(ApiError::ServerError(
+            status_code,
+            format!("HTTP {status_code}"),
+        ));
+    }
+
+    Err(ApiError::ParseError(
+        "Failed to parse JSON response from LibreView server".to_string(),
+    ))
+}
+
+async fn send_json_request(
+    client: &reqwest::Client,
+    method: reqwest::Method,
+    url: &str,
+    token: Option<&str>,
+    account_id: Option<&str>,
+    json_payload: Option<&Value>,
+) -> Result<Value, ApiError> {
+    let headers = build_common_headers(token, account_id)?;
+    let mut req = client.request(method.clone(), url).headers(headers);
+    if let Some(payload) = json_payload {
+        req = req.json(payload);
+    }
+
+    match req.send().await {
+        Ok(resp) => {
+            let status = resp.status();
+            let status_u16 = status.as_u16();
+            let text = resp.text().await.unwrap_or_default();
+
+            // If Cloudflare WAF returned 403 Forbidden (e.g. TLS JA3/JA4 block on rustls),
+            // retry transparently using system curl (OpenSSL + HTTP/2).
+            if status_u16 == 403 && !text.trim_start().starts_with('{') {
+                if let Ok((code, val)) =
+                    curl_fallback_json(method.as_str(), url, token, account_id, json_payload)
+                {
+                    if (200..300).contains(&code) || val.get("status").is_some() {
+                        return Ok(val);
+                    }
+                }
+            }
+
+            if let Ok(json_val) = serde_json::from_str::<Value>(&text) {
+                if status.is_success() || json_val.get("status").is_some() {
+                    return Ok(json_val);
+                }
+            }
+
+            if status == reqwest::StatusCode::UNAUTHORIZED {
+                return Err(if token.is_some() {
+                    ApiError::Unauthorized
+                } else {
+                    ApiError::InvalidCredentials
+                });
+            }
+
+            // Try curl fallback one last time on 403 even if body was empty or non-LibreView JSON
+            if status_u16 == 403 {
+                if let Ok((code, val)) =
+                    curl_fallback_json(method.as_str(), url, token, account_id, json_payload)
+                {
+                    if (200..300).contains(&code) || val.get("status").is_some() {
+                        return Ok(val);
+                    }
+                }
+            }
+
+            Err(ApiError::ServerError(status_u16, status.to_string()))
+        }
+        Err(e) => {
+            if let Ok((code, val)) =
+                curl_fallback_json(method.as_str(), url, token, account_id, json_payload)
+            {
+                if (200..300).contains(&code) || val.get("status").is_some() {
+                    return Ok(val);
+                }
+            }
+            Err(ApiError::NetworkError(e.to_string()))
+        }
+    }
+}
+
 pub fn parse_login_response(
     body: &Value,
     requested_country: &str,
@@ -125,9 +290,14 @@ pub fn parse_login_response(
         return Err(ApiError::PrivacyPolicyAcceptanceRequired);
     }
     if status != 0 {
+        let err_msg = body
+            .get("error")
+            .and_then(|e| e.get("message"))
+            .and_then(|m| m.as_str())
+            .unwrap_or("Authentication failed");
         return Err(ApiError::ServerError(
             status.clamp(0, 65535) as u16,
-            format!("Authentication failed with status code {status}"),
+            format!("{err_msg} (status {status})"),
         ));
     }
 
@@ -187,8 +357,8 @@ pub fn parse_login_response(
         return Ok((Some(target_region), None));
     }
 
-    let final_country = user_country
-        .or(region_redirect)
+    let final_country = region_redirect
+        .or(user_country)
         .unwrap_or_else(|| normalize_country_code(requested_country));
 
     Ok((
@@ -203,11 +373,15 @@ pub fn parse_login_response(
     ))
 }
 
-pub fn parse_connections_response(body: &Value) -> Result<(String, String, String, f64, f64), ApiError> {
+pub fn parse_connections_response(
+    body: &Value,
+) -> Result<(String, String, String, f64, f64), ApiError> {
     let data = body
         .get("data")
         .and_then(|v| v.as_array())
-        .ok_or_else(|| ApiError::ParseError("Missing 'data' array in /connections response".to_string()))?;
+        .ok_or_else(|| {
+            ApiError::ParseError("Missing 'data' array in /connections response".to_string())
+        })?;
 
     let first = data.first().ok_or(ApiError::NoConnectionsFound)?;
     let patient_id = first
@@ -252,9 +426,9 @@ pub fn parse_graph_response(
     let data = body
         .get("data")
         .ok_or_else(|| ApiError::ParseError("Missing 'data' object in /graph response".to_string()))?;
-    let conn = data
-        .get("connection")
-        .ok_or_else(|| ApiError::ParseError("Missing 'data.connection' in /graph response".to_string()))?;
+    let conn = data.get("connection").ok_or_else(|| {
+        ApiError::ParseError("Missing 'data.connection' in /graph response".to_string())
+    })?;
 
     let patient_id = conn
         .get("patientId")
@@ -356,11 +530,11 @@ pub async fn authenticate_async(
     password: &str,
 ) -> Result<AuthSuccess, ApiError> {
     let client = reqwest::Client::builder()
+        .user_agent(LLU_USER_AGENT)
         .timeout(Duration::from_secs(15))
         .build()
         .map_err(|e| ApiError::NetworkError(e.to_string()))?;
 
-    let headers = build_common_headers(None, None)?;
     let initial_base = resolve_base_url(country);
     let login_url = format!("{initial_base}/auth/login");
 
@@ -369,74 +543,33 @@ pub async fn authenticate_async(
         "password": password,
     });
 
-    let resp = client
-        .post(&login_url)
-        .headers(headers.clone())
-        .json(&payload)
-        .send()
-        .await
-        .map_err(|e| ApiError::NetworkError(e.to_string()))?;
-
-    let status_code = resp.status();
-    if status_code == reqwest::StatusCode::UNAUTHORIZED {
-        return Err(ApiError::InvalidCredentials);
-    }
-    if !status_code.is_success() {
-        return Err(ApiError::ServerError(
-            status_code.as_u16(),
-            status_code.to_string(),
-        ));
-    }
-
-    let body: Value = resp
-        .json()
-        .await
-        .map_err(|e| ApiError::ParseError(e.to_string()))?;
+    let body = send_json_request(
+        &client,
+        reqwest::Method::POST,
+        &login_url,
+        None,
+        None,
+        Some(&payload),
+    )
+    .await?;
 
     let (redirect_region, maybe_auth) = parse_login_response(&body, country)?;
     if let Some(auth) = maybe_auth {
-        // Also follow up against the regional endpoint if the original request matched LibreLinkUpDesktop's 2-step login
-        let region_base = resolve_base_url(&auth.country);
-        if region_base != initial_base {
-            let region_url = format!("{region_base}/auth/login");
-            if let Ok(resp2) = client
-                .post(&region_url)
-                .headers(headers)
-                .json(&payload)
-                .send()
-                .await
-            {
-                if resp2.status().is_success() {
-                    if let Ok(body2) = resp2.json::<Value>().await {
-                        if let Ok((_, Some(auth2))) = parse_login_response(&body2, &auth.country) {
-                            return Ok(auth2);
-                        }
-                    }
-                }
-            }
-        }
         return Ok(auth);
     }
 
     if let Some(region) = redirect_region {
         let region_base = resolve_base_url(&region);
         let region_url = format!("{region_base}/auth/login");
-        let resp2 = client
-            .post(&region_url)
-            .headers(headers)
-            .json(&payload)
-            .send()
-            .await
-            .map_err(|e| ApiError::NetworkError(e.to_string()))?;
-
-        let status2 = resp2.status();
-        if !status2.is_success() {
-            return Err(ApiError::ServerError(status2.as_u16(), status2.to_string()));
-        }
-        let body2: Value = resp2
-            .json()
-            .await
-            .map_err(|e| ApiError::ParseError(e.to_string()))?;
+        let body2 = send_json_request(
+            &client,
+            reqwest::Method::POST,
+            &region_url,
+            None,
+            None,
+            Some(&payload),
+        )
+        .await?;
         let (_, maybe_auth2) = parse_login_response(&body2, &region)?;
         if let Some(auth2) = maybe_auth2 {
             return Ok(auth2);
@@ -454,62 +587,36 @@ pub async fn fetch_cgm_snapshot_async(
     account_id: &str,
 ) -> Result<GlucoseSnapshot, ApiError> {
     let client = reqwest::Client::builder()
+        .user_agent(LLU_USER_AGENT)
         .timeout(Duration::from_secs(15))
         .build()
         .map_err(|e| ApiError::NetworkError(e.to_string()))?;
 
-    let headers = build_common_headers(Some(token), Some(account_id))?;
     let base = resolve_base_url(country);
 
     let conn_url = format!("{base}/connections");
-    let conn_resp = client
-        .get(&conn_url)
-        .headers(headers.clone())
-        .send()
-        .await
-        .map_err(|e| ApiError::NetworkError(e.to_string()))?;
-
-    let conn_status = conn_resp.status();
-    if conn_status == reqwest::StatusCode::UNAUTHORIZED {
-        return Err(ApiError::Unauthorized);
-    }
-    if !conn_status.is_success() {
-        return Err(ApiError::ServerError(
-            conn_status.as_u16(),
-            conn_status.to_string(),
-        ));
-    }
-
-    let conn_body: Value = conn_resp
-        .json()
-        .await
-        .map_err(|e| ApiError::ParseError(e.to_string()))?;
+    let conn_body = send_json_request(
+        &client,
+        reqwest::Method::GET,
+        &conn_url,
+        Some(token),
+        Some(account_id),
+        None,
+    )
+    .await?;
 
     let (patient_id, first_name, last_name, _, _) = parse_connections_response(&conn_body)?;
 
     let graph_url = format!("{base}/connections/{patient_id}/graph");
-    let graph_resp = client
-        .get(&graph_url)
-        .headers(headers)
-        .send()
-        .await
-        .map_err(|e| ApiError::NetworkError(e.to_string()))?;
-
-    let graph_status = graph_resp.status();
-    if graph_status == reqwest::StatusCode::UNAUTHORIZED {
-        return Err(ApiError::Unauthorized);
-    }
-    if !graph_status.is_success() {
-        return Err(ApiError::ServerError(
-            graph_status.as_u16(),
-            graph_status.to_string(),
-        ));
-    }
-
-    let graph_body: Value = graph_resp
-        .json()
-        .await
-        .map_err(|e| ApiError::ParseError(e.to_string()))?;
+    let graph_body = send_json_request(
+        &client,
+        reqwest::Method::GET,
+        &graph_url,
+        Some(token),
+        Some(account_id),
+        None,
+    )
+    .await?;
 
     parse_graph_response(&graph_body, &patient_id, &first_name, &last_name)
 }

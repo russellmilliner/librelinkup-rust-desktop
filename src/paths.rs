@@ -5,6 +5,14 @@ use std::path::PathBuf;
 pub const APP_ID: &str = "io.github.russellmilliner.LibreLinkUpDesktop";
 pub const APP_DIR_NAME: &str = "librelinkup-kde";
 
+fn home_dir() -> PathBuf {
+    env::var("HOME")
+        .ok()
+        .filter(|s| !s.trim().is_empty())
+        .map(PathBuf::from)
+        .unwrap_or_else(|| PathBuf::from("/tmp"))
+}
+
 pub fn config_dir() -> PathBuf {
     if let Ok(custom) = env::var("LIBRELINKUP_CONFIG_DIR") {
         let trimmed = custom.trim();
@@ -14,15 +22,9 @@ pub fn config_dir() -> PathBuf {
             return p;
         }
     }
-    let base = env::var("XDG_CONFIG_HOME")
-        .ok()
-        .filter(|s| !s.trim().is_empty())
-        .map(PathBuf::from)
-        .unwrap_or_else(|| {
-            let home = env::var("HOME").unwrap_or_else(|_| "/tmp".to_string());
-            PathBuf::from(home).join(".config")
-        });
-    let dir = base.join(APP_DIR_NAME);
+    // Always use ~/.config/librelinkup-kde so host and Flatpak (--filesystem=xdg-config/librelinkup-kde:create)
+    // share the same encrypted credential vault and settings.
+    let dir = home_dir().join(".config").join(APP_DIR_NAME);
     let _ = fs::create_dir_all(&dir);
     dir
 }
@@ -36,15 +38,7 @@ pub fn data_dir() -> PathBuf {
             return p;
         }
     }
-    let base = env::var("XDG_DATA_HOME")
-        .ok()
-        .filter(|s| !s.trim().is_empty())
-        .map(PathBuf::from)
-        .unwrap_or_else(|| {
-            let home = env::var("HOME").unwrap_or_else(|_| "/tmp".to_string());
-            PathBuf::from(home).join(".local/share")
-        });
-    let dir = base.join(APP_DIR_NAME);
+    let dir = home_dir().join(".local/share").join(APP_DIR_NAME);
     let _ = fs::create_dir_all(&dir);
     dir
 }
@@ -77,14 +71,12 @@ pub fn default_log_file_path() -> PathBuf {
 }
 
 pub fn autostart_desktop_path() -> PathBuf {
-    let home = env::var("HOME").unwrap_or_else(|_| "/tmp".to_string());
-    let autostart_dir = PathBuf::from(home).join(".config/autostart");
+    let autostart_dir = home_dir().join(".config/autostart");
     let _ = fs::create_dir_all(&autostart_dir);
     autostart_dir.join(format!("{APP_ID}.desktop"))
 }
 
 pub fn legacy_flatpak_leveldb_dir() -> PathBuf {
-    let home = env::var("HOME").unwrap_or_else(|_| "/tmp".to_string());
-    PathBuf::from(home)
+    home_dir()
         .join(".var/app/rocks.poopjournal.librelinkupdesktop/config/librelinkupdesktop/Local Storage/leveldb")
 }

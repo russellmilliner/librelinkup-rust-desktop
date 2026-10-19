@@ -8,10 +8,10 @@ Window {
     id: overlayWindow
     objectName: "librelinkupOverlayWindow"
     title: qsTr("LibreLinkUp Overlay")
-    width: 248
-    height: 92
-    minimumWidth: 190
-    minimumHeight: 72
+    width: 268
+    height: 96
+    minimumWidth: 220
+    minimumHeight: 80
     flags: Qt.Window | Qt.FramelessWindowHint | Qt.WindowStaysOnTopHint
     color: "transparent"
     visible: Boolean(controller && controller.overlayVisible)
@@ -22,6 +22,7 @@ Window {
     )
 
     Rectangle {
+        objectName: "overlayPill"
         anchors.fill: parent
         radius: 14
         color: overlayWindow.isTransparentMode
@@ -42,28 +43,34 @@ Window {
         }
 
         RowLayout {
+            objectName: "overlayRow"
             anchors.fill: parent
             anchors.leftMargin: 14
-            anchors.rightMargin: 12
-            spacing: 10
+            anchors.rightMargin: 10
+            anchors.topMargin: 8
+            anchors.bottomMargin: 8
+            spacing: 8
 
             ColumnLayout {
                 Layout.fillWidth: true
                 spacing: 2
 
                 RowLayout {
+                    Layout.fillWidth: true
                     spacing: 6
                     QQC2.Label {
                         text: controller ? controller.glucoseDisplay : "--"
-                        font.pointSize: 22
+                        font.pointSize: 20
                         font.bold: true
                         color: "#ffffff"
                     }
                     QQC2.Label {
                         text: controller ? controller.resultUnit : "mg/dL"
-                        font.pointSize: 10
+                        font.pointSize: 9.5
                         font.bold: true
                         color: Qt.rgba(1, 1, 1, 0.9)
+                        Layout.fillWidth: true
+                        elide: Text.ElideRight
                     }
                 }
 
@@ -79,9 +86,9 @@ Window {
             }
 
             Rectangle {
-                width: 38
-                height: 38
-                radius: 19
+                Layout.preferredWidth: 36
+                Layout.preferredHeight: 36
+                radius: 18
                 color: Qt.rgba(1, 1, 1, 0.24)
                 border.color: Qt.rgba(1, 1, 1, 0.45)
                 border.width: 1
@@ -89,7 +96,7 @@ Window {
                 QQC2.Label {
                     anchors.centerIn: parent
                     text: controller ? controller.trendSymbol : "→"
-                    font.pointSize: 16
+                    font.pointSize: 15
                     font.bold: true
                     color: "#ffffff"
                 }

@@ -19,6 +19,7 @@ Kirigami.ApplicationWindow {
 
     readonly property bool isLightTheme: (0.2126 * root.color.r + 0.7152 * root.color.g + 0.0722 * root.color.b) > 0.45
     property string activeTab: "dashboard"
+    readonly property alias controller: appController
 
     readonly property var regionOptions: [
         { value: "us", label: "United States (us)" },
@@ -53,6 +54,7 @@ Kirigami.ApplicationWindow {
 
     AppController {
         id: appController
+        objectName: "librelinkupAppController"
         Component.onCompleted: {
             appController.initializeController()
         }
@@ -98,35 +100,41 @@ Kirigami.ApplicationWindow {
     }
 
     header: QQC2.ToolBar {
+        objectName: "mainHeaderToolBar"
+        implicitHeight: headerRow.implicitHeight + 12
+
         RowLayout {
+            id: headerRow
+            objectName: "mainHeaderRow"
             anchors.fill: parent
-            anchors.leftMargin: Kirigami.Units.largeSpacing
-            anchors.rightMargin: Kirigami.Units.largeSpacing
-            spacing: Kirigami.Units.smallSpacing
+            anchors.leftMargin: 8
+            anchors.rightMargin: 8
+            spacing: 2
 
             Kirigami.Heading {
-                level: 2
-                text: qsTr("LibreLinkUp Desktop")
+                level: 4
+                text: qsTr("LibreLinkUp")
                 font.bold: true
             }
 
             Rectangle {
+                objectName: "vaultStatusBadge"
                 radius: 6
                 color: appController.credentialsEncrypted
                     ? Qt.rgba(0.13, 0.77, 0.37, 0.18)
                     : Qt.rgba(0.58, 0.64, 0.72, 0.18)
                 border.color: appController.credentialsEncrypted ? "#22c55e" : "#94a3b8"
                 border.width: 1
-                implicitWidth: vaultLabel.implicitWidth + 16
-                implicitHeight: 24
+                implicitWidth: vaultLabel.implicitWidth + 10
+                implicitHeight: 22
 
                 QQC2.Label {
                     id: vaultLabel
                     anchors.centerIn: parent
                     text: appController.credentialsEncrypted
-                        ? qsTr("🔒 AES-256-GCM Encrypted Vault")
-                        : qsTr("🔓 Vault Empty")
-                    font.pointSize: 8.5
+                        ? qsTr("🔒 AES-256")
+                        : qsTr("🔓 Unset")
+                    font.pointSize: 8
                     font.bold: true
                     color: Kirigami.Theme.textColor
                 }
@@ -135,6 +143,7 @@ Kirigami.ApplicationWindow {
             Item { Layout.fillWidth: true }
 
             QQC2.ToolButton {
+                objectName: "tabButtonDashboard"
                 icon.name: "view-statistics"
                 text: qsTr("Dashboard")
                 checkable: true
@@ -143,14 +152,16 @@ Kirigami.ApplicationWindow {
             }
 
             QQC2.ToolButton {
+                objectName: "tabButtonGeneral"
                 icon.name: "configure"
-                text: qsTr("General & Tray")
+                text: qsTr("Settings")
                 checkable: true
                 checked: root.activeTab === "general"
                 onClicked: root.activeTab = "general"
             }
 
             QQC2.ToolButton {
+                objectName: "tabButtonAlerts"
                 icon.name: "preferences-desktop-notification-bell"
                 text: qsTr("Alerts")
                 checkable: true
@@ -159,6 +170,7 @@ Kirigami.ApplicationWindow {
             }
 
             QQC2.ToolButton {
+                objectName: "tabButtonAccount"
                 icon.name: "user-identity"
                 text: qsTr("Account")
                 checkable: true
@@ -167,21 +179,26 @@ Kirigami.ApplicationWindow {
             }
 
             QQC2.ToolButton {
+                objectName: "tabButtonLogs"
                 icon.name: "utilities-log-viewer"
-                text: qsTr("Log Viewer (%1)").arg(appController.eventLogCount)
+                text: qsTr("Logs (%1)").arg(appController.eventLogCount)
                 onClicked: root.openLogViewer()
             }
 
             QQC2.ToolButton {
+                objectName: "buttonRefreshNow"
                 icon.name: "view-refresh"
-                text: qsTr("Refresh")
+                display: QQC2.AbstractButton.IconOnly
+                QQC2.ToolTip.visible: hovered
+                QQC2.ToolTip.text: qsTr("Refresh glucose telemetry now")
                 enabled: appController.loggedIn && !appController.busy
                 onClicked: appController.refreshGlucoseNow()
             }
 
             QQC2.ToolButton {
+                objectName: "buttonToTray"
                 icon.name: "window-minimize"
-                text: qsTr("To Tray")
+                display: QQC2.AbstractButton.IconOnly
                 QQC2.ToolTip.visible: hovered
                 QQC2.ToolTip.text: qsTr("Hide window to the KDE system tray")
                 onClicked: appController.hideMainWindow()
@@ -190,12 +207,16 @@ Kirigami.ApplicationWindow {
     }
 
     ColumnLayout {
+        id: mainBodyColumn
+        objectName: "mainBodyColumn"
         anchors.fill: parent
-        anchors.margins: Kirigami.Units.largeSpacing
-        spacing: Kirigami.Units.largeSpacing
+        anchors.margins: 14
+        spacing: 12
 
         // Error Banner
         Rectangle {
+            id: errorBanner
+            objectName: "errorBanner"
             Layout.fillWidth: true
             visible: appController.errorMessage.length > 0
             implicitHeight: errRow.implicitHeight + 16
@@ -206,7 +227,9 @@ Kirigami.ApplicationWindow {
 
             RowLayout {
                 id: errRow
-                anchors.fill: parent
+                anchors.left: parent.left
+                anchors.right: parent.right
+                anchors.top: parent.top
                 anchors.margins: 8
                 spacing: 10
 
@@ -221,124 +244,154 @@ Kirigami.ApplicationWindow {
                     wrapMode: Text.WordWrap
                     color: Kirigami.Theme.textColor
                     Layout.fillWidth: true
+                    Layout.preferredWidth: 0
                 }
             }
         }
 
         // ==================== TAB 1: DASHBOARD / LOGIN ====================
         Item {
+            id: dashboardContainer
+            objectName: "dashboardContainer"
             Layout.fillWidth: true
             Layout.fillHeight: true
             visible: root.activeTab === "dashboard"
 
             // Login Card when not signed in
-            Rectangle {
-                anchors.centerIn: parent
-                width: Math.min(parent.width - 32, 480)
-                implicitHeight: loginCol.implicitHeight + 36
+            QQC2.ScrollView {
+                id: loginScrollView
+                anchors.fill: parent
                 visible: !appController.loggedIn
-                radius: 12
-                color: Kirigami.Theme.alternateBackgroundColor
-                border.color: Qt.alpha(Kirigami.Theme.textColor, 0.18)
-                border.width: 1
+                clip: true
+                contentWidth: availableWidth
 
-                ColumnLayout {
-                    id: loginCol
-                    anchors.fill: parent
-                    anchors.margins: 18
-                    spacing: 14
+                Item {
+                    width: loginScrollView.availableWidth
+                    height: Math.max(loginScrollView.height, loginCard.implicitHeight + 24)
+                    implicitHeight: loginCard.implicitHeight + 24
 
-                    Kirigami.Heading {
-                        level: 2
-                        text: qsTr("Sign In to LibreLinkUp")
-                        color: Kirigami.Theme.textColor
-                    }
+                    Rectangle {
+                        id: loginCard
+                        objectName: "loginCard"
+                        anchors.centerIn: parent
+                        width: Math.min(parent.width - 24, 480)
+                        implicitHeight: loginCol.implicitHeight + 36
+                        radius: 12
+                        color: Kirigami.Theme.alternateBackgroundColor
+                        border.color: Qt.alpha(Kirigami.Theme.textColor, 0.18)
+                        border.width: 1
 
-                    QQC2.Label {
-                        text: qsTr("Use your LibreLinkUp follower credentials. All credentials and tokens are encrypted at rest using AES-256-GCM + PBKDF2-HMAC-SHA256.")
-                        wrapMode: Text.WordWrap
-                        opacity: 0.82
-                        color: Kirigami.Theme.textColor
-                        Layout.fillWidth: true
-                    }
+                        ColumnLayout {
+                            id: loginCol
+                            anchors.left: parent.left
+                            anchors.right: parent.right
+                            anchors.top: parent.top
+                            anchors.margins: 18
+                            spacing: 12
 
-                    ColumnLayout {
-                        Layout.fillWidth: true
-                        spacing: 4
-                        QQC2.Label {
-                            text: qsTr("Email / Username")
-                            font.bold: true
-                            color: Kirigami.Theme.textColor
-                        }
-                        QQC2.TextField {
-                            id: loginEmailField
-                            Layout.fillWidth: true
-                            placeholderText: qsTr("you@example.com")
-                            text: appController.username
-                        }
-                    }
-
-                    ColumnLayout {
-                        Layout.fillWidth: true
-                        spacing: 4
-                        QQC2.Label {
-                            text: qsTr("Password")
-                            font.bold: true
-                            color: Kirigami.Theme.textColor
-                        }
-                        QQC2.TextField {
-                            id: loginPasswordField
-                            Layout.fillWidth: true
-                            echoMode: TextInput.Password
-                            placeholderText: qsTr("Enter your LibreLinkUp password")
-                            onAccepted: signInButton.clicked()
-                        }
-                    }
-
-                    ColumnLayout {
-                        Layout.fillWidth: true
-                        spacing: 4
-                        QQC2.Label {
-                            text: qsTr("Regional Server")
-                            font.bold: true
-                            color: Kirigami.Theme.textColor
-                        }
-                        QQC2.ComboBox {
-                            id: loginRegionCombo
-                            Layout.fillWidth: true
-                            model: root.regionOptions
-                            textRole: "label"
-                            valueRole: "value"
-                            currentIndex: root.regionIndexForCode(appController.country)
-                        }
-                    }
-
-                    RowLayout {
-                        Layout.fillWidth: true
-                        spacing: 10
-
-                        QQC2.Button {
-                            id: signInButton
-                            Layout.fillWidth: true
-                            highlighted: true
-                            icon.name: "dialog-ok-apply"
-                            text: appController.busy ? qsTr("Signing In...") : qsTr("Sign In & Encrypt")
-                            enabled: !appController.busy
-                            onClicked: {
-                                const selectedRegion = root.regionOptions[loginRegionCombo.currentIndex].value
-                                appController.login(
-                                    loginEmailField.text,
-                                    loginPasswordField.text,
-                                    selectedRegion,
-                                    appController.language
-                                )
+                            Kirigami.Heading {
+                                level: 2
+                                text: qsTr("Sign In to LibreLinkUp")
+                                color: Kirigami.Theme.textColor
+                                Layout.fillWidth: true
+                                Layout.preferredWidth: 0
+                                wrapMode: Text.WordWrap
                             }
-                        }
 
-                        QQC2.Button {
-                            icon.name: "view-preview"
-                            text: qsTr("Preview Sample Data")
-                            onClicked: appController.loadDemoSampleData()
+                            QQC2.Label {
+                                text: qsTr("Use your LibreLinkUp follower credentials. All credentials and tokens are encrypted at rest using AES-256-GCM + PBKDF2-HMAC-SHA256.")
+                                wrapMode: Text.WordWrap
+                                opacity: 0.82
+                                color: Kirigami.Theme.textColor
+                                Layout.fillWidth: true
+                                Layout.preferredWidth: 0
+                            }
+
+                            ColumnLayout {
+                                Layout.fillWidth: true
+                                spacing: 4
+                                QQC2.Label {
+                                    text: qsTr("Email / Username")
+                                    font.bold: true
+                                    color: Kirigami.Theme.textColor
+                                    Layout.fillWidth: true
+                                }
+                                QQC2.TextField {
+                                    id: loginEmailField
+                                    Layout.fillWidth: true
+                                    placeholderText: qsTr("you@example.com")
+                                    text: appController.username
+                                }
+                            }
+
+                            ColumnLayout {
+                                Layout.fillWidth: true
+                                spacing: 4
+                                QQC2.Label {
+                                    text: qsTr("Password")
+                                    font.bold: true
+                                    color: Kirigami.Theme.textColor
+                                    Layout.fillWidth: true
+                                }
+                                QQC2.TextField {
+                                    id: loginPasswordField
+                                    Layout.fillWidth: true
+                                    echoMode: TextInput.Password
+                                    placeholderText: qsTr("Enter your LibreLinkUp password")
+                                    onAccepted: signInButton.clicked()
+                                }
+                            }
+
+                            ColumnLayout {
+                                Layout.fillWidth: true
+                                spacing: 4
+                                QQC2.Label {
+                                    text: qsTr("Regional Server")
+                                    font.bold: true
+                                    color: Kirigami.Theme.textColor
+                                    Layout.fillWidth: true
+                                }
+                                QQC2.ComboBox {
+                                    id: loginRegionCombo
+                                    Layout.fillWidth: true
+                                    model: root.regionOptions
+                                    textRole: "label"
+                                    valueRole: "value"
+                                    Component.onCompleted: {
+                                        currentIndex = root.regionIndexForCode(appController.country)
+                                    }
+                                }
+                            }
+
+                            RowLayout {
+                                Layout.fillWidth: true
+                                spacing: 8
+
+                                QQC2.Button {
+                                    id: signInButton
+                                    Layout.fillWidth: true
+                                    highlighted: true
+                                    icon.name: "dialog-ok-apply"
+                                    text: appController.busy ? qsTr("Signing In...") : qsTr("Sign In & Encrypt")
+                                    enabled: !appController.busy
+                                    onClicked: {
+                                        const idx = loginRegionCombo.currentIndex >= 0 ? loginRegionCombo.currentIndex : 0
+                                        const selectedRegion = root.regionOptions[idx].value
+                                        appController.login(
+                                            loginEmailField.text,
+                                            loginPasswordField.text,
+                                            selectedRegion,
+                                            appController.language
+                                        )
+                                    }
+                                }
+
+                                QQC2.Button {
+                                    icon.name: "view-preview"
+                                    text: qsTr("Sample Data")
+                                    onClicked: appController.loadDemoSampleData()
+                                }
+                            }
                         }
                     }
                 }
@@ -346,171 +399,70 @@ Kirigami.ApplicationWindow {
 
             // Live Glucose Telemetry View when signed in
             ColumnLayout {
+                id: telemetryMainColumn
+                objectName: "telemetryMainColumn"
                 anchors.fill: parent
                 visible: appController.loggedIn
-                spacing: Kirigami.Units.largeSpacing
+                spacing: 12
 
                 RowLayout {
+                    id: topCardsRow
+                    objectName: "topCardsRow"
                     Layout.fillWidth: true
-                    spacing: Kirigami.Units.largeSpacing
+                    spacing: 12
+
+                    readonly property real unifiedCardHeight: Math.max(
+                        heroCol.implicitHeight + 28,
+                        detailsCol.implicitHeight + 28
+                    )
 
                     // Hero Glucose Reading Card
                     Rectangle {
-                        Layout.preferredWidth: 320
-                        Layout.fillHeight: true
-                        Layout.maximumHeight: 200
+                        id: heroCard
+                        objectName: "heroCard"
+                        Layout.preferredWidth: 270
+                        Layout.minimumWidth: 250
+                        Layout.maximumWidth: 300
+                        Layout.preferredHeight: topCardsRow.unifiedCardHeight
+                        implicitHeight: topCardsRow.unifiedCardHeight
                         radius: 14
                         color: appController.rangeColorHex
                         border.color: Qt.rgba(1, 1, 1, 0.35)
                         border.width: 1.5
 
                         ColumnLayout {
-                            anchors.fill: parent
-                            anchors.margins: 18
+                            id: heroCol
+                            objectName: "heroCol"
+                            anchors.left: parent.left
+                            anchors.right: parent.right
+                            anchors.top: parent.top
+                            anchors.margins: 14
                             spacing: 6
 
                             RowLayout {
                                 Layout.fillWidth: true
+                                spacing: 6
                                 QQC2.Label {
                                     text: qsTr("CURRENT GLUCOSE")
-                                    font.pointSize: 9
+                                    font.pointSize: 8.5
                                     font.bold: true
-                                    color: Qt.rgba(1, 1, 1, 0.9)
+                                    color: Qt.rgba(1, 1, 1, 0.92)
+                                    Layout.fillWidth: true
+                                    elide: Text.ElideRight
                                 }
-                                Item { Layout.fillWidth: true }
                                 Rectangle {
                                     radius: 6
                                     color: Qt.rgba(0, 0, 0, 0.24)
-                                    implicitWidth: statusPillLabel.implicitWidth + 14
-                                    implicitHeight: 22
+                                    implicitWidth: statusPillLabel.implicitWidth + 12
+                                    implicitHeight: 20
                                     QQC2.Label {
                                         id: statusPillLabel
                                         anchors.centerIn: parent
                                         text: appController.rangeStatusLabel
-                                        font.pointSize: 8.5
+                                        font.pointSize: 8
                                         font.bold: true
                                         color: "#ffffff"
                                     }
-                                }
-                            }
-
-                            RowLayout {
-                                Layout.fillWidth: true
-                                spacing: 12
-
-                                QQC2.Label {
-                                    text: appController.glucoseDisplay
-                                    font.pointSize: 44
-                                    font.bold: true
-                                    color: "#ffffff"
-                                }
-
-                                ColumnLayout {
-                                    spacing: 2
-                                    QQC2.Label {
-                                        text: appController.resultUnit
-                                        font.pointSize: 12
-                                        font.bold: true
-                                        color: "#ffffff"
-                                    }
-                                    QQC2.Label {
-                                        text: appController.trendDescription
-                                        font.pointSize: 9.5
-                                        color: Qt.rgba(1, 1, 1, 0.92)
-                                    }
-                                }
-
-                                Item { Layout.fillWidth: true }
-
-                                Rectangle {
-                                    width: 54
-                                    height: 54
-                                    radius: 27
-                                    color: Qt.rgba(1, 1, 1, 0.25)
-                                    border.color: Qt.rgba(1, 1, 1, 0.5)
-                                    border.width: 1.5
-
-                                    QQC2.Label {
-                                        anchors.centerIn: parent
-                                        text: appController.trendSymbol
-                                        font.pointSize: 24
-                                        font.bold: true
-                                        color: "#ffffff"
-                                    }
-                                }
-                            }
-
-                            Item { Layout.fillHeight: true }
-
-                            QQC2.Label {
-                                text: qsTr("Updated: %1").arg(appController.lastUpdated)
-                                font.pointSize: 8.5
-                                color: Qt.rgba(1, 1, 1, 0.88)
-                            }
-                        }
-                    }
-
-                    // Telemetry Details & Quick Toggles Card
-                    Rectangle {
-                        Layout.fillWidth: true
-                        Layout.fillHeight: true
-                        Layout.maximumHeight: 200
-                        radius: 14
-                        color: Kirigami.Theme.alternateBackgroundColor
-                        border.color: Qt.alpha(Kirigami.Theme.textColor, 0.15)
-                        border.width: 1
-
-                        ColumnLayout {
-                            anchors.fill: parent
-                            anchors.margins: 18
-                            spacing: 10
-
-                            RowLayout {
-                                Layout.fillWidth: true
-                                Kirigami.Heading {
-                                    level: 3
-                                    text: appController.patientName.length > 0
-                                        ? qsTr("Patient: %1").arg(appController.patientName)
-                                        : qsTr("CGM Sensor Overview")
-                                    color: Kirigami.Theme.textColor
-                                }
-                                Item { Layout.fillWidth: true }
-                                QQC2.Button {
-                                    icon.name: "window-duplicate"
-                                    text: appController.overlayVisible
-                                        ? qsTr("Hide Desktop Overlay")
-                                        : qsTr("Show Desktop Overlay")
-                                    onClicked: appController.updateOverlayVisible(!appController.overlayVisible)
-                                }
-                            }
-
-                            GridLayout {
-                                Layout.fillWidth: true
-                                columns: 2
-                                columnSpacing: 24
-                                rowSpacing: 8
-
-                                QQC2.Label {
-                                    text: qsTr("Target Range: %1").arg(appController.targetRangeDisplay)
-                                    font.bold: true
-                                    color: Kirigami.Theme.textColor
-                                }
-
-                                QQC2.Label {
-                                    text: qsTr("Region: %1 • Poll: every %2s").arg(appController.country.toUpperCase()).arg(appController.pollIntervalSeconds)
-                                    color: Kirigami.Theme.textColor
-                                }
-
-                                QQC2.CheckBox {
-                                    text: qsTr("Show glucose level in Tray Icon")
-                                    checked: appController.showGlucoseInTrayIcon
-                                    onToggled: appController.updateShowGlucoseInTrayIcon(checked)
-                                }
-
-                                QQC2.CheckBox {
-                                    text: qsTr("Show glucose info on Tray Hover")
-                                    checked: appController.showGlucoseInTrayTooltip
-                                    onToggled: appController.updateShowGlucoseInTrayTooltip(checked)
                                 }
                             }
 
@@ -519,22 +471,163 @@ Kirigami.ApplicationWindow {
                                 spacing: 8
 
                                 QQC2.Label {
+                                    text: appController.glucoseDisplay
+                                    font.pointSize: 34
+                                    font.bold: true
+                                    color: "#ffffff"
+                                }
+
+                                ColumnLayout {
+                                    Layout.fillWidth: true
+                                    spacing: 2
+                                    QQC2.Label {
+                                        text: appController.resultUnit
+                                        font.pointSize: 11
+                                        font.bold: true
+                                        color: "#ffffff"
+                                        Layout.fillWidth: true
+                                        elide: Text.ElideRight
+                                    }
+                                    QQC2.Label {
+                                        text: appController.trendDescription
+                                        font.pointSize: 9
+                                        color: Qt.rgba(1, 1, 1, 0.92)
+                                        Layout.fillWidth: true
+                                        elide: Text.ElideRight
+                                    }
+                                }
+
+                                Rectangle {
+                                    Layout.preferredWidth: 44
+                                    Layout.preferredHeight: 44
+                                    radius: 22
+                                    color: Qt.rgba(1, 1, 1, 0.25)
+                                    border.color: Qt.rgba(1, 1, 1, 0.5)
+                                    border.width: 1.5
+
+                                    QQC2.Label {
+                                        anchors.centerIn: parent
+                                        text: appController.trendSymbol
+                                        font.pointSize: 20
+                                        font.bold: true
+                                        color: "#ffffff"
+                                    }
+                                }
+                            }
+
+                            QQC2.Label {
+                                text: qsTr("Updated: %1").arg(appController.lastUpdated)
+                                font.pointSize: 8.5
+                                color: Qt.rgba(1, 1, 1, 0.9)
+                                Layout.fillWidth: true
+                                elide: Text.ElideRight
+                            }
+                        }
+                    }
+
+                    // Telemetry Details & Quick Toggles Card
+                    Rectangle {
+                        id: detailsCard
+                        objectName: "detailsCard"
+                        Layout.fillWidth: true
+                        Layout.preferredHeight: topCardsRow.unifiedCardHeight
+                        implicitHeight: topCardsRow.unifiedCardHeight
+                        radius: 14
+                        color: Kirigami.Theme.alternateBackgroundColor
+                        border.color: Qt.alpha(Kirigami.Theme.textColor, 0.15)
+                        border.width: 1
+
+                        ColumnLayout {
+                            id: detailsCol
+                            objectName: "detailsCol"
+                            anchors.left: parent.left
+                            anchors.right: parent.right
+                            anchors.top: parent.top
+                            anchors.margins: 14
+                            spacing: 6
+
+                            RowLayout {
+                                Layout.fillWidth: true
+                                spacing: 8
+                                Kirigami.Heading {
+                                    level: 3
+                                    text: appController.patientName.length > 0
+                                        ? qsTr("Patient: %1").arg(appController.patientName)
+                                        : qsTr("CGM Sensor Overview")
+                                    color: Kirigami.Theme.textColor
+                                    Layout.fillWidth: true
+                                    Layout.preferredWidth: 0
+                                    elide: Text.ElideRight
+                                }
+                                QQC2.ToolButton {
+                                    icon.name: "window-duplicate"
+                                    text: appController.overlayVisible
+                                        ? qsTr("Hide Overlay")
+                                        : qsTr("Overlay")
+                                    onClicked: appController.updateOverlayVisible(!appController.overlayVisible)
+                                }
+                            }
+
+                            RowLayout {
+                                Layout.fillWidth: true
+                                spacing: 12
+
+                                QQC2.Label {
+                                    text: qsTr("Target: %1").arg(appController.targetRangeDisplay)
+                                    font.bold: true
+                                    color: Kirigami.Theme.textColor
+                                    Layout.fillWidth: true
+                                    Layout.preferredWidth: 0
+                                    elide: Text.ElideRight
+                                }
+
+                                QQC2.Label {
+                                    text: qsTr("Region: %1 • Poll: %2s").arg(appController.country.toUpperCase()).arg(appController.pollIntervalSeconds)
+                                    color: Kirigami.Theme.textColor
+                                    elide: Text.ElideRight
+                                }
+                            }
+
+                            RowLayout {
+                                Layout.fillWidth: true
+                                spacing: 8
+
+                                QQC2.CheckBox {
+                                    text: qsTr("Tray Icon Badge")
+                                    checked: appController.showGlucoseInTrayIcon
+                                    onToggled: appController.updateShowGlucoseInTrayIcon(checked)
+                                    Layout.fillWidth: true
+                                }
+
+                                QQC2.CheckBox {
+                                    text: qsTr("Tray Hover Info")
+                                    checked: appController.showGlucoseInTrayTooltip
+                                    onToggled: appController.updateShowGlucoseInTrayTooltip(checked)
+                                    Layout.fillWidth: true
+                                }
+                            }
+
+                            RowLayout {
+                                Layout.fillWidth: true
+                                spacing: 4
+
+                                QQC2.Label {
                                     text: qsTr("Theme:")
                                     color: Kirigami.Theme.textColor
                                 }
-                                QQC2.Button {
+                                QQC2.ToolButton {
                                     text: qsTr("System")
                                     checkable: true
                                     checked: appController.themeMode === "system"
                                     onClicked: appController.updateThemeMode("system")
                                 }
-                                QQC2.Button {
+                                QQC2.ToolButton {
                                     text: qsTr("Dark")
                                     checkable: true
                                     checked: appController.themeMode === "dark"
                                     onClicked: appController.updateThemeMode("dark")
                                 }
-                                QQC2.Button {
+                                QQC2.ToolButton {
                                     text: qsTr("Light")
                                     checkable: true
                                     checked: appController.themeMode === "light"
@@ -547,13 +640,13 @@ Kirigami.ApplicationWindow {
                                     text: qsTr("Unit:")
                                     color: Kirigami.Theme.textColor
                                 }
-                                QQC2.Button {
+                                QQC2.ToolButton {
                                     text: "mg/dL"
                                     checkable: true
                                     checked: appController.resultUnit === "mg/dL"
                                     onClicked: appController.updateResultUnit("mg/dL")
                                 }
-                                QQC2.Button {
+                                QQC2.ToolButton {
                                     text: "mmol/L"
                                     checkable: true
                                     checked: appController.resultUnit === "mmol/L"
@@ -566,6 +659,8 @@ Kirigami.ApplicationWindow {
 
                 // 12-Hour Glucose Trend Graph Card
                 Rectangle {
+                    id: graphCard
+                    objectName: "graphCard"
                     Layout.fillWidth: true
                     Layout.fillHeight: true
                     radius: 14
@@ -575,31 +670,280 @@ Kirigami.ApplicationWindow {
 
                     ColumnLayout {
                         anchors.fill: parent
-                        anchors.margins: 16
+                        anchors.margins: 14
                         spacing: 8
 
                         RowLayout {
                             Layout.fillWidth: true
+                            spacing: 8
                             Kirigami.Heading {
                                 level: 3
                                 text: qsTr("Continuous Glucose Trend (%1)").arg(appController.resultUnit)
                                 color: Kirigami.Theme.textColor
+                                Layout.fillWidth: true
+                                Layout.preferredWidth: 0
+                                elide: Text.ElideRight
                             }
-                            Item { Layout.fillWidth: true }
                             QQC2.Label {
-                                text: qsTr("Shaded band indicates target range (%1)").arg(appController.targetRangeDisplay)
-                                opacity: 0.75
+                                objectName: "graphTargetBandLabel"
+                                text: glucoseCanvas.hoveredIndex >= 0
+                                    ? (glucoseCanvas.hoveredValueText + " • " + glucoseCanvas.hoveredTimeText)
+                                    : qsTr("Target band: %1").arg(appController.targetRangeDisplay)
+                                font.bold: glucoseCanvas.hoveredIndex >= 0
+                                opacity: glucoseCanvas.hoveredIndex >= 0 ? 0.95 : 0.75
                                 color: Kirigami.Theme.textColor
+                                elide: Text.ElideRight
                             }
                         }
 
                         Canvas {
                             id: glucoseCanvas
+                            objectName: "glucoseCanvas"
                             Layout.fillWidth: true
                             Layout.fillHeight: true
 
-                            onWidthChanged: requestPaint()
-                            onHeightChanged: requestPaint()
+                            property int hoveredIndex: -1
+                            property real hoveredX: 0
+                            property real hoveredY: 0
+                            property string hoveredValueText: ""
+                            property string hoveredStatusText: ""
+                            property string hoveredTimeText: ""
+                            property string hoveredColorHex: "#22c55e"
+
+                            function clearHover() {
+                                if (hoveredIndex !== -1) {
+                                    hoveredIndex = -1
+                                    hoveredValueText = ""
+                                    hoveredStatusText = ""
+                                    hoveredTimeText = ""
+                                    requestPaint()
+                                }
+                            }
+
+                            function updateHoverAt(mx, my) {
+                                let pts = []
+                                try {
+                                    pts = JSON.parse(appController.graphPointsJson || "[]")
+                                } catch (e) {
+                                    pts = []
+                                }
+                                if (pts.length === 0 || width <= 0 || height <= 0) {
+                                    clearHover()
+                                    return
+                                }
+
+                                const padLeft = 48
+                                const padRight = 20
+                                const padTop = 16
+                                const padBottom = 28
+                                const plotW = Math.max(10, width - padLeft - padRight)
+                                const plotH = Math.max(10, height - padTop - padBottom)
+
+                                if (mx < padLeft - 16 || mx > width - padRight + 16 || my < 0 || my > height) {
+                                    clearHover()
+                                    return
+                                }
+
+                                let minMg = 50
+                                let maxMg = 260
+                                for (let i = 0; i < pts.length; ++i) {
+                                    const v = Number(pts[i].value_mg_dl || 0)
+                                    if (v > 0) {
+                                        if (v - 20 < minMg) minMg = Math.max(30, v - 20)
+                                        if (v + 20 > maxMg) maxMg = Math.min(420, v + 20)
+                                    }
+                                }
+
+                                const yForMg = function(mg) {
+                                    const ratio = (mg - minMg) / Math.max(1, (maxMg - minMg))
+                                    return padTop + plotH * (1.0 - Math.max(0.0, Math.min(1.0, ratio)))
+                                }
+
+                                // Find nearest point horizontally (with 2D distance tie-break)
+                                let bestIdx = -1
+                                let bestDist = 1e9
+                                let bestX = 0
+                                let bestY = 0
+                                for (let i = 0; i < pts.length; ++i) {
+                                    const v = Number(pts[i].value_mg_dl || 0)
+                                    const px = pts.length === 1
+                                        ? (padLeft + plotW / 2)
+                                        : (padLeft + (plotW * i) / (pts.length - 1))
+                                    const py = yForMg(v)
+                                    const dx = Math.abs(mx - px)
+                                    const dy = Math.abs(my - py)
+                                    const score = dx + dy * 0.15
+                                    if (score < bestDist) {
+                                        bestDist = score
+                                        bestIdx = i
+                                        bestX = px
+                                        bestY = py
+                                    }
+                                }
+
+                                if (bestIdx < 0) {
+                                    clearHover()
+                                    return
+                                }
+
+                                const pt = pts[bestIdx]
+                                const mg = Number(pt.value_mg_dl || 0)
+                                const isMmol = appController.resultUnit === "mmol/L"
+                                const formattedVal = isMmol
+                                    ? (mg / 18.0).toFixed(1) + " mmol/L"
+                                    : Math.round(mg).toString() + " mg/dL"
+
+                                let statusLabel = qsTr("In Range")
+                                let ptColor = "#22c55e"
+                                if (mg < 70) {
+                                    statusLabel = qsTr("Low")
+                                    ptColor = "#ef4444"
+                                } else if (mg > 240) {
+                                    statusLabel = qsTr("High")
+                                    ptColor = "#f97316"
+                                } else if (mg < appController.targetLowMgDl || mg > appController.targetHighMgDl) {
+                                    statusLabel = qsTr("Out of Target")
+                                    ptColor = "#eab308"
+                                }
+
+                                hoveredIndex = bestIdx
+                                hoveredX = bestX
+                                hoveredY = bestY
+                                hoveredValueText = formattedVal
+                                hoveredStatusText = statusLabel
+                                hoveredTimeText = String(pt.timestamp || qsTr("Unknown time"))
+                                hoveredColorHex = ptColor
+                                requestPaint()
+                            }
+
+                            onWidthChanged: {
+                                clearHover()
+                                requestPaint()
+                            }
+                            onHeightChanged: {
+                                clearHover()
+                                requestPaint()
+                            }
+
+                            HoverHandler {
+                                id: canvasHoverHandler
+                                onPointChanged: {
+                                    if (hovered) {
+                                        glucoseCanvas.updateHoverAt(point.position.x, point.position.y)
+                                    }
+                                }
+                                onHoveredChanged: {
+                                    if (!hovered) {
+                                        glucoseCanvas.clearHover()
+                                    }
+                                }
+                            }
+
+                            MouseArea {
+                                id: canvasHoverMouseArea
+                                objectName: "glucoseCanvasMouseArea"
+                                anchors.fill: parent
+                                hoverEnabled: true
+                                acceptedButtons: Qt.LeftButton
+                                onPositionChanged: function(mouse) {
+                                    glucoseCanvas.updateHoverAt(mouse.x, mouse.y)
+                                }
+                                onPressed: function(mouse) {
+                                    glucoseCanvas.updateHoverAt(mouse.x, mouse.y)
+                                }
+                                onExited: {
+                                    if (!canvasHoverHandler.hovered) {
+                                        glucoseCanvas.clearHover()
+                                    }
+                                }
+                            }
+
+                            Rectangle {
+                                id: graphHoverTooltip
+                                objectName: "graphHoverTooltip"
+                                visible: glucoseCanvas.hoveredIndex >= 0
+                                z: 10
+                                radius: 8
+                                color: root.isLightTheme
+                                    ? Qt.rgba(0.98, 0.99, 1.0, 0.96)
+                                    : Qt.rgba(0.09, 0.12, 0.18, 0.95)
+                                border.color: glucoseCanvas.hoveredColorHex
+                                border.width: 1.5
+                                width: Math.min(
+                                    Math.max(120, Math.min(240, tooltipCol.implicitWidth + 20)),
+                                    Math.max(120, glucoseCanvas.width - 16)
+                                )
+                                height: tooltipCol.implicitHeight + 14
+                                implicitWidth: width
+                                implicitHeight: height
+
+                                x: {
+                                    const preferredRight = glucoseCanvas.hoveredX + 12
+                                    const preferredLeft = glucoseCanvas.hoveredX - width - 12
+                                    const rawX = (preferredRight + width + 6 <= glucoseCanvas.width)
+                                        ? preferredRight
+                                        : preferredLeft
+                                    return Math.max(6, Math.min(glucoseCanvas.width - width - 6, rawX))
+                                }
+                                y: {
+                                    const preferredAbove = glucoseCanvas.hoveredY - height - 10
+                                    const preferredBelow = glucoseCanvas.hoveredY + 12
+                                    const rawY = (preferredAbove >= 6) ? preferredAbove : preferredBelow
+                                    return Math.max(6, Math.min(glucoseCanvas.height - height - 6, rawY))
+                                }
+
+                                ColumnLayout {
+                                    id: tooltipCol
+                                    objectName: "graphHoverTooltipCol"
+                                    anchors.left: parent.left
+                                    anchors.right: parent.right
+                                    anchors.top: parent.top
+                                    anchors.margins: 7
+                                    spacing: 2
+
+                                    RowLayout {
+                                        Layout.fillWidth: true
+                                        spacing: 6
+
+                                        Rectangle {
+                                            Layout.preferredWidth: 10
+                                            Layout.preferredHeight: 10
+                                            radius: 5
+                                            color: glucoseCanvas.hoveredColorHex
+                                        }
+
+                                        QQC2.Label {
+                                            objectName: "graphHoverValueLabel"
+                                            text: glucoseCanvas.hoveredValueText
+                                            font.bold: true
+                                            font.pointSize: 10.5
+                                            color: Kirigami.Theme.textColor
+                                        }
+
+                                        QQC2.Label {
+                                            objectName: "graphHoverStatusLabel"
+                                            text: "(" + glucoseCanvas.hoveredStatusText + ")"
+                                            font.pointSize: 8.5
+                                            font.bold: true
+                                            color: glucoseCanvas.hoveredColorHex
+                                            Layout.fillWidth: true
+                                            Layout.preferredWidth: 0
+                                            elide: Text.ElideRight
+                                        }
+                                    }
+
+                                    QQC2.Label {
+                                        objectName: "graphHoverTimeLabel"
+                                        text: glucoseCanvas.hoveredTimeText
+                                        font.pointSize: 8.5
+                                        opacity: 0.85
+                                        color: Kirigami.Theme.textColor
+                                        Layout.fillWidth: true
+                                        Layout.preferredWidth: 0
+                                        elide: Text.ElideRight
+                                    }
+                                }
+                            }
 
                             onPaint: {
                                 const ctx = getContext("2d")
@@ -673,8 +1017,8 @@ Kirigami.ApplicationWindow {
                                 if (pts.length === 0) {
                                     ctx.font = "13px sans-serif"
                                     ctx.fillText(
-                                        "No CGM graph points received yet — click Refresh or Preview Sample Data.",
-                                        padLeft + 24,
+                                        "No CGM graph points received yet — click Refresh or Sample Data.",
+                                        padLeft + 16,
                                         padTop + plotH / 2
                                     )
                                     return
@@ -694,6 +1038,20 @@ Kirigami.ApplicationWindow {
                                 }
                                 ctx.stroke()
 
+                                // Vertical crosshair guide when hovering a point
+                                if (hoveredIndex >= 0 && hoveredIndex < pts.length) {
+                                    ctx.save()
+                                    ctx.strokeStyle = root.isLightTheme
+                                        ? "rgba(15, 23, 42, 0.35)"
+                                        : "rgba(248, 250, 252, 0.35)"
+                                    ctx.lineWidth = 1
+                                    ctx.beginPath()
+                                    ctx.moveTo(hoveredX, padTop)
+                                    ctx.lineTo(hoveredX, padTop + plotH)
+                                    ctx.stroke()
+                                    ctx.restore()
+                                }
+
                                 // Plot points
                                 for (let i = 0; i < pts.length; ++i) {
                                     const v = Number(pts[i].value_mg_dl || 0)
@@ -702,14 +1060,33 @@ Kirigami.ApplicationWindow {
                                         : (padLeft + (plotW * i) / (pts.length - 1))
                                     const y = yForMg(v)
 
-                                    if (v < 70) ctx.fillStyle = "#ef4444"
-                                    else if (v > 240) ctx.fillStyle = "#f97316"
-                                    else if (v < appController.targetLowMgDl || v > appController.targetHighMgDl) ctx.fillStyle = "#eab308"
-                                    else ctx.fillStyle = "#22c55e"
+                                    let ptColor = "#22c55e"
+                                    if (v < 70) ptColor = "#ef4444"
+                                    else if (v > 240) ptColor = "#f97316"
+                                    else if (v < appController.targetLowMgDl || v > appController.targetHighMgDl) ptColor = "#eab308"
 
-                                    ctx.beginPath()
-                                    ctx.arc(x, y, 4, 0, Math.PI * 2)
-                                    ctx.fill()
+                                    if (i === hoveredIndex) {
+                                        ctx.fillStyle = root.isLightTheme
+                                            ? "rgba(2, 132, 199, 0.22)"
+                                            : "rgba(56, 189, 248, 0.28)"
+                                        ctx.beginPath()
+                                        ctx.arc(x, y, 9, 0, Math.PI * 2)
+                                        ctx.fill()
+
+                                        ctx.fillStyle = ptColor
+                                        ctx.beginPath()
+                                        ctx.arc(x, y, 5.5, 0, Math.PI * 2)
+                                        ctx.fill()
+
+                                        ctx.strokeStyle = "#ffffff"
+                                        ctx.lineWidth = 2
+                                        ctx.stroke()
+                                    } else {
+                                        ctx.fillStyle = ptColor
+                                        ctx.beginPath()
+                                        ctx.arc(x, y, 3.5, 0, Math.PI * 2)
+                                        ctx.fill()
+                                    }
                                 }
                             }
                         }
@@ -720,21 +1097,30 @@ Kirigami.ApplicationWindow {
 
         // ==================== TAB 2: GENERAL & TRAY SETTINGS ====================
         QQC2.ScrollView {
+            id: generalScrollView
+            objectName: "generalScrollView"
             Layout.fillWidth: true
             Layout.fillHeight: true
             visible: root.activeTab === "general"
+            clip: true
+            contentWidth: availableWidth
 
             ColumnLayout {
-                width: Math.min(parent.width, 760)
-                spacing: 16
+                id: generalContentColumn
+                objectName: "generalContentColumn"
+                width: Math.min(generalScrollView.availableWidth, 760)
+                spacing: 14
 
                 Kirigami.Heading {
                     level: 2
                     text: qsTr("General, Appearance & System Tray Settings")
                     color: Kirigami.Theme.textColor
+                    Layout.fillWidth: true
+                    wrapMode: Text.WordWrap
                 }
 
                 Rectangle {
+                    objectName: "traySettingsCard"
                     Layout.fillWidth: true
                     implicitHeight: trayGroupCol.implicitHeight + 28
                     radius: 10
@@ -744,43 +1130,52 @@ Kirigami.ApplicationWindow {
 
                     ColumnLayout {
                         id: trayGroupCol
-                        anchors.fill: parent
+                        anchors.left: parent.left
+                        anchors.right: parent.right
+                        anchors.top: parent.top
                         anchors.margins: 14
-                        spacing: 12
+                        spacing: 10
 
                         Kirigami.Heading {
                             level: 3
                             text: qsTr("System Tray & Startup Behavior")
                             color: Kirigami.Theme.textColor
+                            Layout.fillWidth: true
+                            wrapMode: Text.WordWrap
                         }
 
                         QQC2.Switch {
-                            text: qsTr("Show blood glucose level directly inside the System Tray icon badge")
+                            text: qsTr("Show blood glucose level inside the System Tray icon badge")
                             checked: appController.showGlucoseInTrayIcon
                             onToggled: appController.updateShowGlucoseInTrayIcon(checked)
+                            Layout.fillWidth: true
                         }
 
                         QQC2.Switch {
-                            text: qsTr("Show blood glucose telemetry & target range in the System Tray hover tooltip")
+                            text: qsTr("Show blood glucose telemetry in the System Tray hover tooltip")
                             checked: appController.showGlucoseInTrayTooltip
                             onToggled: appController.updateShowGlucoseInTrayTooltip(checked)
+                            Layout.fillWidth: true
                         }
 
                         QQC2.Switch {
                             text: qsTr("Launch automatically when logging into KDE Plasma")
                             checked: appController.autostartEnabled
                             onToggled: appController.updateAutostartEnabled(checked)
+                            Layout.fillWidth: true
                         }
 
                         QQC2.Switch {
-                            text: qsTr("Start minimized to the System Tray on login (no full-screen popup)")
+                            text: qsTr("Start minimized to the System Tray on login")
                             checked: appController.startMinimized
                             onToggled: appController.updateStartMinimized(checked)
+                            Layout.fillWidth: true
                         }
                     }
                 }
 
                 Rectangle {
+                    objectName: "displaySettingsCard"
                     Layout.fillWidth: true
                     implicitHeight: displayGroupCol.implicitHeight + 28
                     radius: 10
@@ -790,24 +1185,31 @@ Kirigami.ApplicationWindow {
 
                     ColumnLayout {
                         id: displayGroupCol
-                        anchors.fill: parent
+                        anchors.left: parent.left
+                        anchors.right: parent.right
+                        anchors.top: parent.top
                         anchors.margins: 14
-                        spacing: 12
+                        spacing: 10
 
                         Kirigami.Heading {
                             level: 3
                             text: qsTr("Theme, Units & Window Mode")
                             color: Kirigami.Theme.textColor
+                            Layout.fillWidth: true
+                            wrapMode: Text.WordWrap
                         }
 
                         RowLayout {
                             Layout.fillWidth: true
+                            spacing: 12
                             QQC2.Label {
                                 text: qsTr("Color Theme:")
-                                Layout.preferredWidth: 200
+                                Layout.preferredWidth: 190
                                 color: Kirigami.Theme.textColor
                             }
                             QQC2.ComboBox {
+                                Layout.fillWidth: true
+                                Layout.maximumWidth: 320
                                 model: [
                                     { label: qsTr("System (Follow KDE Plasma)"), value: "system" },
                                     { label: qsTr("Dark Mode (Breeze Dark)"), value: "dark" },
@@ -822,12 +1224,15 @@ Kirigami.ApplicationWindow {
 
                         RowLayout {
                             Layout.fillWidth: true
+                            spacing: 12
                             QQC2.Label {
                                 text: qsTr("Glucose Unit:")
-                                Layout.preferredWidth: 200
+                                Layout.preferredWidth: 190
                                 color: Kirigami.Theme.textColor
                             }
                             QQC2.ComboBox {
+                                Layout.fillWidth: true
+                                Layout.maximumWidth: 320
                                 model: ["mg/dL", "mmol/L"]
                                 currentIndex: appController.resultUnit === "mmol/L" ? 1 : 0
                                 onActivated: appController.updateResultUnit(currentText)
@@ -836,12 +1241,15 @@ Kirigami.ApplicationWindow {
 
                         RowLayout {
                             Layout.fillWidth: true
+                            spacing: 12
                             QQC2.Label {
                                 text: qsTr("Window Mode:")
-                                Layout.preferredWidth: 200
+                                Layout.preferredWidth: 190
                                 color: Kirigami.Theme.textColor
                             }
                             QQC2.ComboBox {
+                                Layout.fillWidth: true
+                                Layout.maximumWidth: 320
                                 model: [
                                     { label: qsTr("Standard Windowed"), value: "windowed" },
                                     { label: qsTr("Floating Desktop Overlay"), value: "overlay" },
@@ -858,9 +1266,10 @@ Kirigami.ApplicationWindow {
 
                         RowLayout {
                             Layout.fillWidth: true
+                            spacing: 12
                             QQC2.Label {
                                 text: qsTr("Polling Interval (seconds):")
-                                Layout.preferredWidth: 200
+                                Layout.preferredWidth: 190
                                 color: Kirigami.Theme.textColor
                             }
                             QQC2.SpinBox {
@@ -878,21 +1287,30 @@ Kirigami.ApplicationWindow {
 
         // ==================== TAB 3: ALERTS & THRESHOLDS ====================
         QQC2.ScrollView {
+            id: alertsScrollView
+            objectName: "alertsScrollView"
             Layout.fillWidth: true
             Layout.fillHeight: true
             visible: root.activeTab === "alerts"
+            clip: true
+            contentWidth: availableWidth
 
             ColumnLayout {
-                width: Math.min(parent.width, 760)
-                spacing: 16
+                id: alertsContentColumn
+                objectName: "alertsContentColumn"
+                width: Math.min(alertsScrollView.availableWidth, 760)
+                spacing: 14
 
                 Kirigami.Heading {
                     level: 2
                     text: qsTr("Glucose Alerts & Custom Thresholds")
                     color: Kirigami.Theme.textColor
+                    Layout.fillWidth: true
+                    wrapMode: Text.WordWrap
                 }
 
                 Rectangle {
+                    objectName: "alertsSettingsCard"
                     Layout.fillWidth: true
                     implicitHeight: alertsGroupCol.implicitHeight + 28
                     radius: 10
@@ -902,26 +1320,31 @@ Kirigami.ApplicationWindow {
 
                     ColumnLayout {
                         id: alertsGroupCol
-                        anchors.fill: parent
+                        anchors.left: parent.left
+                        anchors.right: parent.right
+                        anchors.top: parent.top
                         anchors.margins: 14
-                        spacing: 12
+                        spacing: 10
 
                         QQC2.Switch {
                             id: bringToFrontSwitch
                             text: qsTr("Bring main window to front when glucose is out of range")
                             checked: appController.bringToFrontEnabled
+                            Layout.fillWidth: true
                         }
 
                         QQC2.Switch {
                             id: flashWindowSwitch
                             text: qsTr("Flash taskbar / window attention on out-of-range reading")
                             checked: appController.flashWindowEnabled
+                            Layout.fillWidth: true
                         }
 
                         QQC2.Switch {
                             id: audioAlertSwitch
                             text: qsTr("Play audio alert when glucose is out of range")
                             checked: appController.audioAlertEnabled
+                            Layout.fillWidth: true
                         }
 
                         QQC2.Switch {
@@ -929,6 +1352,7 @@ Kirigami.ApplicationWindow {
                             visible: audioAlertSwitch.checked
                             text: qsTr("Use custom audio file (.mp3 / .wav / .ogg)")
                             checked: appController.useCustomSound
+                            Layout.fillWidth: true
                         }
 
                         RowLayout {
@@ -954,6 +1378,7 @@ Kirigami.ApplicationWindow {
                             id: overrideThresholdSwitch
                             text: qsTr("Override sensor target range with custom alert thresholds (mg/dL)")
                             checked: appController.overrideThreshold
+                            Layout.fillWidth: true
                         }
 
                         RowLayout {
@@ -1023,21 +1448,30 @@ Kirigami.ApplicationWindow {
 
         // ==================== TAB 4: ACCOUNT & SECURITY ====================
         QQC2.ScrollView {
+            id: accountScrollView
+            objectName: "accountScrollView"
             Layout.fillWidth: true
             Layout.fillHeight: true
             visible: root.activeTab === "account"
+            clip: true
+            contentWidth: availableWidth
 
             ColumnLayout {
-                width: Math.min(parent.width, 760)
-                spacing: 16
+                id: accountContentColumn
+                objectName: "accountContentColumn"
+                width: Math.min(accountScrollView.availableWidth, 760)
+                spacing: 14
 
                 Kirigami.Heading {
                     level: 2
                     text: qsTr("Account & Encrypted Credential Vault")
                     color: Kirigami.Theme.textColor
+                    Layout.fillWidth: true
+                    wrapMode: Text.WordWrap
                 }
 
                 Rectangle {
+                    objectName: "accountSecurityCard"
                     Layout.fillWidth: true
                     implicitHeight: accountCol.implicitHeight + 28
                     radius: 10
@@ -1047,7 +1481,9 @@ Kirigami.ApplicationWindow {
 
                     ColumnLayout {
                         id: accountCol
-                        anchors.fill: parent
+                        anchors.left: parent.left
+                        anchors.right: parent.right
+                        anchors.top: parent.top
                         anchors.margins: 14
                         spacing: 10
 
@@ -1055,6 +1491,9 @@ Kirigami.ApplicationWindow {
                             text: qsTr("Session Status: %1").arg(appController.statusMessage)
                             font.bold: true
                             color: Kirigami.Theme.textColor
+                            Layout.fillWidth: true
+                            Layout.preferredWidth: 0
+                            wrapMode: Text.WordWrap
                         }
 
                         QQC2.Label {
@@ -1062,16 +1501,25 @@ Kirigami.ApplicationWindow {
                                 appController.patientName.length > 0 ? appController.patientName : qsTr("None")
                             )
                             color: Kirigami.Theme.textColor
+                            Layout.fillWidth: true
+                            Layout.preferredWidth: 0
+                            wrapMode: Text.WordWrap
                         }
 
                         QQC2.Label {
                             text: qsTr("Regional Endpoint: %1").arg(appController.country.toUpperCase())
                             color: Kirigami.Theme.textColor
+                            Layout.fillWidth: true
+                            Layout.preferredWidth: 0
+                            wrapMode: Text.WordWrap
                         }
 
                         QQC2.Label {
                             text: qsTr("Encryption Cipher: AES-256-GCM (PBKDF2-HMAC-SHA256, 100,000 iterations, 0600 permissions)")
                             color: Kirigami.Theme.textColor
+                            Layout.fillWidth: true
+                            Layout.preferredWidth: 0
+                            wrapMode: Text.WordWrap
                         }
 
                         QQC2.Label {
@@ -1079,9 +1527,12 @@ Kirigami.ApplicationWindow {
                             font.family: "monospace"
                             wrapMode: Text.WrapAnywhere
                             color: Kirigami.Theme.textColor
+                            Layout.fillWidth: true
+                            Layout.preferredWidth: 0
                         }
 
                         RowLayout {
+                            Layout.fillWidth: true
                             spacing: 10
                             QQC2.Button {
                                 icon.name: "system-log-out"

@@ -25,6 +25,7 @@ pub mod qobject {
         fn librelinkup_play_alert_sound(custom_sound_path: &QString);
         fn librelinkup_quit_app();
         fn librelinkup_run_app(start_minimized: bool) -> i32;
+        fn librelinkup_run_ui_overflow_tests() -> QString;
     }
 
     #[auto_cxx_name]

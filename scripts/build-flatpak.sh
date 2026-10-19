@@ -10,6 +10,7 @@ OUT_DIR="${FLATPAK_OUT_DIR:-$REPO_ROOT/target/release}"
 BUNDLE_NAME="librelinkup-kde-v${VERSION}-${ARCH}.flatpak"
 
 echo "==> Building LibreLinkUp Desktop v${VERSION} Flatpak (${ARCH})..."
+cargo metadata --format-version 1 --manifest-path "$REPO_ROOT/Cargo.toml" > /dev/null
 rm -rf "$WORK_DIR/build-dir" "$WORK_DIR/repo"
 mkdir -p "$WORK_DIR" "$OUT_DIR"
 

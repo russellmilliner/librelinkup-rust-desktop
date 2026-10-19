@@ -17,7 +17,7 @@ Window {
 
     property var controller: null
     readonly property bool isLightTheme: (0.2126 * color.r + 0.7152 * color.g + 0.0722 * color.b) > 0.45
-    readonly property string versionText: controller ? String(controller.appVersion || "0.1.0") : "0.1.0"
+    readonly property string versionText: controller ? String(controller.appVersion || "0.2.0") : "0.2.0"
 
     function openAboutWindow() {
         aboutWindow.show()

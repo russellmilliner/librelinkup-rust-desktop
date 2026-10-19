@@ -9,6 +9,13 @@ pub const LOW_CRITICAL_MG_DL: f64 = 70.0;
 pub const HIGH_CRITICAL_MG_DL: f64 = 240.0;
 pub const DEFAULT_TARGET_LOW_MG_DL: f64 = 70.0;
 pub const DEFAULT_TARGET_HIGH_MG_DL: f64 = 180.0;
+pub const DEFAULT_URGENT_LOW_MG_DL: f64 = 55.0;
+pub const DEFAULT_ALERT_REPEAT_MINUTES: u32 = 15;
+pub const DEFAULT_STALE_AFTER_MINUTES: u32 = 15;
+/// Urgent-low alerts repeat at least this often regardless of the configured repeat interval.
+pub const URGENT_LOW_REPEAT_MINUTES: u32 = 5;
+/// Gray used for stale readings in the UI, tray badge and overlay.
+pub const STALE_COLOR_HEX: &str = "#6b7280";
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum GlucoseRangeStatus {
@@ -125,6 +132,10 @@ pub struct GlucoseSnapshot {
     pub first_name: String,
     pub last_name: String,
     pub graph_points: Vec<GraphPoint>,
+    /// Unix epoch seconds when the current reading was measured (parsed from LibreView's
+    /// `FactoryTimestamp`, which is UTC). `None` when unknown (e.g. sample data).
+    #[serde(default)]
+    pub measured_at_epoch: Option<i64>,
 }
 
 impl Default for GlucoseSnapshot {
@@ -139,6 +150,7 @@ impl Default for GlucoseSnapshot {
             first_name: String::new(),
             last_name: String::new(),
             graph_points: Vec::new(),
+            measured_at_epoch: None,
         }
     }
 }
@@ -175,6 +187,16 @@ pub struct AppSettings {
     pub custom_target_low: f64,
     pub custom_target_high: f64,
     pub ui_text_scale: i32,
+    /// Urgent-low threshold (mg/dL). Urgent-low alerts ignore snooze and repeat every 5 min.
+    pub urgent_low_mg_dl: f64,
+    /// Minimum minutes between repeated alerts of the same kind.
+    pub alert_repeat_minutes: u32,
+    /// A reading older than this many minutes is considered stale (signal loss).
+    pub stale_after_minutes: u32,
+    /// Alert when readings become stale.
+    pub alert_on_stale: bool,
+    /// Non-urgent alerts are silenced until this Unix epoch second (0 = not snoozed).
+    pub snooze_until_epoch: i64,
 }
 
 impl Default for AppSettings {
@@ -209,6 +231,11 @@ impl Default for AppSettings {
             custom_target_low: DEFAULT_TARGET_LOW_MG_DL,
             custom_target_high: DEFAULT_TARGET_HIGH_MG_DL,
             ui_text_scale: 100,
+            urgent_low_mg_dl: DEFAULT_URGENT_LOW_MG_DL,
+            alert_repeat_minutes: DEFAULT_ALERT_REPEAT_MINUTES,
+            stale_after_minutes: DEFAULT_STALE_AFTER_MINUTES,
+            alert_on_stale: true,
+            snooze_until_epoch: 0,
         }
     }
 }
@@ -313,4 +340,233 @@ pub fn load_default_settings() -> AppSettings {
 
 pub fn save_default_settings(settings: &AppSettings) -> Result<(), String> {
     save_settings_to_path(settings, &settings_file_path())
+}
+
+// ---------------------------------------------------------------------------
+// Reading age / staleness and alert decision logic (pure, unit-testable).
+// ---------------------------------------------------------------------------
+
+/// Parses a LibreView timestamp such as `"10/19/2026 7:12:34 PM"`.
+/// `as_utc = true` for `FactoryTimestamp` (UTC); `false` for `Timestamp` (local time).
+pub fn parse_libreview_timestamp(raw: &str, as_utc: bool) -> Option<i64> {
+    use chrono::{NaiveDateTime, TimeZone};
+    let trimmed = raw.trim();
+    if trimmed.is_empty() {
+        return None;
+    }
+    let naive = ["%m/%d/%Y %I:%M:%S %p", "%m/%d/%Y %H:%M:%S", "%Y-%m-%dT%H:%M:%S"]
+        .iter()
+        .find_map(|fmt| NaiveDateTime::parse_from_str(trimmed, fmt).ok())?;
+    if as_utc {
+        Some(chrono::Utc.from_utc_datetime(&naive).timestamp())
+    } else {
+        chrono::Local
+            .from_local_datetime(&naive)
+            .earliest()
+            .map(|dt| dt.timestamp())
+    }
+}
+
+/// Whole minutes since the reading was measured (clamped at 0 for small clock skew).
+pub fn reading_age_minutes(measured_at_epoch: Option<i64>, now_epoch: i64) -> Option<i64> {
+    measured_at_epoch.map(|t| ((now_epoch - t).max(0)) / 60)
+}
+
+pub fn format_reading_age(age_minutes: Option<i64>) -> String {
+    match age_minutes {
+        None => String::new(),
+        Some(0) => "just now".to_string(),
+        Some(m) if m < 60 => format!("{m} min ago"),
+        Some(m) => format!("{}h {:02}m ago", m / 60, m % 60),
+    }
+}
+
+/// Kinds of alerts, ordered by severity (higher = more severe).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+pub enum AlertKind {
+    High,
+    Stale,
+    Low,
+    UrgentLow,
+}
+
+impl AlertKind {
+    pub fn title(&self) -> &'static str {
+        match self {
+            Self::UrgentLow => "URGENT LOW blood glucose",
+            Self::Low => "Low blood glucose",
+            Self::High => "High blood glucose",
+            Self::Stale => "No recent glucose data",
+        }
+    }
+
+    fn family(&self) -> u8 {
+        match self {
+            Self::Low | Self::UrgentLow => 0,
+            Self::High => 1,
+            Self::Stale => 2,
+        }
+    }
+
+    /// Urgent low is the only alert that cannot be snoozed.
+    pub fn bypasses_snooze(&self) -> bool {
+        matches!(self, Self::UrgentLow)
+    }
+}
+
+impl AppSettings {
+    pub fn effective_urgent_low(&self) -> f64 {
+        if self.urgent_low_mg_dl > 0.0 {
+            self.urgent_low_mg_dl
+        } else {
+            DEFAULT_URGENT_LOW_MG_DL
+        }
+    }
+
+    pub fn effective_stale_after_minutes(&self) -> i64 {
+        self.stale_after_minutes.clamp(5, 120) as i64
+    }
+
+    pub fn is_reading_stale(&self, age_minutes: Option<i64>) -> bool {
+        age_minutes.is_some_and(|m| m >= self.effective_stale_after_minutes())
+    }
+
+    pub fn is_snoozed(&self, now_epoch: i64) -> bool {
+        self.snooze_until_epoch > now_epoch
+    }
+
+    /// Determines which alert (if any) the current state warrants.
+    /// A stale reading is not judged by value; it raises a `Stale` alert instead.
+    pub fn classify_alert(
+        &self,
+        value_mg_dl: f64,
+        api_low: f64,
+        api_high: f64,
+        stale: bool,
+    ) -> Option<AlertKind> {
+        if stale {
+            return self.alert_on_stale.then_some(AlertKind::Stale);
+        }
+        if value_mg_dl <= 0.0 || value_mg_dl.is_nan() {
+            return None;
+        }
+        if value_mg_dl < self.effective_urgent_low() {
+            Some(AlertKind::UrgentLow)
+        } else if value_mg_dl < self.effective_target_low(api_low) {
+            Some(AlertKind::Low)
+        } else if value_mg_dl > self.effective_target_high(api_high) {
+            Some(AlertKind::High)
+        } else {
+            None
+        }
+    }
+
+    /// Decides whether to fire `kind` now, given the last fired alert `(kind, epoch)`.
+    /// - Snooze silences everything except urgent low.
+    /// - A new or more severe kind fires immediately (escalation).
+    /// - The same kind repeats after the repeat interval (urgent low: at most 5 min).
+    pub fn should_fire_alert(
+        &self,
+        kind: AlertKind,
+        last_fired: Option<(AlertKind, i64)>,
+        now_epoch: i64,
+    ) -> bool {
+        if self.is_snoozed(now_epoch) && !kind.bypasses_snooze() {
+            return false;
+        }
+        let mut repeat_minutes = self.alert_repeat_minutes.clamp(1, 240);
+        if kind == AlertKind::UrgentLow {
+            repeat_minutes = repeat_minutes.min(URGENT_LOW_REPEAT_MINUTES);
+        }
+        match last_fired {
+            None => true,
+            Some((last_kind, at)) => {
+                let escalated = kind > last_kind;
+                // e.g. high -> low or low -> stale; urgent low easing to low is NOT a new
+                // condition and follows the repeat timer.
+                let new_condition = kind.family() != last_kind.family();
+                escalated || new_condition || now_epoch - at >= repeat_minutes as i64 * 60
+            }
+        }
+    }
+}
+
+#[cfg(test)]
+mod alert_tests {
+    use super::*;
+
+    fn settings() -> AppSettings {
+        AppSettings::default()
+    }
+
+    #[test]
+    fn parses_libreview_timestamps() {
+        let utc = parse_libreview_timestamp("10/19/2026 7:05:09 PM", true).unwrap();
+        assert_eq!(utc, 1792436709);
+        assert_eq!(parse_libreview_timestamp("1/2/2026 9:00:00 AM", true), Some(1767344400));
+        assert_eq!(parse_libreview_timestamp("", true), None);
+        assert_eq!(parse_libreview_timestamp("garbage", true), None);
+    }
+
+    #[test]
+    fn age_and_formatting() {
+        assert_eq!(reading_age_minutes(Some(1000), 1000 + 125), Some(2));
+        assert_eq!(reading_age_minutes(Some(2000), 1000), Some(0), "clock skew clamps to 0");
+        assert_eq!(reading_age_minutes(None, 1000), None);
+        assert_eq!(format_reading_age(Some(0)), "just now");
+        assert_eq!(format_reading_age(Some(7)), "7 min ago");
+        assert_eq!(format_reading_age(Some(135)), "2h 15m ago");
+    }
+
+    #[test]
+    fn staleness_threshold() {
+        let s = settings();
+        assert!(!s.is_reading_stale(Some(14)));
+        assert!(s.is_reading_stale(Some(15)));
+        assert!(!s.is_reading_stale(None), "unknown age is not treated as stale");
+    }
+
+    #[test]
+    fn classification() {
+        let s = settings();
+        assert_eq!(s.classify_alert(50.0, 70.0, 180.0, false), Some(AlertKind::UrgentLow));
+        assert_eq!(s.classify_alert(65.0, 70.0, 180.0, false), Some(AlertKind::Low));
+        assert_eq!(s.classify_alert(120.0, 70.0, 180.0, false), None);
+        assert_eq!(s.classify_alert(200.0, 70.0, 180.0, false), Some(AlertKind::High));
+        assert_eq!(s.classify_alert(200.0, 70.0, 180.0, true), Some(AlertKind::Stale));
+        let mut quiet = settings();
+        quiet.alert_on_stale = false;
+        assert_eq!(quiet.classify_alert(50.0, 70.0, 180.0, true), None);
+    }
+
+    #[test]
+    fn repeat_interval_and_escalation() {
+        let s = settings(); // 15 min repeat
+        let t0 = 1_000_000;
+        assert!(s.should_fire_alert(AlertKind::High, None, t0));
+        assert!(!s.should_fire_alert(AlertKind::High, Some((AlertKind::High, t0)), t0 + 60));
+        assert!(s.should_fire_alert(AlertKind::High, Some((AlertKind::High, t0)), t0 + 15 * 60));
+        // Escalation fires immediately.
+        assert!(s.should_fire_alert(AlertKind::UrgentLow, Some((AlertKind::Low, t0)), t0 + 60));
+        // A different kind (e.g. high -> stale) also fires immediately.
+        assert!(s.should_fire_alert(AlertKind::Stale, Some((AlertKind::High, t0)), t0 + 60));
+        // Urgent low repeats every 5 min even with a longer configured interval.
+        assert!(!s.should_fire_alert(AlertKind::UrgentLow, Some((AlertKind::UrgentLow, t0)), t0 + 240));
+        assert!(s.should_fire_alert(AlertKind::UrgentLow, Some((AlertKind::UrgentLow, t0)), t0 + 300));
+        // Easing from urgent low to low follows the repeat timer (no immediate re-alert).
+        assert!(!s.should_fire_alert(AlertKind::Low, Some((AlertKind::UrgentLow, t0)), t0 + 60));
+    }
+
+    #[test]
+    fn snooze_silences_all_but_urgent_low() {
+        let t0 = 1_000_000;
+        let mut s = settings();
+        s.snooze_until_epoch = t0 + 1800;
+        assert!(s.is_snoozed(t0));
+        assert!(!s.should_fire_alert(AlertKind::High, None, t0));
+        assert!(!s.should_fire_alert(AlertKind::Low, None, t0));
+        assert!(!s.should_fire_alert(AlertKind::Stale, None, t0));
+        assert!(s.should_fire_alert(AlertKind::UrgentLow, None, t0));
+        assert!(s.should_fire_alert(AlertKind::High, None, t0 + 1800), "snooze expired");
+    }
 }

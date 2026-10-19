@@ -143,6 +143,7 @@ fn test_tray_icon_and_hover_tooltip_modes() {
         first_name: "Alice".to_string(),
         last_name: "Smith".to_string(),
         graph_points: vec![],
+        measured_at_epoch: None,
     };
 
     // Case 1: Both tray icon glucose badge and hover info enabled

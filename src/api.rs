@@ -10,7 +10,8 @@ use serde_json::Value;
 
 use crate::crypto::bytes_to_hex;
 use crate::models::{
-    GlucoseSnapshot, GraphPoint, DEFAULT_TARGET_HIGH_MG_DL, DEFAULT_TARGET_LOW_MG_DL,
+    parse_libreview_timestamp, GlucoseSnapshot, GraphPoint, DEFAULT_TARGET_HIGH_MG_DL,
+    DEFAULT_TARGET_LOW_MG_DL,
 };
 
 pub const LLU_PRODUCT: &str = "llu.android";
@@ -548,6 +549,18 @@ pub fn parse_graph_response(
         .unwrap_or("")
         .to_string();
 
+    // FactoryTimestamp is UTC; Timestamp is the sensor phone's local time (fallback).
+    let measured_at_epoch = gm.and_then(|g| {
+        g.get("FactoryTimestamp")
+            .and_then(|v| v.as_str())
+            .and_then(|t| parse_libreview_timestamp(t, true))
+            .or_else(|| {
+                g.get("Timestamp")
+                    .and_then(|v| v.as_str())
+                    .and_then(|t| parse_libreview_timestamp(t, false))
+            })
+    });
+
     let mut graph_points = Vec::new();
     if let Some(arr) = data.get("graphData").and_then(|v| v.as_array()) {
         for item in arr {
@@ -586,6 +599,7 @@ pub fn parse_graph_response(
         first_name,
         last_name,
         graph_points,
+        measured_at_epoch,
     })
 }
 

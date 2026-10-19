@@ -35,6 +35,7 @@ pub mod qobject {
         fn librelinkup_trigger_window_alert(bring_to_front: bool, flash_window: bool);
         fn librelinkup_play_alert_sound(custom_sound_path: &QString);
         fn librelinkup_show_notification(title: &QString, body: &QString, critical: bool);
+        fn librelinkup_request_background_autostart(enable: bool, start_minimized: bool) -> bool;
         fn librelinkup_quit_app();
         fn librelinkup_run_app(start_minimized: bool) -> i32;
         fn librelinkup_run_ui_overflow_tests() -> QString;
@@ -95,6 +96,14 @@ pub mod qobject {
         #[qproperty(QString, event_log_json)]
         #[qproperty(i32, event_log_count)]
         #[qproperty(QString, app_version)]
+        #[qproperty(QString, reading_age_display)]
+        #[qproperty(bool, reading_stale)]
+        #[qproperty(bool, alerts_snoozed)]
+        #[qproperty(QString, snooze_until_display)]
+        #[qproperty(f64, urgent_low_mg_dl)]
+        #[qproperty(i32, alert_repeat_minutes)]
+        #[qproperty(i32, stale_after_minutes)]
+        #[qproperty(bool, alert_on_stale)]
         type AppController = super::AppControllerRust;
 
         #[qinvokable]
@@ -193,6 +202,24 @@ pub mod qobject {
         fn test_alert_now(self: Pin<&mut AppController>);
 
         #[qinvokable]
+        fn save_advanced_alert_settings(
+            self: Pin<&mut AppController>,
+            urgent_low: f64,
+            repeat_minutes: i32,
+            stale_after_minutes: i32,
+            alert_on_stale: bool,
+        );
+
+        /// Snoozes non-urgent alerts for `minutes` (0 or negative cancels the snooze).
+        #[qinvokable]
+        fn snooze_alerts(self: Pin<&mut AppController>, minutes: i32);
+
+        /// Periodic tick (QML timer): refreshes reading age/staleness and evaluates alerts,
+        /// so signal loss is detected even when fetches keep failing.
+        #[qinvokable]
+        fn evaluate_staleness(self: Pin<&mut AppController>);
+
+        #[qinvokable]
         fn load_demo_sample_data(self: Pin<&mut AppController>);
 
         #[qinvokable]
@@ -238,8 +265,9 @@ use crate::event_log::{
 };
 use crate::models::{
     format_glucose_value, format_target_range, load_default_settings, save_default_settings,
-    trend_arrow_description, trend_arrow_symbol, AppSettings, GlucoseRangeStatus, GlucoseSnapshot,
-    GraphPoint, DEFAULT_TARGET_HIGH_MG_DL, DEFAULT_TARGET_LOW_MG_DL,
+    format_reading_age, reading_age_minutes, trend_arrow_description, trend_arrow_symbol,
+    AlertKind, AppSettings, GlucoseRangeStatus, GlucoseSnapshot, GraphPoint,
+    DEFAULT_TARGET_HIGH_MG_DL, DEFAULT_TARGET_LOW_MG_DL, STALE_COLOR_HEX,
 };
 use crate::paths::{autostart_desktop_path, credentials_file_path, APP_ID};
 
@@ -268,7 +296,7 @@ struct RefreshOutcome {
 }
 
 /// Fires all enabled alert channels: window raise/flash, audio, and a desktop notification.
-fn fire_alert(settings: &AppSettings, title: &str, body: &str) {
+fn fire_alert(settings: &AppSettings, title: &str, body: &str, critical: bool) {
     if settings.bring_to_front_enabled || settings.flash_window_enabled {
         qobject::librelinkup_trigger_window_alert(
             settings.bring_to_front_enabled,
@@ -292,7 +320,24 @@ fn fire_alert(settings: &AppSettings, title: &str, body: &str) {
         };
         qobject::librelinkup_play_alert_sound(&QString::from(sound_path.as_str()));
     }
-    qobject::librelinkup_show_notification(&QString::from(title), &QString::from(body), true);
+    qobject::librelinkup_show_notification(&QString::from(title), &QString::from(body), critical);
+}
+
+fn now_epoch() -> i64 {
+    chrono::Utc::now().timestamp()
+}
+
+/// "Snoozed until 7:45 PM" style text, or empty when not snoozed.
+fn format_snooze_until(snooze_until_epoch: i64, now: i64) -> String {
+    use chrono::TimeZone;
+    if snooze_until_epoch <= now {
+        return String::new();
+    }
+    chrono::Local
+        .timestamp_opt(snooze_until_epoch, 0)
+        .single()
+        .map(|t| format!("Alerts snoozed until {}", t.format("%-I:%M %p")))
+        .unwrap_or_default()
 }
 
 pub struct AppControllerRust {
@@ -347,6 +392,18 @@ pub struct AppControllerRust {
     event_log_json: QString,
     event_log_count: i32,
     app_version: QString,
+    reading_age_display: QString,
+    reading_stale: bool,
+    alerts_snoozed: bool,
+    snooze_until_display: QString,
+    urgent_low_mg_dl: f64,
+    alert_repeat_minutes: i32,
+    stale_after_minutes: i32,
+    alert_on_stale: bool,
+    /// Non-urgent alerts silenced until this epoch second (persisted in settings).
+    snooze_until_epoch: i64,
+    /// Last alert fired: (kind, epoch seconds). Reset when glucose returns to normal.
+    last_alert: Option<(AlertKind, i64)>,
     snapshot: GlucoseSnapshot,
     creds: Option<StoredCredentials>,
     /// Sequence id of the running background CGM refresh (prevents overlapping polls).
@@ -422,6 +479,19 @@ impl Default for AppControllerRust {
             event_log_json: QString::from("[]"),
             event_log_count: 0,
             app_version: QString::from(env!("CARGO_PKG_VERSION")),
+            reading_age_display: QString::from(""),
+            reading_stale: false,
+            alerts_snoozed: settings.is_snoozed(chrono::Utc::now().timestamp()),
+            snooze_until_display: QString::from(
+                format_snooze_until(settings.snooze_until_epoch, chrono::Utc::now().timestamp())
+                    .as_str(),
+            ),
+            urgent_low_mg_dl: settings.effective_urgent_low(),
+            alert_repeat_minutes: settings.alert_repeat_minutes.clamp(1, 240) as i32,
+            stale_after_minutes: settings.effective_stale_after_minutes() as i32,
+            alert_on_stale: settings.alert_on_stale,
+            snooze_until_epoch: settings.snooze_until_epoch,
+            last_alert: None,
             snapshot: GlucoseSnapshot::default(),
             creds: None,
             active_refresh: None,
@@ -462,11 +532,34 @@ fn current_settings_from_controller(ctrl: &qobject::AppController) -> AppSetting
         override_threshold: *ctrl.override_threshold(),
         custom_target_low: *ctrl.custom_target_low(),
         custom_target_high: *ctrl.custom_target_high(),
+        urgent_low_mg_dl: *ctrl.urgent_low_mg_dl(),
+        alert_repeat_minutes: (*ctrl.alert_repeat_minutes()).clamp(1, 240) as u32,
+        stale_after_minutes: (*ctrl.stale_after_minutes()).clamp(5, 120) as u32,
+        alert_on_stale: *ctrl.alert_on_stale(),
+        snooze_until_epoch: ctrl.rust().snooze_until_epoch,
         ui_text_scale: 100,
     }
 }
 
+fn is_flatpak() -> bool {
+    Path::new("/.flatpak-info").exists()
+}
+
 fn sync_autostart_desktop_file(enabled: bool, start_minimized: bool) {
+    if is_flatpak() {
+        // Sandboxed: ask the XDG Background portal to manage the host autostart entry.
+        if qobject::librelinkup_request_background_autostart(enabled, start_minimized) {
+            log_info(
+                "SYSTEM",
+                format!(
+                    "Requested login autostart={enabled} (minimized={start_minimized}) via the Background portal."
+                ),
+            );
+        } else {
+            log_warn("SYSTEM", "Could not reach the Background portal to update autostart.");
+        }
+        return;
+    }
     let desktop_path = autostart_desktop_path();
     if !enabled {
         if desktop_path.exists() {
@@ -477,10 +570,8 @@ fn sync_autostart_desktop_file(enabled: bool, start_minimized: bool) {
     }
 
     let flag = if start_minimized { " --minimized" } else { "" };
-    // Check if Flatpak is installed; otherwise use current executable path
-    let exec_cmd = if Path::new("/.flatpak-info").exists() {
-        format!("/usr/bin/flatpak run {APP_ID}{flag}")
-    } else if let Ok(exe) = std::env::current_exe() {
+    // Host (non-Flatpak) build: point the autostart entry at the current executable.
+    let exec_cmd = if let Ok(exe) = std::env::current_exe() {
         format!("{}{flag}", exe.to_string_lossy())
     } else {
         format!("librelinkup-kde{flag}")
@@ -516,12 +607,39 @@ impl qobject::AppController {
         let arrow_desc = trend_arrow_description(snapshot.trend_arrow);
         let range_str = format_target_range(eff_low, eff_high, &settings.result_unit);
 
-        let (status_label, color_hex) = if snapshot.value_mg_dl > 0.0 {
+        let now = now_epoch();
+        let age_minutes = reading_age_minutes(snapshot.measured_at_epoch, now);
+        let age_text = format_reading_age(age_minutes);
+        let stale = snapshot.value_mg_dl > 0.0 && settings.is_reading_stale(age_minutes);
+
+        let (status_label, color_hex) = if stale {
+            ("Stale", STALE_COLOR_HEX)
+        } else if snapshot.value_mg_dl > 0.0 {
             let st = GlucoseRangeStatus::classify(snapshot.value_mg_dl, eff_low, eff_high);
             (st.label(), st.color_hex())
         } else {
             ("Waiting", "#22c55e")
         };
+
+        self.as_mut()
+            .set_reading_age_display(QString::from(age_text.as_str()));
+        self.as_mut().set_reading_stale(stale);
+        let snoozed = settings.is_snoozed(now);
+        self.as_mut().set_alerts_snoozed(snoozed);
+        self.as_mut().set_snooze_until_display(QString::from(
+            format_snooze_until(settings.snooze_until_epoch, now).as_str(),
+        ));
+        if *self.logged_in() {
+            let current_status = self.status_message().to_string();
+            if stale {
+                self.as_mut().set_status_message(QString::from(
+                    format!("No new sensor readings ({age_text}) — check sensor/phone").as_str(),
+                ));
+            } else if current_status.starts_with("No new sensor readings") {
+                self.as_mut()
+                    .set_status_message(QString::from("Live CGM telemetry active"));
+            }
+        }
 
         self.as_mut()
             .set_glucose_display(QString::from(val_display.as_str()));
@@ -554,8 +672,13 @@ impl qobject::AppController {
                 .set_patient_id(QString::from(snapshot.patient_id.as_str()));
         }
         if !snapshot.timestamp.is_empty() {
+            let updated = if age_text.is_empty() {
+                snapshot.timestamp.clone()
+            } else {
+                format!("{} ({age_text})", snapshot.timestamp)
+            };
             self.as_mut()
-                .set_last_updated(QString::from(snapshot.timestamp.as_str()));
+                .set_last_updated(QString::from(updated.as_str()));
         }
 
         let points_json =
@@ -564,8 +687,26 @@ impl qobject::AppController {
             .set_graph_points_json(QString::from(points_json.as_str()));
 
         let badge_text = settings.format_tray_icon_badge(&snapshot);
-        let tooltip_text = settings.format_tray_hover_tooltip(&snapshot);
-        let status_header = if snapshot.value_mg_dl > 0.0 {
+        let mut tooltip_text = settings.format_tray_hover_tooltip(&snapshot);
+        if !age_text.is_empty() && !snapshot.timestamp.is_empty() {
+            let measured = format!("Measured: {}", snapshot.timestamp);
+            tooltip_text = tooltip_text.replace(&measured, &format!("{measured} ({age_text})"));
+        }
+        if stale && settings.show_glucose_in_tray_tooltip {
+            tooltip_text = format!("⚠ STALE — last reading {age_text}\n{tooltip_text}");
+        }
+        if snoozed && settings.show_glucose_in_tray_tooltip {
+            tooltip_text.push_str(&format!(
+                "\n{}",
+                format_snooze_until(settings.snooze_until_epoch, now)
+            ));
+        }
+        let status_header = if stale {
+            format!(
+                "Blood Sugar: {} {} (STALE — {age_text})",
+                val_display, settings.result_unit
+            )
+        } else if snapshot.value_mg_dl > 0.0 {
             format!(
                 "Blood Sugar: {} {} {} ({})",
                 val_display, settings.result_unit, arrow_sym, arrow_desc
@@ -632,6 +773,12 @@ impl qobject::AppController {
         let ov_w = *self.overlay_width();
         let ov_h = *self.overlay_height();
         qobject::librelinkup_restore_overlay_placement(&ov_screen, ov_x, ov_y, ov_w, ov_h);
+
+        // Inside Flatpak, (re)register login autostart with the Background portal so the
+        // entry exists and carries the current --minimized preference.
+        if is_flatpak() && *self.autostart_enabled() {
+            sync_autostart_desktop_file(true, *self.start_minimized());
+        }
 
         match load_default_credentials() {
             Ok(Some(creds)) if creds.has_valid_session() => {
@@ -846,6 +993,7 @@ impl qobject::AppController {
         self.as_mut().update_busy_flag();
         self.as_mut().rust_mut().creds = None;
         self.as_mut().rust_mut().snapshot = GlucoseSnapshot::default();
+        self.as_mut().rust_mut().last_alert = None;
         self.as_mut().set_logged_in(false);
         self.as_mut().set_credentials_encrypted(false);
         self.as_mut().set_patient_name(QString::from(""));
@@ -966,34 +1114,9 @@ impl qobject::AppController {
                     ),
                 );
 
-                let settings = current_settings_from_controller(&self);
-                let should_alert = settings.should_trigger_alert(
-                    snap.value_mg_dl,
-                    snap.target_low_mg_dl,
-                    snap.target_high_mg_dl,
-                );
-                let eff_low = settings.effective_target_low(snap.target_low_mg_dl);
-
                 self.as_mut().rust_mut().snapshot = snap;
                 self.as_mut()
                     .set_status_message(QString::from("Live CGM telemetry active"));
-
-                if should_alert {
-                    log_warn(
-                        "ALERT",
-                        format!(
-                            "Glucose reading ({formatted} {unit}) is outside target threshold!"
-                        ),
-                    );
-                    let value_mg_dl = self.rust().snapshot.value_mg_dl;
-                    let title = if value_mg_dl < eff_low {
-                        "Low blood glucose"
-                    } else {
-                        "High blood glucose"
-                    };
-                    let body = format!("{formatted} {unit} {arrow} — outside your target range.");
-                    fire_alert(&settings, title, &body);
-                }
             }
             Err(err) => {
                 let msg = err.to_string();
@@ -1002,6 +1125,116 @@ impl qobject::AppController {
             }
         }
 
+        // Evaluate after both success and failure: a failing fetch can still mean the
+        // last reading has gone stale.
+        self.as_mut().sync_tray_and_ui();
+        self.as_mut().evaluate_alerts();
+        self.as_mut().sync_logs_to_properties();
+    }
+
+    /// Fires an alert when warranted by the current reading/staleness, honoring snooze,
+    /// the repeat interval, and escalation (see `AppSettings::should_fire_alert`).
+    fn evaluate_alerts(mut self: Pin<&mut Self>) {
+        if !*self.logged_in() {
+            return;
+        }
+        let settings = current_settings_from_controller(&self);
+        let snap = self.rust().snapshot.clone();
+        let now = now_epoch();
+        let age_minutes = reading_age_minutes(snap.measured_at_epoch, now);
+        let stale = snap.value_mg_dl > 0.0 && settings.is_reading_stale(age_minutes);
+
+        let Some(kind) = settings.classify_alert(
+            snap.value_mg_dl,
+            snap.target_low_mg_dl,
+            snap.target_high_mg_dl,
+            stale,
+        ) else {
+            if self.rust().last_alert.is_some() {
+                log_info("ALERT", "Glucose back within alert thresholds.");
+            }
+            self.as_mut().rust_mut().last_alert = None;
+            return;
+        };
+
+        if !settings.should_fire_alert(kind, self.rust().last_alert, now) {
+            return;
+        }
+
+        let unit = settings.result_unit.clone();
+        let formatted = format_glucose_value(snap.value_mg_dl, &unit);
+        let arrow = trend_arrow_symbol(snap.trend_arrow);
+        let body = match kind {
+            AlertKind::Stale => format!(
+                "Last reading was {} ({formatted} {unit}). Check the sensor and phone connection.",
+                format_reading_age(age_minutes)
+            ),
+            AlertKind::UrgentLow => format!(
+                "{formatted} {unit} {arrow} — below urgent low ({}).",
+                format_glucose_value(settings.effective_urgent_low(), &unit)
+            ),
+            AlertKind::Low | AlertKind::High => {
+                format!("{formatted} {unit} {arrow} — outside your target range.")
+            }
+        };
+        log_warn("ALERT", format!("{}: {body}", kind.title()));
+        fire_alert(&settings, kind.title(), &body, kind != AlertKind::High);
+        self.as_mut().rust_mut().last_alert = Some((kind, now));
+    }
+
+    pub fn evaluate_staleness(mut self: Pin<&mut Self>) {
+        self.as_mut().sync_tray_and_ui();
+        self.as_mut().evaluate_alerts();
+        self.as_mut().sync_logs_to_properties();
+    }
+
+    pub fn snooze_alerts(mut self: Pin<&mut Self>, minutes: i32) {
+        let now = now_epoch();
+        let until = if minutes > 0 {
+            now + i64::from(minutes.min(24 * 60)) * 60
+        } else {
+            0
+        };
+        self.as_mut().rust_mut().snooze_until_epoch = until;
+        if until > 0 {
+            log_info(
+                "ALERT",
+                format!("Alerts snoozed for {minutes} min (urgent low still alerts)."),
+            );
+        } else {
+            log_info("ALERT", "Alert snooze cancelled.");
+            // Re-arm so a still-active condition alerts on the next evaluation.
+            self.as_mut().rust_mut().last_alert = None;
+        }
+        let settings = current_settings_from_controller(&self);
+        let _ = save_default_settings(&settings);
+        self.as_mut().sync_tray_and_ui();
+        self.as_mut().sync_logs_to_properties();
+    }
+
+    pub fn save_advanced_alert_settings(
+        mut self: Pin<&mut Self>,
+        urgent_low: f64,
+        repeat_minutes: i32,
+        stale_after_minutes: i32,
+        alert_on_stale: bool,
+    ) {
+        let urgent_low = if urgent_low.is_finite() { urgent_low.clamp(40.0, 100.0) } else { 55.0 };
+        self.as_mut().set_urgent_low_mg_dl(urgent_low);
+        self.as_mut()
+            .set_alert_repeat_minutes(repeat_minutes.clamp(1, 240));
+        self.as_mut()
+            .set_stale_after_minutes(stale_after_minutes.clamp(5, 120));
+        self.as_mut().set_alert_on_stale(alert_on_stale);
+        let settings = current_settings_from_controller(&self);
+        let _ = save_default_settings(&settings);
+        log_info(
+            "ALERT",
+            format!(
+                "Saved advanced alert settings (urgent low={urgent_low:.0} mg/dL, repeat={} min, stale after={} min, stale alert={alert_on_stale}).",
+                settings.alert_repeat_minutes, settings.stale_after_minutes
+            ),
+        );
         self.as_mut().sync_tray_and_ui();
         self.as_mut().sync_logs_to_properties();
     }
@@ -1296,6 +1529,7 @@ impl qobject::AppController {
             &settings,
             "LibreLinkUp alert test",
             "This is how out-of-range glucose alerts will look and sound.",
+            true,
         );
         self.as_mut().sync_logs_to_properties();
     }
@@ -1321,6 +1555,7 @@ impl qobject::AppController {
             first_name: "Sample".to_string(),
             last_name: "Sensor".to_string(),
             graph_points: sample_points,
+            measured_at_epoch: Some(now_epoch()),
         };
         self.as_mut().set_logged_in(true);
         self.as_mut()

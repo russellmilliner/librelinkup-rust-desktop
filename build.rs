@@ -7,6 +7,7 @@ fn main() {
         .qt_module("QuickControls2")
         .qt_module("Widgets")
         .qt_module("Svg")
+        .qt_module("DBus")
         .cc_builder(|cc| {
             cc.include("src/cpp");
             cc.include("/usr/include/KF6/KColorScheme");

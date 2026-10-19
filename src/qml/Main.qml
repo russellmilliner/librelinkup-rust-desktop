@@ -73,6 +73,16 @@ Kirigami.ApplicationWindow {
         }
     }
 
+    // Re-evaluates reading age every 30 s so stale data / signal loss is flagged (and
+    // alerted) even when fetches keep failing or the sensor stops uploading.
+    Timer {
+        id: stalenessTimer
+        interval: 30000
+        repeat: true
+        running: appController.loggedIn
+        onTriggered: appController.evaluateStaleness()
+    }
+
     Timer {
         id: pollTimer
         interval: Math.max(15, appController.pollIntervalSeconds) * 1000
@@ -572,7 +582,19 @@ Kirigami.ApplicationWindow {
                             }
 
                             QQC2.Label {
-                                text: qsTr("Updated: %1").arg(appController.lastUpdated)
+                                text: appController.readingStale
+                                      ? qsTr("⚠ STALE — updated: %1").arg(appController.lastUpdated)
+                                      : qsTr("Updated: %1").arg(appController.lastUpdated)
+                                font.pointSize: 8.5
+                                font.bold: appController.readingStale
+                                color: Qt.rgba(1, 1, 1, 0.9)
+                                Layout.fillWidth: true
+                                elide: Text.ElideRight
+                            }
+
+                            QQC2.Label {
+                                visible: appController.alertsSnoozed
+                                text: "🔕 " + appController.snoozeUntilDisplay
                                 font.pointSize: 8.5
                                 color: Qt.rgba(1, 1, 1, 0.9)
                                 Layout.fillWidth: true
@@ -1521,6 +1543,93 @@ Kirigami.ApplicationWindow {
                             }
                         }
 
+                        Kirigami.Separator {
+                            Layout.fillWidth: true
+                        }
+
+                        GridLayout {
+                            Layout.fillWidth: true
+                            columns: 2
+                            columnSpacing: 18
+                            rowSpacing: 6
+
+                            QQC2.Label {
+                                text: qsTr("Urgent Low Threshold (mg/dL)")
+                                color: Kirigami.Theme.textColor
+                                Layout.fillWidth: true
+                                wrapMode: Text.WordWrap
+                            }
+                            QQC2.SpinBox {
+                                id: urgentLowSpin
+                                from: 40
+                                to: 100
+                                value: Math.round(appController.urgentLowMgDl)
+                            }
+
+                            QQC2.Label {
+                                text: qsTr("Repeat alerts every (minutes)")
+                                color: Kirigami.Theme.textColor
+                                Layout.fillWidth: true
+                                wrapMode: Text.WordWrap
+                            }
+                            QQC2.SpinBox {
+                                id: alertRepeatSpin
+                                from: 1
+                                to: 240
+                                value: appController.alertRepeatMinutes
+                            }
+
+                            QQC2.Switch {
+                                id: alertOnStaleSwitch
+                                text: qsTr("Alert when no new reading for (minutes)")
+                                checked: appController.alertOnStale
+                                Layout.fillWidth: true
+                            }
+                            QQC2.SpinBox {
+                                id: staleAfterSpin
+                                from: 5
+                                to: 120
+                                value: appController.staleAfterMinutes
+                            }
+                        }
+
+                        QQC2.Label {
+                            Layout.fillWidth: true
+                            wrapMode: Text.WordWrap
+                            opacity: 0.75
+                            text: qsTr("Urgent low alerts repeat at least every 5 minutes and cannot be snoozed.")
+                        }
+
+                        RowLayout {
+                            objectName: "snoozeRow"
+                            Layout.fillWidth: true
+                            spacing: 8
+
+                            QQC2.Label {
+                                text: appController.alertsSnoozed
+                                      ? appController.snoozeUntilDisplay
+                                      : qsTr("Snooze alerts:")
+                                color: Kirigami.Theme.textColor
+                                Layout.fillWidth: true
+                                elide: Text.ElideRight
+                            }
+                            QQC2.Button {
+                                text: qsTr("30 min")
+                                icon.name: "notifications-disabled"
+                                onClicked: appController.snoozeAlerts(30)
+                            }
+                            QQC2.Button {
+                                text: qsTr("1 hour")
+                                onClicked: appController.snoozeAlerts(60)
+                            }
+                            QQC2.Button {
+                                visible: appController.alertsSnoozed
+                                text: qsTr("Cancel")
+                                icon.name: "notifications"
+                                onClicked: appController.snoozeAlerts(0)
+                            }
+                        }
+
                         RowLayout {
                             Layout.fillWidth: true
                             spacing: 10
@@ -1530,6 +1639,12 @@ Kirigami.ApplicationWindow {
                                 icon.name: "document-save"
                                 text: qsTr("Save Alert Settings")
                                 onClicked: {
+                                    appController.saveAdvancedAlertSettings(
+                                        urgentLowSpin.value,
+                                        alertRepeatSpin.value,
+                                        staleAfterSpin.value,
+                                        alertOnStaleSwitch.checked
+                                    )
                                     appController.saveAlertSettings(
                                         bringToFrontSwitch.checked,
                                         flashWindowSwitch.checked,

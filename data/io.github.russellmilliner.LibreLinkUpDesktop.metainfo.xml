@@ -2,7 +2,7 @@
 <component type="desktop-application">
   <id>io.github.russellmilliner.LibreLinkUpDesktop</id>
   <name>LibreLinkUp Rust Desktop</name>
-  <summary>KDE Plasma 6 Blood Glucose Monitor for LibreLinkUp</summary>
+  <summary>Monitor blood glucose readings from LibreLinkUp</summary>
   <metadata_license>CC0-1.0</metadata_license>
   <project_license>Apache-2.0</project_license>
   <developer id="io.github.russellmilliner">
@@ -10,24 +10,47 @@
   </developer>
   <description>
     <p>
-      Native Rust + KDE Plasma 6 Kirigami desktop client for monitoring continuous glucose readings from LibreLinkUp.
+      Native Rust and KDE Plasma 6 Kirigami desktop client for monitoring continuous blood glucose readings from LibreLinkUp.
     </p>
     <ul>
-      <li>AES-256-GCM + PBKDF2-HMAC-SHA256 encrypted credential storage</li>
-      <li>Dynamic system tray badge showing live blood glucose value and/or rich hover tooltip</li>
+      <li>AES-256-GCM and PBKDF2-HMAC-SHA256 encrypted credential storage</li>
+      <li>Dynamic system tray badge showing live blood glucose value and hover tooltip</li>
       <li>Native KDE Plasma 6 Light, Dark, and System theme support</li>
       <li>Interactive 12-hour CGM trend graph with point hover inspection</li>
-      <li>Floating desktop overlay widget with Dark Theme and adjustable transparency</li>
+      <li>Floating desktop overlay widget with Dark Theme, adjustable transparency, and persistent multi-monitor placement</li>
       <li>Built-in diagnostic Log Viewer with filtering, search, and export</li>
     </ul>
   </description>
   <launchable type="desktop-id">io.github.russellmilliner.LibreLinkUpDesktop.desktop</launchable>
+  <branding>
+    <color type="primary" scheme_preference="light">#bbf7d0</color>
+    <color type="primary" scheme_preference="dark">#14532d</color>
+  </branding>
+  <screenshots>
+    <screenshot type="default">
+      <image>https://raw.githubusercontent.com/russellmilliner/librelinkup-rust-desktop/v0.2.0/docs/screenshots/app-dashboard.png</image>
+      <caption>Live blood glucose dashboard and 12-hour interactive trend graph</caption>
+    </screenshot>
+    <screenshot>
+      <image>https://raw.githubusercontent.com/russellmilliner/librelinkup-rust-desktop/v0.2.0/docs/screenshots/app-settings.png</image>
+      <caption>Appearance, system tray badge, and floating desktop overlay settings</caption>
+    </screenshot>
+  </screenshots>
   <url type="homepage">https://github.com/russellmilliner/librelinkup-rust-desktop</url>
   <url type="bugtracker">https://github.com/russellmilliner/librelinkup-rust-desktop/issues</url>
+  <url type="vcs-browser">https://github.com/russellmilliner/librelinkup-rust-desktop</url>
   <url type="donation">https://ko-fi.com/russellmilliner</url>
   <content_rating type="oars-1.1" />
   <releases>
-    <release version="0.2.0" date="2026-10-19"/>
-    <release version="0.1.0" date="2026-10-19"/>
+    <release version="0.2.0" date="2026-10-19">
+      <description>
+        <p>Added persistent multi-monitor overlay placement, task-manager-free floating overlay mode, strict layout overflow guards, and updated documentation.</p>
+      </description>
+    </release>
+    <release version="0.1.0" date="2026-10-19">
+      <description>
+        <p>Initial release of LibreLinkUp Rust Desktop for KDE Plasma 6.</p>
+      </description>
+    </release>
   </releases>
 </component>

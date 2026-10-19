@@ -46,8 +46,11 @@
 #include <QTimer>
 #include <QUrl>
 #include <QVariant>
+#include <QVector>
+#include <QLinearGradient>
 #include <QWindow>
 #include <algorithm>
+#include <cmath>
 #include <cstdint>
 #include <cstdlib>
 #include <unistd.h>
@@ -1708,6 +1711,297 @@ inline QString librelinkup_run_ui_overflow_tests() {
             }
             p.end();
             trayComposite.save(dir.filePath(QStringLiteral("tray-icons.png")));
+        }
+    }
+
+    const QString videoFramesDir = qEnvironmentVariable("LLU_EXPORT_VIDEO_FRAMES_DIR").trimmed();
+    if (!videoFramesDir.isEmpty()) {
+        QDir vdir(videoFramesDir);
+        vdir.mkpath(QStringLiteral("."));
+
+        QMetaObject::invokeMethod(ctrl, "loadDemoSampleData", Qt::DirectConnection);
+        QMetaObject::invokeMethod(ctrl, "updateThemeMode", Qt::DirectConnection, Q_ARG(QString, QStringLiteral("dark")));
+        QMetaObject::invokeMethod(ctrl, "updateOverlayVisible", Qt::DirectConnection, Q_ARG(bool, true));
+        QMetaObject::invokeMethod(ctrl, "updateOverlayDarkTheme", Qt::DirectConnection, Q_ARG(bool, true));
+        QMetaObject::invokeMethod(ctrl, "updateOverlayOpacityPercent", Qt::DirectConnection, Q_ARG(int, 92));
+
+        mainWin->resize(980, 660);
+        mainWin->setProperty("activeTab", QStringLiteral("dashboard"));
+        mainWin->show();
+        librelinkup_uitest::pump_events(80);
+
+        QQuickWindow* ovWin = qobject_cast<QQuickWindow*>(librelinkup::find_overlay_window());
+        QQuickWindow* logWin = qobject_cast<QQuickWindow*>(librelinkup::find_log_viewer_window());
+        QQuickWindow* aboutWin = qobject_cast<QQuickWindow*>(librelinkup::find_about_window());
+        QQuickItem* canvas = mainWin->findChild<QQuickItem*>(QStringLiteral("glucoseCanvas"));
+
+        // Capture key QML window snapshots
+        QVector<QImage> hoverDashFrames;
+        if (canvas) {
+            QMetaObject::invokeMethod(canvas, "clearHover", Qt::DirectConnection);
+            librelinkup_uitest::pump_events(30);
+        }
+        QImage dashBaseDark = mainWin->grabWindow().scaled(980, 660, Qt::IgnoreAspectRatio, Qt::SmoothTransformation);
+
+        const int hoverSteps = 15;
+        for (int s = 0; s < hoverSteps; ++s) {
+            if (canvas) {
+                const qreal ratio = static_cast<qreal>(s) / static_cast<qreal>(hoverSteps - 1);
+                const qreal rx = 56.0 + ratio * (canvas->width() - 84.0);
+                QMetaObject::invokeMethod(
+                    canvas,
+                    "updateHoverAt",
+                    Qt::DirectConnection,
+                    Q_ARG(QVariant, QVariant(rx)),
+                    Q_ARG(QVariant, QVariant(canvas->height() * 0.48))
+                );
+                librelinkup_uitest::pump_events(25);
+            }
+            hoverDashFrames.append(mainWin->grabWindow().scaled(980, 660, Qt::IgnoreAspectRatio, Qt::SmoothTransformation));
+        }
+        if (canvas) {
+            QMetaObject::invokeMethod(canvas, "clearHover", Qt::DirectConnection);
+        }
+
+        // Light mode dashboard snapshot
+        QMetaObject::invokeMethod(ctrl, "updateThemeMode", Qt::DirectConnection, Q_ARG(QString, QStringLiteral("light")));
+        librelinkup_uitest::pump_events(60);
+        QImage dashLight = mainWin->grabWindow().scaled(980, 660, Qt::IgnoreAspectRatio, Qt::SmoothTransformation);
+
+        // Restore Dark mode for Settings, Alerts, Account, LogViewer, and About snapshots
+        QMetaObject::invokeMethod(ctrl, "updateThemeMode", Qt::DirectConnection, Q_ARG(QString, QStringLiteral("dark")));
+        librelinkup_uitest::pump_events(60);
+
+        mainWin->setProperty("activeTab", QStringLiteral("general"));
+        librelinkup_uitest::pump_events(50);
+        QImage tabGeneralImg = mainWin->grabWindow().scaled(980, 660, Qt::IgnoreAspectRatio, Qt::SmoothTransformation);
+
+        mainWin->setProperty("activeTab", QStringLiteral("alerts"));
+        librelinkup_uitest::pump_events(50);
+        QImage tabAlertsImg = mainWin->grabWindow().scaled(980, 660, Qt::IgnoreAspectRatio, Qt::SmoothTransformation);
+
+        mainWin->setProperty("activeTab", QStringLiteral("account"));
+        librelinkup_uitest::pump_events(50);
+        QImage tabAccountImg = mainWin->grabWindow().scaled(980, 660, Qt::IgnoreAspectRatio, Qt::SmoothTransformation);
+
+        mainWin->setProperty("activeTab", QStringLiteral("dashboard"));
+        librelinkup_uitest::pump_events(40);
+
+        QImage ovDarkImg(276, 88, QImage::Format_ARGB32_Premultiplied);
+        QImage ovColorImg(276, 88, QImage::Format_ARGB32_Premultiplied);
+        if (ovWin) {
+            ovWin->resize(276, 88);
+            QMetaObject::invokeMethod(ctrl, "updateOverlayDarkTheme", Qt::DirectConnection, Q_ARG(bool, true));
+            librelinkup_uitest::pump_events(40);
+            ovDarkImg = ovWin->grabWindow().scaled(276, 88, Qt::IgnoreAspectRatio, Qt::SmoothTransformation);
+
+            QMetaObject::invokeMethod(ctrl, "updateOverlayDarkTheme", Qt::DirectConnection, Q_ARG(bool, false));
+            librelinkup_uitest::pump_events(40);
+            ovColorImg = ovWin->grabWindow().scaled(276, 88, Qt::IgnoreAspectRatio, Qt::SmoothTransformation);
+
+            QMetaObject::invokeMethod(ctrl, "updateOverlayDarkTheme", Qt::DirectConnection, Q_ARG(bool, true));
+            ovWin->hide();
+        }
+
+        QImage logDialogImg;
+        if (logWin) {
+            QMetaObject::invokeMethod(logWin, "openLogWindow", Qt::DirectConnection);
+            logWin->resize(720, 460);
+            librelinkup_uitest::pump_events(50);
+            logDialogImg = logWin->grabWindow().scaled(720, 460, Qt::IgnoreAspectRatio, Qt::SmoothTransformation);
+            logWin->hide();
+        }
+
+        QImage aboutDialogImg;
+        if (aboutWin) {
+            QMetaObject::invokeMethod(aboutWin, "openAboutWindow", Qt::DirectConnection);
+            aboutWin->resize(580, 500);
+            librelinkup_uitest::pump_events(50);
+            aboutDialogImg = aboutWin->grabWindow().scaled(580, 500, Qt::IgnoreAspectRatio, Qt::SmoothTransformation);
+            aboutWin->hide();
+        }
+
+        QPixmap trayBadgePm = librelinkup::build_glucose_badge_icon(
+            QStringLiteral("112"),
+            QStringLiteral("→"),
+            QStringLiteral("#22c55e")
+        ).pixmap(28, 28);
+        QPixmap appIconPm = librelinkup::build_multisize_svg_icon(
+            QStringLiteral(":/qt/qml/io/github/librelinkup/src/qml/icons/tray-icon-dark.svg")
+        ).pixmap(24, 24);
+
+        const int totalFrames = 360; // 12 seconds @ 30fps
+        for (int f = 0; f < totalFrames; ++f) {
+            QImage desktop(1280, 800, QImage::Format_RGB32);
+            QPainter p(&desktop);
+            p.setRenderHint(QPainter::Antialiasing, true);
+            p.setRenderHint(QPainter::TextAntialiasing, true);
+            p.setRenderHint(QPainter::SmoothPixmapTransform, true);
+
+            // KDE Plasma 6 desktop wallpaper gradient
+            QLinearGradient bgGrad(0, 0, 1280, 756);
+            bgGrad.setColorAt(0.0, QColor(15, 23, 42));
+            bgGrad.setColorAt(0.5, QColor(23, 37, 84));
+            bgGrad.setColorAt(1.0, QColor(15, 118, 110));
+            p.fillRect(0, 0, 1280, 756, bgGrad);
+
+            bool showMainWin = (f < 338);
+            bool useColorOv = (f >= 100 && f < 135);
+            QPoint ovPos(984, 24);
+            if (f >= 105 && f < 135) {
+                const double t = static_cast<double>(f - 105) / 29.0;
+                const int dy = static_cast<int>(std::sin(t * 3.14159265) * 90.0);
+                ovPos = QPoint(984 - dy / 2, 24 + dy);
+            } else if (!showMainWin) {
+                ovPos = QPoint(960, 36);
+            }
+
+            QPointF cursorPos(640, 400);
+            QString bannerCaption;
+
+            if (showMainWin) {
+                // Window drop shadow & frame
+                p.setPen(Qt::NoPen);
+                p.setBrush(QColor(0, 0, 0, 110));
+                p.drawRoundedRect(QRectF(42, 34, 988, 668), 12, 12);
+
+                QImage currentMain = dashBaseDark;
+                if (f < 15) {
+                    currentMain = dashBaseDark;
+                    cursorPos = QPointF(260 + f * 8, 220 + f * 12);
+                    bannerCaption = QStringLiteral("Live Blood Glucose Dashboard & KDE System Tray Badge");
+                } else if (f < 90) {
+                    const int idx = std::clamp(((f - 15) * hoverSteps) / 75, 0, hoverSteps - 1);
+                    currentMain = hoverDashFrames.value(idx, dashBaseDark);
+                    const double ratio = static_cast<double>(f - 15) / 74.0;
+                    cursorPos = QPointF(120.0 + ratio * 820.0, 485.0);
+                    bannerCaption = QStringLiteral("12-Hour Interactive Glucose Graph — Point Hover Inspection");
+                } else if (f < 135) {
+                    currentMain = dashBaseDark;
+                    cursorPos = QPointF(ovPos.x() + 140, ovPos.y() + 44);
+                    bannerCaption = QStringLiteral("Floating Desktop Overlay — Dark Slate & Status Color Themes + Multi-Monitor Drag");
+                } else if (f < 165) {
+                    currentMain = dashLight;
+                    cursorPos = QPointF(532, 270);
+                    bannerCaption = QStringLiteral("Native KDE Plasma 6 Breeze Light & Breeze Dark Theme Support");
+                } else if (f < 180) {
+                    currentMain = dashBaseDark;
+                    cursorPos = QPointF(480, 270);
+                    bannerCaption = QStringLiteral("Native KDE Plasma 6 Breeze Light & Breeze Dark Theme Support");
+                } else if (f < 225) {
+                    currentMain = tabGeneralImg;
+                    cursorPos = QPointF(492, 54);
+                    bannerCaption = QStringLiteral("General, System Tray Badge & Floating Overlay Transparency Settings");
+                } else if (f < 248) {
+                    currentMain = tabAlertsImg;
+                    cursorPos = QPointF(580, 54);
+                    bannerCaption = QStringLiteral("Customizable High/Low Glucose Thresholds & Audio/Window Alerts");
+                } else if (f < 270) {
+                    currentMain = tabAccountImg;
+                    cursorPos = QPointF(668, 54);
+                    bannerCaption = QStringLiteral("AES-256-GCM + PBKDF2-HMAC-SHA256 Encrypted Credential Vault");
+                } else {
+                    currentMain = dashBaseDark;
+                }
+
+                p.drawImage(46, 30, currentMain);
+
+                if (f >= 270 && f < 315 && !logDialogImg.isNull()) {
+                    p.setBrush(QColor(0, 0, 0, 140));
+                    p.drawRoundedRect(QRectF(172, 134, 728, 468), 12, 12);
+                    p.drawImage(176, 130, logDialogImg);
+                    cursorPos = QPointF(520, 260);
+                    bannerCaption = QStringLiteral("Built-In Diagnostic Log Viewer — Category & Severity Filtering + Export");
+                } else if (f >= 315 && f < 338 && !aboutDialogImg.isNull()) {
+                    p.setBrush(QColor(0, 0, 0, 140));
+                    p.drawRoundedRect(QRectF(242, 114, 588, 508), 12, 12);
+                    p.drawImage(246, 110, aboutDialogImg);
+                    cursorPos = QPointF(536, 320);
+                    bannerCaption = QStringLiteral("About LibreLinkUp Rust Desktop v0.2.0 — Apache-2.0 License");
+                }
+            } else {
+                cursorPos = QPointF(ovPos.x() + 120, ovPos.y() + 44);
+                bannerCaption = QStringLiteral("Overlay-Only Mode — Floating Desktop Overlay + System Tray Badge (No Taskbar Clutter)");
+            }
+
+            // Draw Floating Desktop Overlay Widget
+            p.setPen(Qt::NoPen);
+            p.setBrush(QColor(0, 0, 0, 110));
+            p.drawRoundedRect(QRectF(ovPos.x() - 2, ovPos.y() + 3, 280, 92), 16, 16);
+            p.drawImage(ovPos.x(), ovPos.y(), useColorOv ? ovColorImg : ovDarkImg);
+
+            // Draw KDE Plasma 6 Bottom Panel (y = 756..800)
+            p.fillRect(0, 756, 1280, 44, QColor(15, 23, 42, 238));
+            p.setPen(QColor(51, 65, 85));
+            p.drawLine(0, 756, 1280, 756);
+
+            // KDE Launcher icon on left of panel
+            p.setPen(Qt::NoPen);
+            p.setBrush(QColor(29, 153, 243));
+            p.drawRoundedRect(QRectF(12, 764, 28, 28), 6, 6);
+            p.setPen(Qt::white);
+            QFont kf = p.font();
+            kf.setPixelSize(14);
+            kf.setBold(true);
+            p.setFont(kf);
+            p.drawText(QRect(12, 764, 28, 28), Qt::AlignCenter, QStringLiteral("K"));
+
+            // Task Manager entry ONLY when main window is open (never when only overlay is visible!)
+            if (showMainWin) {
+                p.setPen(QPen(QColor(56, 189, 248, 160), 1.0));
+                p.setBrush(QColor(30, 41, 59));
+                p.drawRoundedRect(QRectF(52, 762, 236, 32), 6, 6);
+                p.drawPixmap(60, 766, 24, 24, appIconPm);
+                QFont tf = p.font();
+                tf.setPixelSize(12);
+                tf.setBold(false);
+                p.setFont(tf);
+                p.setPen(QColor(226, 232, 240));
+                p.drawText(QRect(92, 762, 188, 32), Qt::AlignVCenter | Qt::AlignLeft, QStringLiteral("LibreLinkUp Rust Desktop"));
+            }
+
+            // System Tray area on right of panel (ALWAYS shows the live glucose badge icon!)
+            p.setPen(QPen(QColor(71, 85, 105), 1.0));
+            p.setBrush(QColor(30, 41, 59));
+            p.drawRoundedRect(QRectF(1124, 762, 144, 32), 6, 6);
+            p.drawPixmap(1134, 764, 28, 28, trayBadgePm);
+            QFont cf = p.font();
+            cf.setPixelSize(12);
+            cf.setBold(true);
+            p.setFont(cf);
+            p.setPen(QColor(226, 232, 240));
+            p.drawText(QRect(1170, 762, 90, 32), Qt::AlignCenter, QStringLiteral("10:05 AM"));
+
+            // Caption pill at bottom-left above panel
+            if (!bannerCaption.isEmpty()) {
+                QFont bf = p.font();
+                bf.setPixelSize(13);
+                bf.setBold(true);
+                p.setFont(bf);
+                p.setPen(QPen(QColor(56, 189, 248, 180), 1.5));
+                p.setBrush(QColor(15, 23, 42, 225));
+                p.drawRoundedRect(QRectF(46, 708, 680, 36), 8, 8);
+                p.setPen(QColor(248, 250, 252));
+                p.drawText(QRect(62, 708, 650, 36), Qt::AlignVCenter | Qt::AlignLeft, bannerCaption);
+            }
+
+            // Draw animated cursor pointer
+            QPainterPath cursorPath;
+            cursorPath.moveTo(cursorPos);
+            cursorPath.lineTo(cursorPos.x(), cursorPos.y() + 18);
+            cursorPath.lineTo(cursorPos.x() + 5, cursorPos.y() + 14);
+            cursorPath.lineTo(cursorPos.x() + 9, cursorPos.y() + 21);
+            cursorPath.lineTo(cursorPos.x() + 12, cursorPos.y() + 19);
+            cursorPath.lineTo(cursorPos.x() + 8, cursorPos.y() + 12);
+            cursorPath.lineTo(cursorPos.x() + 14, cursorPos.y() + 12);
+            cursorPath.closeSubpath();
+            p.setPen(QPen(QColor(15, 23, 42), 1.5));
+            p.setBrush(Qt::white);
+            p.drawPath(cursorPath);
+
+            p.end();
+            const QString frameName = QStringLiteral("frame_%1.png").arg(f, 4, 10, QLatin1Char('0'));
+            desktop.save(vdir.filePath(frameName));
         }
     }
 

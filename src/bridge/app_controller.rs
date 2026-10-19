@@ -21,6 +21,14 @@ pub mod qobject {
         fn librelinkup_apply_app_theme(theme_mode: &QString);
         fn librelinkup_show_main_window();
         fn librelinkup_hide_main_window();
+        fn librelinkup_restore_overlay_placement(
+            screen_name: &QString,
+            x: i32,
+            y: i32,
+            width: i32,
+            height: i32,
+        );
+        fn librelinkup_popup_tray_menu();
         fn librelinkup_trigger_window_alert(bring_to_front: bool, flash_window: bool);
         fn librelinkup_play_alert_sound(custom_sound_path: &QString);
         fn librelinkup_quit_app();
@@ -57,8 +65,14 @@ pub mod qobject {
         #[qproperty(QString, theme_mode)]
         #[qproperty(QString, window_mode)]
         #[qproperty(bool, overlay_visible)]
+        #[qproperty(bool, overlay_only_mode)]
         #[qproperty(bool, overlay_dark_theme)]
         #[qproperty(i32, overlay_opacity_percent)]
+        #[qproperty(QString, overlay_screen_name)]
+        #[qproperty(i32, overlay_x)]
+        #[qproperty(i32, overlay_y)]
+        #[qproperty(i32, overlay_width)]
+        #[qproperty(i32, overlay_height)]
         #[qproperty(bool, show_glucose_in_tray_icon)]
         #[qproperty(bool, show_glucose_in_tray_tooltip)]
         #[qproperty(bool, autostart_enabled)]
@@ -113,10 +127,26 @@ pub mod qobject {
         fn update_overlay_visible(self: Pin<&mut AppController>, visible: bool);
 
         #[qinvokable]
+        fn update_overlay_only_mode(self: Pin<&mut AppController>, only_overlay: bool);
+
+        #[qinvokable]
         fn update_overlay_dark_theme(self: Pin<&mut AppController>, enabled: bool);
 
         #[qinvokable]
         fn update_overlay_opacity_percent(self: Pin<&mut AppController>, opacity_percent: i32);
+
+        #[qinvokable]
+        fn save_overlay_placement(
+            self: Pin<&mut AppController>,
+            screen_name: QString,
+            x: i32,
+            y: i32,
+            width: i32,
+            height: i32,
+        );
+
+        #[qinvokable]
+        fn popup_tray_menu_at_cursor(self: Pin<&mut AppController>);
 
         #[qinvokable]
         fn update_show_glucose_in_tray_icon(self: Pin<&mut AppController>, enabled: bool);
@@ -221,8 +251,14 @@ pub struct AppControllerRust {
     theme_mode: QString,
     window_mode: QString,
     overlay_visible: bool,
+    overlay_only_mode: bool,
     overlay_dark_theme: bool,
     overlay_opacity_percent: i32,
+    overlay_screen_name: QString,
+    overlay_x: i32,
+    overlay_y: i32,
+    overlay_width: i32,
+    overlay_height: i32,
     show_glucose_in_tray_icon: bool,
     show_glucose_in_tray_tooltip: bool,
     autostart_enabled: bool,
@@ -248,6 +284,9 @@ pub struct AppControllerRust {
 impl Default for AppControllerRust {
     fn default() -> Self {
         let settings = load_default_settings();
+        let initial_overlay_visible = settings.overlay_visible
+            || settings.window_mode == "overlay"
+            || settings.window_mode == "overlayTransparent";
         Self {
             logged_in: false,
             busy: false,
@@ -277,10 +316,15 @@ impl Default for AppControllerRust {
             graph_points_json: QString::from("[]"),
             theme_mode: QString::from(settings.theme_mode.as_str()),
             window_mode: QString::from(settings.window_mode.as_str()),
-            overlay_visible: settings.window_mode == "overlay"
-                || settings.window_mode == "overlayTransparent",
+            overlay_visible: initial_overlay_visible,
+            overlay_only_mode: settings.overlay_only_mode,
             overlay_dark_theme: settings.overlay_dark_theme,
             overlay_opacity_percent: settings.overlay_opacity_percent.clamp(20, 100),
+            overlay_screen_name: QString::from(settings.overlay_screen_name.as_str()),
+            overlay_x: settings.overlay_x,
+            overlay_y: settings.overlay_y,
+            overlay_width: settings.overlay_width.clamp(230, 600),
+            overlay_height: settings.overlay_height.clamp(80, 260),
             show_glucose_in_tray_icon: settings.show_glucose_in_tray_icon,
             show_glucose_in_tray_tooltip: settings.show_glucose_in_tray_tooltip,
             autostart_enabled: settings.autostart_enabled,
@@ -314,8 +358,15 @@ fn current_settings_from_controller(ctrl: &qobject::AppController) -> AppSetting
         country: ctrl.country().to_string(),
         language: ctrl.language().to_string(),
         window_mode: ctrl.window_mode().to_string(),
+        overlay_visible: *ctrl.overlay_visible(),
+        overlay_only_mode: *ctrl.overlay_only_mode(),
         overlay_dark_theme: *ctrl.overlay_dark_theme(),
         overlay_opacity_percent: (*ctrl.overlay_opacity_percent()).clamp(20, 100),
+        overlay_screen_name: ctrl.overlay_screen_name().to_string(),
+        overlay_x: *ctrl.overlay_x(),
+        overlay_y: *ctrl.overlay_y(),
+        overlay_width: (*ctrl.overlay_width()).clamp(230, 600),
+        overlay_height: (*ctrl.overlay_height()).clamp(80, 260),
         show_glucose_in_tray_icon: *ctrl.show_glucose_in_tray_icon(),
         show_glucose_in_tray_tooltip: *ctrl.show_glucose_in_tray_tooltip(),
         tray_icon_theme: "auto".to_string(),
@@ -494,6 +545,13 @@ impl qobject::AppController {
         let theme = self.theme_mode().clone();
         qobject::librelinkup_apply_app_theme(&theme);
 
+        let ov_screen = self.overlay_screen_name().clone();
+        let ov_x = *self.overlay_x();
+        let ov_y = *self.overlay_y();
+        let ov_w = *self.overlay_width();
+        let ov_h = *self.overlay_height();
+        qobject::librelinkup_restore_overlay_placement(&ov_screen, ov_x, ov_y, ov_w, ov_h);
+
         match load_default_credentials() {
             Ok(Some(creds)) if creds.has_valid_session() => {
                 log_info(
@@ -540,6 +598,10 @@ impl qobject::AppController {
                 log_warn("CRYPTO", format!("Could not decrypt stored credentials: {e}"));
                 self.as_mut().set_error_message(QString::from(e.as_str()));
             }
+        }
+
+        if *self.overlay_visible() && *self.overlay_only_mode() {
+            qobject::librelinkup_hide_main_window();
         }
 
         self.as_mut().sync_tray_and_ui();
@@ -839,6 +901,16 @@ impl qobject::AppController {
         let is_overlay = valid == "overlay" || valid == "overlayTransparent";
         self.as_mut().set_window_mode(QString::from(valid.as_str()));
         self.as_mut().set_overlay_visible(is_overlay);
+        if !is_overlay {
+            self.as_mut().set_overlay_only_mode(false);
+        } else {
+            let ov_screen = self.overlay_screen_name().clone();
+            let ov_x = *self.overlay_x();
+            let ov_y = *self.overlay_y();
+            let ov_w = *self.overlay_width();
+            let ov_h = *self.overlay_height();
+            qobject::librelinkup_restore_overlay_placement(&ov_screen, ov_x, ov_y, ov_w, ov_h);
+        }
         if valid == "overlayTransparent" && *self.overlay_opacity_percent() > 75 {
             self.as_mut().set_overlay_opacity_percent(55);
         } else if valid == "overlay" && *self.overlay_opacity_percent() < 75 {
@@ -857,6 +929,15 @@ impl qobject::AppController {
             self.as_mut().set_window_mode(QString::from("overlay"));
         } else if !visible {
             self.as_mut().set_window_mode(QString::from("windowed"));
+            self.as_mut().set_overlay_only_mode(false);
+        }
+        if visible {
+            let ov_screen = self.overlay_screen_name().clone();
+            let ov_x = *self.overlay_x();
+            let ov_y = *self.overlay_y();
+            let ov_w = *self.overlay_width();
+            let ov_h = *self.overlay_height();
+            qobject::librelinkup_restore_overlay_placement(&ov_screen, ov_x, ov_y, ov_w, ov_h);
         }
         let settings = current_settings_from_controller(&self);
         let _ = save_default_settings(&settings);
@@ -866,6 +947,16 @@ impl qobject::AppController {
         );
         self.as_mut().sync_tray_and_ui();
         self.as_mut().sync_logs_to_properties();
+    }
+
+    pub fn update_overlay_only_mode(mut self: Pin<&mut Self>, only_overlay: bool) {
+        let effective = only_overlay && *self.overlay_visible();
+        if *self.overlay_only_mode() != effective {
+            self.as_mut().set_overlay_only_mode(effective);
+            let settings = current_settings_from_controller(&self);
+            let _ = save_default_settings(&settings);
+            self.as_mut().sync_tray_and_ui();
+        }
     }
 
     pub fn update_overlay_dark_theme(mut self: Pin<&mut Self>, enabled: bool) {
@@ -889,6 +980,41 @@ impl qobject::AppController {
             format!("Desktop overlay opacity set to {clamped}%"),
         );
         self.as_mut().sync_logs_to_properties();
+    }
+
+    pub fn save_overlay_placement(
+        mut self: Pin<&mut Self>,
+        screen_name: QString,
+        x: i32,
+        y: i32,
+        width: i32,
+        height: i32,
+    ) {
+        let clean_screen = screen_name.to_string().trim().to_string();
+        let w = width.clamp(230, 600);
+        let h = height.clamp(80, 260);
+        let changed = self.overlay_screen_name().to_string() != clean_screen
+            || *self.overlay_x() != x
+            || *self.overlay_y() != y
+            || *self.overlay_width() != w
+            || *self.overlay_height() != h;
+
+        if changed {
+            if !clean_screen.is_empty() {
+                self.as_mut()
+                    .set_overlay_screen_name(QString::from(clean_screen.as_str()));
+            }
+            self.as_mut().set_overlay_x(x);
+            self.as_mut().set_overlay_y(y);
+            self.as_mut().set_overlay_width(w);
+            self.as_mut().set_overlay_height(h);
+            let settings = current_settings_from_controller(&self);
+            let _ = save_default_settings(&settings);
+        }
+    }
+
+    pub fn popup_tray_menu_at_cursor(self: Pin<&mut Self>) {
+        qobject::librelinkup_popup_tray_menu();
     }
 
     pub fn update_show_glucose_in_tray_icon(mut self: Pin<&mut Self>, enabled: bool) {
@@ -1065,12 +1191,21 @@ impl qobject::AppController {
         }
     }
 
-    pub fn show_main_window(self: Pin<&mut Self>) {
+    pub fn show_main_window(mut self: Pin<&mut Self>) {
+        self.as_mut().set_overlay_only_mode(false);
+        let settings = current_settings_from_controller(&self);
+        let _ = save_default_settings(&settings);
         qobject::librelinkup_show_main_window();
+        self.as_mut().sync_tray_and_ui();
     }
 
-    pub fn hide_main_window(self: Pin<&mut Self>) {
+    pub fn hide_main_window(mut self: Pin<&mut Self>) {
+        let only_ov = *self.overlay_visible();
+        self.as_mut().set_overlay_only_mode(only_ov);
+        let settings = current_settings_from_controller(&self);
+        let _ = save_default_settings(&settings);
         qobject::librelinkup_hide_main_window();
+        self.as_mut().sync_tray_and_ui();
     }
 
     pub fn quit_application(self: Pin<&mut Self>) {

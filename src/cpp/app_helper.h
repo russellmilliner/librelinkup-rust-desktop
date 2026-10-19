@@ -10,6 +10,7 @@
 #include <QApplication>
 #include <QColor>
 #include <QCoreApplication>
+#include <QCursor>
 #include <QDateTime>
 #include <QDesktopServices>
 #include <QDir>
@@ -198,17 +199,130 @@ inline QWindow* find_main_window() {
     return nullptr;
 }
 
+inline void clamp_window_to_screen(QWindow* win) {
+    if (!win) {
+        return;
+    }
+    QScreen* sc = win->screen();
+    if (!sc) {
+        sc = QGuiApplication::screenAt(win->geometry().center());
+    }
+    if (!sc) {
+        sc = QGuiApplication::primaryScreen();
+    }
+    if (!sc) {
+        return;
+    }
+    const QRect avail = sc->availableGeometry().isValid() ? sc->availableGeometry() : sc->geometry();
+    if (!avail.isValid()) {
+        return;
+    }
+    const int w = std::min(win->width(), avail.width());
+    const int h = std::min(win->height(), avail.height());
+    const int minX = avail.left();
+    const int maxX = std::max(avail.left(), avail.right() - w + 1);
+    const int minY = avail.top();
+    const int maxY = std::max(avail.top(), avail.bottom() - h + 1);
+    const int clampedX = std::clamp(win->x(), minX, maxX);
+    const int clampedY = std::clamp(win->y(), minY, maxY);
+    if (win->width() != w || win->height() != h) {
+        win->resize(w, h);
+    }
+    if (win->x() != clampedX || win->y() != clampedY) {
+        win->setPosition(clampedX, clampedY);
+    }
+}
+
+inline void ensure_overlay_hooks(QWindow* ovWin) {
+    if (!ovWin || ovWin->property("_llu_overlay_hooked").toBool()) {
+        return;
+    }
+    ovWin->setProperty("_llu_overlay_hooked", true);
+    ovWin->setFlags(Qt::Tool | Qt::FramelessWindowHint | Qt::WindowStaysOnTopHint);
+    if (ovWin->transientParent() != nullptr) {
+        ovWin->setTransientParent(nullptr);
+    }
+    QObject::connect(ovWin, &QWindow::transientParentChanged, ovWin, [ovWin](QWindow* parent) {
+        if (parent != nullptr) {
+            ovWin->setTransientParent(nullptr);
+        }
+    });
+    QObject::connect(ovWin, &QWindow::visibleChanged, ovWin, [ovWin](bool vis) {
+        if (vis) {
+            clamp_window_to_screen(ovWin);
+        }
+        update_tray_window_actions();
+    });
+}
+
 inline QWindow* find_overlay_window() {
     const auto windows = QGuiApplication::topLevelWindows();
     for (QWindow* w : windows) {
         if (w && w->objectName() == QStringLiteral("librelinkupOverlayWindow")) {
-            if (w->transientParent() != nullptr) {
-                w->setTransientParent(nullptr);
-            }
+            ensure_overlay_hooks(w);
             return w;
         }
     }
     return nullptr;
+}
+
+inline void restore_overlay_placement(
+    const QString& screen_name,
+    int x,
+    int y,
+    int width,
+    int height
+) {
+    QWindow* ovWin = find_overlay_window();
+    if (!ovWin) {
+        return;
+    }
+    ovWin->setProperty("placementReady", false);
+
+    QScreen* targetScreen = nullptr;
+    const QString cleanName = screen_name.trimmed();
+    if (!cleanName.isEmpty()) {
+        for (QScreen* sc : QGuiApplication::screens()) {
+            if (sc && sc->name().compare(cleanName, Qt::CaseInsensitive) == 0) {
+                targetScreen = sc;
+                break;
+            }
+        }
+    }
+    if (!targetScreen) {
+        targetScreen = ovWin->screen() ? ovWin->screen() : QGuiApplication::primaryScreen();
+    }
+    if (!targetScreen) {
+        ovWin->setProperty("placementReady", true);
+        return;
+    }
+
+    ovWin->setScreen(targetScreen);
+    const QRect scGeom = targetScreen->geometry();
+    const QRect avail = targetScreen->availableGeometry().isValid()
+        ? targetScreen->availableGeometry()
+        : scGeom;
+
+    const int w = std::clamp(width, 240, std::max(240, std::min(600, avail.width())));
+    const int h = std::clamp(height, 80, std::max(80, std::min(260, avail.height())));
+
+    int globalX = avail.right() - w - 24;
+    int globalY = avail.top() + 36;
+    if (x >= 0 && y >= 0) {
+        globalX = scGeom.x() + x;
+        globalY = scGeom.y() + y;
+    }
+
+    const int minX = avail.left();
+    const int maxX = std::max(avail.left(), avail.right() - w + 1);
+    const int minY = avail.top();
+    const int maxY = std::max(avail.top(), avail.bottom() - h + 1);
+    const int clampedX = std::clamp(globalX, minX, maxX);
+    const int clampedY = std::clamp(globalY, minY, maxY);
+
+    ovWin->resize(w, h);
+    ovWin->setPosition(clampedX, clampedY);
+    ovWin->setProperty("placementReady", true);
 }
 
 inline QWindow* find_log_viewer_window() {
@@ -247,6 +361,7 @@ inline void show_main_window() {
         if (win->windowStates() & Qt::WindowMinimized) {
             win->setWindowStates(win->windowStates() & ~Qt::WindowMinimized);
         }
+        clamp_window_to_screen(win);
         win->showNormal();
         win->show();
         win->raise();
@@ -267,6 +382,7 @@ inline void hide_main_window_to_tray() {
 
 inline void show_log_viewer_window() {
     if (QWindow* logWin = find_log_viewer_window()) {
+        clamp_window_to_screen(logWin);
         logWin->showNormal();
         logWin->show();
         logWin->raise();
@@ -280,6 +396,7 @@ inline void show_log_viewer_window() {
 
 inline void show_about_window() {
     if (QWindow* aboutWin = find_about_window()) {
+        clamp_window_to_screen(aboutWin);
         aboutWin->showNormal();
         aboutWin->show();
         aboutWin->raise();
@@ -298,6 +415,18 @@ public:
         return inst;
     }
 
+    bool isTrayIconVisible() const {
+        return m_tray && m_tray->isVisible();
+    }
+
+    void popupMenuAtCursor() {
+        ensureInitialized();
+        if (m_menu) {
+            updateWindowActionsVisibility();
+            m_menu->popup(QCursor::pos());
+        }
+    }
+
     void updateWindowActionsVisibility() {
         const bool shown = is_main_window_shown();
         if (m_showAction) {
@@ -305,6 +434,26 @@ public:
         }
         if (m_hideAction) {
             m_hideAction->setVisible(shown);
+        }
+
+        QWindow* ovWin = find_overlay_window();
+        const bool ovShown = m_overlayVisible || (ovWin && ovWin->isVisible());
+        const bool onlyOverlayShowing = ovShown && !shown;
+
+        if (m_controller) {
+            const bool curOnly = m_controller->property("overlayOnlyMode").toBool();
+            if (curOnly != onlyOverlayShowing) {
+                QMetaObject::invokeMethod(
+                    m_controller,
+                    "updateOverlayOnlyMode",
+                    Qt::QueuedConnection,
+                    Q_ARG(bool, onlyOverlayShowing)
+                );
+            }
+        }
+
+        if (m_tray && !m_tray->isVisible()) {
+            m_tray->show();
         }
     }
 
@@ -324,6 +473,7 @@ public:
         const QString& tooltipText
     ) {
         m_controller = controller;
+        m_overlayVisible = overlayVisible;
         ensureInitialized();
         if (!m_tray) {
             return;
@@ -394,10 +544,6 @@ public:
         }
 
         updateWindowActionsVisibility();
-
-        if (!m_tray->isVisible()) {
-            m_tray->show();
-        }
     }
 
 private:
@@ -412,6 +558,9 @@ private:
         QGuiApplication::setQuitOnLastWindowClosed(false);
 
         m_tray = new QSystemTrayIcon(QCoreApplication::instance());
+        m_tray->setIcon(build_multisize_svg_icon(
+            QStringLiteral(":/qt/qml/io/github/librelinkup/src/qml/icons/tray-icon-dark.svg")
+        ));
         m_menu = new QMenu();
 
         QObject::connect(m_menu, &QMenu::aboutToShow, [this]() {
@@ -600,6 +749,7 @@ private:
     }
 
     bool m_initialized = false;
+    bool m_overlayVisible = false;
     QPointer<QObject> m_controller;
     QPointer<QSystemTrayIcon> m_tray;
     QMenu* m_menu = nullptr;
@@ -716,6 +866,26 @@ inline void librelinkup_hide_main_window() {
     librelinkup::hide_main_window_to_tray();
 }
 
+inline void librelinkup_restore_overlay_placement(
+    const QString& screen_name,
+    std::int32_t x,
+    std::int32_t y,
+    std::int32_t width,
+    std::int32_t height
+) {
+    librelinkup::restore_overlay_placement(screen_name, x, y, width, height);
+    // Re-apply after next event loop tick in case the QML OverlayWidget is just being realized
+    const QString scCopy = screen_name;
+    QTimer::singleShot(0, [scCopy, x, y, width, height]() {
+        librelinkup::restore_overlay_placement(scCopy, x, y, width, height);
+        librelinkup::update_tray_window_actions();
+    });
+}
+
+inline void librelinkup_popup_tray_menu() {
+    librelinkup::TrayManager::instance().popupMenuAtCursor();
+}
+
 inline void librelinkup_trigger_window_alert(bool bring_to_front, bool flash_window) {
     if (QWindow* win = librelinkup::find_main_window()) {
         if (bring_to_front) {
@@ -746,6 +916,11 @@ inline int librelinkup_run_app(bool start_minimized) {
     QLoggingCategory::setFilterRules(QStringLiteral("union.*=false\nqt.core.qobject.connect=false"));
     if (!std::getenv("QT_QUICK_CONTROLS_STYLE")) {
         qputenv("QT_QUICK_CONTROLS_STYLE", "org.kde.breeze");
+    }
+    // Use XCB (XWayland/X11) by default when DISPLAY is available so KDE Plasma KWin
+    // allows saving/restoring exact multi-monitor overlay coordinates and Qt::Tool taskbar skipping.
+    if (std::getenv("DISPLAY") && !std::getenv("LIBRELINKUP_USE_WAYLAND") && !std::getenv("QT_QPA_PLATFORM")) {
+        qputenv("QT_QPA_PLATFORM", "xcb");
     }
     if (start_minimized) {
         qputenv("LIBRELINKUP_START_MINIMIZED", "1");
@@ -785,6 +960,22 @@ inline int librelinkup_run_app(bool start_minimized) {
         librelinkup::main_window_ref() = win;
         librelinkup::ensure_window_hooks(win);
         win->setIcon(initialIcon);
+
+        QObject* ctrl = win->findChild<QObject*>(QStringLiteral("librelinkupAppController"));
+        if (ctrl) {
+            const bool ovVis = ctrl->property("overlayVisible").toBool();
+            const bool ovOnly = ctrl->property("overlayOnlyMode").toBool();
+            const QString ovScreen = ctrl->property("overlayScreenName").toString();
+            const int ovX = ctrl->property("overlayX").toInt();
+            const int ovY = ctrl->property("overlayY").toInt();
+            const int ovW = ctrl->property("overlayWidth").toInt();
+            const int ovH = ctrl->property("overlayHeight").toInt();
+            librelinkup::restore_overlay_placement(ovScreen, ovX, ovY, ovW, ovH);
+            if (ovVis && ovOnly) {
+                start_minimized = true;
+            }
+        }
+
         if (start_minimized) {
             win->setVisible(false);
             win->hide();
@@ -803,6 +994,7 @@ inline int librelinkup_run_app(bool start_minimized) {
                 }
             });
         } else {
+            librelinkup::clamp_window_to_screen(win);
             win->show();
             win->raise();
             win->requestActivate();
@@ -838,8 +1030,9 @@ inline void inspect_item_tree(
     const QString className = QString::fromLatin1(item->metaObject()->className());
     const QString label = objName.isEmpty() ? className : QStringLiteral("%1(%2)").arg(objName, className);
 
-    // 1. Check horizontal RowLayout / GridLayout implicitWidth overflow
+    // 1. Check horizontal & vertical Layout implicit size overflows
     if (className.contains(QStringLiteral("QQuickRowLayout")) ||
+        className.contains(QStringLiteral("QQuickColumnLayout")) ||
         className.contains(QStringLiteral("QQuickGridLayout"))) {
         if (item->width() > 1.0 && item->implicitWidth() > item->width() + 2.0) {
             violations.append(
@@ -847,6 +1040,14 @@ inline void inspect_item_tree(
                     .arg(contextLabel, label)
                     .arg(item->implicitWidth(), 0, 'f', 1)
                     .arg(item->width(), 0, 'f', 1)
+            );
+        }
+        if (item->height() > 1.0 && item->implicitHeight() > item->height() + 2.0) {
+            violations.append(
+                QStringLiteral("[%1] Layout '%2' implicitHeight (%3) overflows allocated height (%4)")
+                    .arg(contextLabel, label)
+                    .arg(item->implicitHeight(), 0, 'f', 1)
+                    .arg(item->height(), 0, 'f', 1)
             );
         }
     }
@@ -862,6 +1063,8 @@ inline void inspect_item_tree(
         QStringLiteral("alertsSettingsCard"),
         QStringLiteral("accountSecurityCard"),
         QStringLiteral("supportAboutCard"),
+        QStringLiteral("aboutHeaderCard"),
+        QStringLiteral("aboutLinksCard"),
         QStringLiteral("overlayPill"),
         QStringLiteral("mainHeaderToolBar")
     };
@@ -1103,10 +1306,10 @@ inline QString librelinkup_run_ui_overflow_tests() {
         logWin->hide();
     }
 
-    // State C2: Inspect AboutDialog at default (580x490) and minimum (480x400) sizes
+    // State C2: Inspect AboutDialog at default (580x500) and minimum (480x400) sizes
     if (QQuickWindow* aboutWin = qobject_cast<QQuickWindow*>(librelinkup::find_about_window())) {
         QMetaObject::invokeMethod(aboutWin, "openAboutWindow", Qt::DirectConnection);
-        for (const QSize& abSz : {QSize(580, 490), QSize(480, 400)}) {
+        for (const QSize& abSz : {QSize(580, 500), QSize(480, 400)}) {
             aboutWin->resize(abSz);
             librelinkup_uitest::pump_events(40);
             librelinkup_uitest::inspect_item_tree(
@@ -1119,7 +1322,8 @@ inline QString librelinkup_run_ui_overflow_tests() {
         aboutWin->hide();
     }
 
-    // State D: Inspect OverlayWidget (268x96 and minimum 220x80) across dark/color modes and opacities
+    // State D: Inspect OverlayWidget (276x88 and minimum 240x80) across dark/color modes,
+    // verify screen clamping, placement persistence, and tray icon hiding when only overlay is showing
     QMetaObject::invokeMethod(
         ctrl,
         "updateOverlayVisible",
@@ -1141,7 +1345,7 @@ inline QString librelinkup_run_ui_overflow_tests() {
                 Qt::DirectConnection,
                 Q_ARG(int, darkOv ? 65 : 90)
             );
-            for (const QSize& ovSz : {QSize(268, 96), QSize(220, 80)}) {
+            for (const QSize& ovSz : {QSize(276, 88), QSize(240, 80)}) {
                 ovWin->resize(ovSz);
                 librelinkup_uitest::pump_events(40);
                 librelinkup_uitest::inspect_item_tree(
@@ -1152,7 +1356,194 @@ inline QString librelinkup_run_ui_overflow_tests() {
                 );
             }
         }
+
+        // Verify screen bounds clamping prevents overlay window from overflowing the screen
+        librelinkup::restore_overlay_placement(QStringLiteral(""), 99999, 99999, 276, 88);
+        librelinkup_uitest::pump_events(30);
+        if (QScreen* sc = ovWin->screen()) {
+            const QRect avail = sc->availableGeometry().isValid() ? sc->availableGeometry() : sc->geometry();
+            if (ovWin->x() + ovWin->width() > avail.right() + 2 ||
+                ovWin->y() + ovWin->height() > avail.bottom() + 2 ||
+                ovWin->x() < avail.left() - 2 ||
+                ovWin->y() < avail.top() - 2) {
+                violations.append(
+                    QStringLiteral("OverlayWidget (%1,%2 %3x%4) overflowed screen availableGeometry (%5,%6 %7x%8)")
+                        .arg(ovWin->x()).arg(ovWin->y()).arg(ovWin->width()).arg(ovWin->height())
+                        .arg(avail.x()).arg(avail.y()).arg(avail.width()).arg(avail.height())
+                );
+            }
+        }
+
+        // Verify overlay window uses Qt::Tool and has no transientParent so it never creates a Task Manager entry
+        if ((ovWin->flags() & Qt::Tool) != Qt::Tool) {
+            violations.append(QStringLiteral("OverlayWidget must have Qt::Tool flag so it does not show an icon in the Task Manager"));
+        }
+        if (ovWin->transientParent() != nullptr) {
+            violations.append(QStringLiteral("OverlayWidget must have null transientParent so it stays independent of MainWindow"));
+        }
+
+        // Verify when ONLY the overlay is showing (main window hidden + overlay visible):
+        // - Main window is hidden (no Task Manager icon)
+        // - Overlay remains visible on screen (with Qt::Tool, so no Task Manager icon)
+        // - System tray icon ALWAYS remains visible
+        QMetaObject::invokeMethod(ctrl, "hideMainWindow", Qt::DirectConnection);
+        librelinkup_uitest::pump_events(40);
+        if (mainWin->isVisible()) {
+            violations.append(QStringLiteral("MainWindow should be hidden (not in Task Manager) when minimized/closed to tray"));
+        }
+        if (!ovWin->isVisible()) {
+            violations.append(QStringLiteral("OverlayWidget should remain visible when MainWindow is hidden"));
+        }
+        if (!librelinkup::TrayManager::instance().isTrayIconVisible()) {
+            violations.append(QStringLiteral("Tray icon must always remain visible when only the overlay is showing"));
+        }
+        if (!ctrl->property("overlayOnlyMode").toBool()) {
+            violations.append(QStringLiteral("overlayOnlyMode should be true when main window is hidden while overlay is visible"));
+        }
+
+        // Verify tray icon remains visible when main window is shown again
+        QMetaObject::invokeMethod(ctrl, "showMainWindow", Qt::DirectConnection);
+        librelinkup_uitest::pump_events(40);
+        if (!librelinkup::TrayManager::instance().isTrayIconVisible()) {
+            violations.append(QStringLiteral("Tray icon should be visible when main window is shown"));
+        }
+
         ovWin->hide();
+    }
+
+    const QString screenshotDir = qEnvironmentVariable("LLU_EXPORT_SCREENSHOTS_DIR").trimmed();
+    if (!screenshotDir.isEmpty()) {
+        QDir dir(screenshotDir);
+        dir.mkpath(QStringLiteral("."));
+
+        // 1. Main Window - Dashboard (Dark theme, 980x680, with interactive graph point hover active)
+        QMetaObject::invokeMethod(ctrl, "loadDemoSampleData", Qt::DirectConnection);
+        QMetaObject::invokeMethod(ctrl, "updateThemeMode", Qt::DirectConnection, Q_ARG(QString, QStringLiteral("dark")));
+        mainWin->resize(980, 680);
+        mainWin->setProperty("activeTab", QStringLiteral("dashboard"));
+        mainWin->show();
+        librelinkup_uitest::pump_events(80);
+        if (QQuickItem* canvas = mainWin->findChild<QQuickItem*>(QStringLiteral("glucoseCanvas"))) {
+            QMetaObject::invokeMethod(
+                canvas,
+                "updateHoverAt",
+                Qt::DirectConnection,
+                Q_ARG(QVariant, QVariant(canvas->width() * 0.58)),
+                Q_ARG(QVariant, QVariant(canvas->height() * 0.45))
+            );
+            librelinkup_uitest::pump_events(50);
+        }
+        QImage dashImg = mainWin->grabWindow();
+        dashImg.save(dir.filePath(QStringLiteral("app-dashboard.png")));
+
+        // 2. Main Window - General, Tray & Overlay Settings (Dark theme, 980x680)
+        mainWin->setProperty("activeTab", QStringLiteral("general"));
+        librelinkup_uitest::pump_events(60);
+        QImage settingsImg = mainWin->grabWindow();
+        settingsImg.save(dir.filePath(QStringLiteral("app-settings.png")));
+
+        // 3. Desktop Overlay Widget (Dark Slate Theme & Classic Status-Color Theme side-by-side)
+        if (QQuickWindow* ovWin = qobject_cast<QQuickWindow*>(librelinkup::find_overlay_window())) {
+            QMetaObject::invokeMethod(ctrl, "updateOverlayVisible", Qt::DirectConnection, Q_ARG(bool, true));
+            ovWin->resize(276, 88);
+
+            QMetaObject::invokeMethod(ctrl, "updateOverlayDarkTheme", Qt::DirectConnection, Q_ARG(bool, true));
+            QMetaObject::invokeMethod(ctrl, "updateOverlayOpacityPercent", Qt::DirectConnection, Q_ARG(int, 92));
+            librelinkup_uitest::pump_events(60);
+            QImage ovDarkImg = ovWin->grabWindow();
+
+            QMetaObject::invokeMethod(ctrl, "updateOverlayDarkTheme", Qt::DirectConnection, Q_ARG(bool, false));
+            QMetaObject::invokeMethod(ctrl, "updateOverlayOpacityPercent", Qt::DirectConnection, Q_ARG(int, 95));
+            librelinkup_uitest::pump_events(60);
+            QImage ovColorImg = ovWin->grabWindow();
+
+            QImage ovComposite(620, 148, QImage::Format_ARGB32_Premultiplied);
+            ovComposite.fill(QColor(15, 23, 42));
+            {
+                QPainter p(&ovComposite);
+                p.setRenderHint(QPainter::Antialiasing, true);
+                p.setRenderHint(QPainter::TextAntialiasing, true);
+
+                QFont labelFont = p.font();
+                labelFont.setPixelSize(12);
+                labelFont.setBold(true);
+                p.setFont(labelFont);
+                p.setPen(QColor(203, 213, 225));
+                p.drawText(QRect(24, 10, 276, 20), Qt::AlignCenter, QStringLiteral("Overlay — Dark Slate Theme"));
+                p.drawText(QRect(320, 10, 276, 20), Qt::AlignCenter, QStringLiteral("Overlay — Status Color Theme"));
+
+                p.drawImage(24, 38, ovDarkImg.scaled(276, 88, Qt::IgnoreAspectRatio, Qt::SmoothTransformation));
+                p.drawImage(320, 38, ovColorImg.scaled(276, 88, Qt::IgnoreAspectRatio, Qt::SmoothTransformation));
+            }
+            ovComposite.save(dir.filePath(QStringLiteral("overlay-widget.png")));
+            ovWin->hide();
+        }
+
+        // 4. System Tray Icons Showcase (Default SVG Drop Icons + Dynamic Glucose Value Badges)
+        {
+            QImage trayComposite(660, 152, QImage::Format_ARGB32_Premultiplied);
+            trayComposite.fill(QColor(15, 23, 42));
+            QPainter p(&trayComposite);
+            p.setRenderHint(QPainter::Antialiasing, true);
+            p.setRenderHint(QPainter::TextAntialiasing, true);
+            p.setRenderHint(QPainter::SmoothPixmapTransform, true);
+
+            struct TraySample {
+                QIcon icon;
+                QString label;
+                QColor panelBg;
+            };
+            const QList<TraySample> samples = {
+                {
+                    librelinkup::build_multisize_svg_icon(QStringLiteral(":/qt/qml/io/github/librelinkup/src/qml/icons/tray-icon-dark.svg")),
+                    QStringLiteral("Dark Panel Icon"),
+                    QColor(30, 41, 59)
+                },
+                {
+                    librelinkup::build_multisize_svg_icon(QStringLiteral(":/qt/qml/io/github/librelinkup/src/qml/icons/tray-icon-light.svg")),
+                    QStringLiteral("Light Panel Icon"),
+                    QColor(226, 232, 240)
+                },
+                {
+                    librelinkup::build_glucose_badge_icon(QStringLiteral("118"), QStringLiteral("→"), QStringLiteral("#22c55e")),
+                    QStringLiteral("In Range (118 →)"),
+                    QColor(30, 41, 59)
+                },
+                {
+                    librelinkup::build_glucose_badge_icon(QStringLiteral("214"), QStringLiteral("↑"), QStringLiteral("#f59e0b")),
+                    QStringLiteral("High (214 ↑)"),
+                    QColor(30, 41, 59)
+                },
+                {
+                    librelinkup::build_glucose_badge_icon(QStringLiteral("62"), QStringLiteral("↓"), QStringLiteral("#ef4444")),
+                    QStringLiteral("Low (62 ↓)"),
+                    QColor(30, 41, 59)
+                }
+            };
+
+            QFont f = p.font();
+            f.setPixelSize(11);
+            f.setBold(true);
+            p.setFont(f);
+
+            const int slotW = 124;
+            const int startX = 20;
+            for (int i = 0; i < samples.size(); ++i) {
+                const int cx = startX + i * slotW;
+                QRectF tileRect(cx + 22, 18, 80, 80);
+                p.setPen(QPen(QColor(148, 163, 184, 70), 1.0));
+                p.setBrush(samples[i].panelBg);
+                p.drawRoundedRect(tileRect, 14, 14);
+
+                QPixmap pm = samples[i].icon.pixmap(64, 64);
+                p.drawPixmap(cx + 30, 26, 64, 64, pm);
+
+                p.setPen(QColor(226, 232, 240));
+                p.drawText(QRect(cx, 108, slotW, 28), Qt::AlignCenter, samples[i].label);
+            }
+            p.end();
+            trayComposite.save(dir.filePath(QStringLiteral("tray-icons.png")));
+        }
     }
 
     mainWin->hide();

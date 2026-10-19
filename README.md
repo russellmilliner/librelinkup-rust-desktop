@@ -7,21 +7,38 @@ A native **Rust + Qt 6 / KDE Plasma 6 Kirigami** desktop application for monitor
 
 ---
 
+## Screenshots
+
+### Main Application — Live Glucose Dashboard & 12-Hour Interactive Graph
+![Main Application Dashboard](docs/screenshots/app-dashboard.png)
+
+### General, System Tray & Desktop Overlay Settings
+![General & Overlay Settings](docs/screenshots/app-settings.png)
+
+### Floating Desktop Overlay Widget (Dark Slate & Status Color Themes)
+![Desktop Overlay Widget](docs/screenshots/overlay-widget.png)
+
+### System Tray Icons (Default SVG Drop & Live Glucose Value Badges)
+![System Tray Icons](docs/screenshots/tray-icons.png)
+
+---
+
 ## Key Features
 
 - **Native KDE Plasma 6 UI**: Built with `cxx-qt`, Qt 6 Quick Controls (`org.kde.desktop`), `org.kde.kirigami`, and `KColorScheme` (`KF6ColorScheme`).
 - **Light, Dark & System Theme Support**: Dynamically switches between Breeze Light, Breeze Dark, or your system's KDE color scheme at runtime via `KColorSchemeManager`.
-- **Single System Tray Icon & True Start-Minimized**:
-  - Uses KDE's native `StatusNotifierWatcher` protocol via `QSystemTrayIcon`.
-  - Hides the window cleanly when minimized or closed to tray so you never get duplicate taskbar + tray icons.
+- **Single System Tray Icon & Task-Manager-Free Minimized Mode**:
+  - Uses KDE's native `StatusNotifierWatcher` protocol via `QSystemTrayIcon` so the system tray icon is always accessible.
+  - Hides the main window cleanly when minimized or closed to tray so you never get unwanted Task Manager entries when only the floating overlay or tray icon is active.
   - Supports `--minimized` / `--autostart` / `START_MINIMIZED=1` to launch silently in the tray on login.
 - **Tray Glucose Badge & Hover Tooltip**:
   - **Show Glucose Level in Tray Icon**: Dynamically renders a high-contrast color-coded glucose badge directly on the system tray icon.
   - **Show Glucose Details in Tray Hover Tooltip**: Displays patient name, current reading (`mg/dL` or `mmol/L`), trend arrow, range status, and last update timestamp when hovering the tray icon.
 - **12-Hour Interactive Glucose Graph**:
   - Interactive Canvas chart with target range bands and point hover inspection (displaying exact reading, status badge, and timestamp when hovering over any graph point).
-- **Floating Desktop Overlay Widget (with Dark Theme & Transparency)**:
-  - Borderless always-on-top desktop widget showing live blood sugar, trend arrow, and range status.
+- **Floating Desktop Overlay Widget (Persistent Screen, Position, State & Transparency)**:
+  - Borderless always-on-top desktop utility widget (`Qt::Tool`) showing live blood sugar, trend arrow, and range status without cluttering the KDE Task Manager.
+  - **Persistent Placement & State**: Automatically saves and restores the overlay's monitor (`QScreen`), coordinates, dimensions, visibility, and overlay-only mode across restarts, while clamping to screen bounds so it never overflows off-screen.
   - **Overlay Dark Theme**: Switch between a sleek dark slate card with color-coded status accents (`#0f172a`) or a classic full-status-color card—either from Settings, the Dashboard quick toggle, or directly on the overlay widget.
   - **Adjustable Overlay Transparency**: Configure opacity from `20%` to `100%` in Settings or by scrolling the mouse wheel directly over the floating overlay.
 - **AES-256-GCM Encrypted Credential Vault**:

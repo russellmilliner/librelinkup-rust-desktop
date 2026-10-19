@@ -9,7 +9,7 @@ Window {
     objectName: "librelinkupAboutWindow"
     title: qsTr("About LibreLinkUp Rust Desktop")
     width: 580
-    height: 490
+    height: 500
     minimumWidth: 480
     minimumHeight: 400
     visible: false
@@ -32,245 +32,262 @@ Window {
 
     ColumnLayout {
         anchors.fill: parent
-        anchors.margins: 16
-        spacing: 12
+        anchors.margins: 14
+        spacing: 10
 
-        Rectangle {
-            objectName: "aboutHeaderCard"
+        QQC2.ScrollView {
+            id: aboutScroll
+            implicitHeight: 0
             Layout.fillWidth: true
-            implicitHeight: headerCol.implicitHeight + 24
-            radius: 10
-            color: Kirigami.Theme.alternateBackgroundColor
-            border.color: Qt.alpha(Kirigami.Theme.textColor, 0.16)
-            border.width: 1
+            Layout.fillHeight: true
+            Layout.minimumHeight: 0
+            Layout.preferredHeight: 0
+            clip: true
+            contentWidth: availableWidth
 
             ColumnLayout {
-                id: headerCol
-                anchors.left: parent.left
-                anchors.right: parent.right
-                anchors.top: parent.top
-                anchors.margins: 12
-                spacing: 8
+                width: aboutScroll.availableWidth
+                spacing: 10
 
-                RowLayout {
+                Rectangle {
+                    objectName: "aboutHeaderCard"
                     Layout.fillWidth: true
-                    spacing: 10
+                    implicitHeight: headerCol.implicitHeight + 24
+                    radius: 10
+                    color: Kirigami.Theme.alternateBackgroundColor
+                    border.color: Qt.alpha(Kirigami.Theme.textColor, 0.16)
+                    border.width: 1
 
                     ColumnLayout {
-                        Layout.fillWidth: true
-                        spacing: 2
+                        id: headerCol
+                        anchors.left: parent.left
+                        anchors.right: parent.right
+                        anchors.top: parent.top
+                        anchors.margins: 12
+                        spacing: 8
 
-                        Kirigami.Heading {
-                            level: 2
-                            text: qsTr("LibreLinkUp Rust Desktop")
-                            font.bold: true
-                            color: Kirigami.Theme.textColor
+                        RowLayout {
                             Layout.fillWidth: true
-                            Layout.preferredWidth: 0
-                            wrapMode: Text.WordWrap
+                            spacing: 10
+
+                            ColumnLayout {
+                                Layout.fillWidth: true
+                                spacing: 2
+
+                                Kirigami.Heading {
+                                    level: 2
+                                    text: qsTr("LibreLinkUp Rust Desktop")
+                                    font.bold: true
+                                    color: Kirigami.Theme.textColor
+                                    Layout.fillWidth: true
+                                    Layout.preferredWidth: 0
+                                    wrapMode: Text.WordWrap
+                                }
+
+                                QQC2.Label {
+                                    text: qsTr("Version %1 • Native Rust + KDE Plasma 6 Kirigami").arg(aboutWindow.versionText)
+                                    font.bold: true
+                                    color: aboutWindow.isLightTheme ? "#0284c7" : "#38bdf8"
+                                    Layout.fillWidth: true
+                                    Layout.preferredWidth: 0
+                                    wrapMode: Text.WordWrap
+                                }
+                            }
+
+                            Rectangle {
+                                id: dialogKofiBtn
+                                objectName: "dialogKofiBtn"
+                                radius: 15
+                                color: dialogKofiMouse.containsMouse ? "#c81e1e" : "#d93834"
+                                border.color: "#ffffff33"
+                                border.width: 1
+                                implicitWidth: dialogKofiRow.implicitWidth + 20
+                                implicitHeight: 32
+
+                                RowLayout {
+                                    id: dialogKofiRow
+                                    anchors.centerIn: parent
+                                    spacing: 6
+
+                                    QQC2.Label {
+                                        text: "☕"
+                                        font.pointSize: 10.5
+                                    }
+
+                                    QQC2.Label {
+                                        text: qsTr("Buy Me a Coffee")
+                                        font.bold: true
+                                        font.pointSize: 9.5
+                                        color: "#ffffff"
+                                    }
+                                }
+
+                                MouseArea {
+                                    id: dialogKofiMouse
+                                    anchors.fill: parent
+                                    hoverEnabled: true
+                                    cursorShape: Qt.PointingHandCursor
+                                    onClicked: Qt.openUrlExternally("https://ko-fi.com/russellmilliner")
+                                }
+                            }
                         }
 
                         QQC2.Label {
-                            text: qsTr("Version %1 • Native Rust + KDE Plasma 6 Kirigami").arg(aboutWindow.versionText)
-                            font.bold: true
-                            color: aboutWindow.isLightTheme ? "#0284c7" : "#38bdf8"
+                            text: qsTr("Continuous blood glucose monitor for LibreLinkUp featuring AES-256-GCM encrypted credentials, KDE system tray badge & tooltip, interactive 12-hour CGM chart, and a customizable desktop overlay.")
+                            color: Kirigami.Theme.textColor
+                            opacity: 0.88
                             Layout.fillWidth: true
                             Layout.preferredWidth: 0
                             wrapMode: Text.WordWrap
                         }
                     }
+                }
 
-                    Rectangle {
-                        id: dialogKofiBtn
-                        objectName: "dialogKofiBtn"
-                        radius: 15
-                        color: dialogKofiMouse.containsMouse ? "#c81e1e" : "#d93834"
-                        border.color: "#ffffff33"
-                        border.width: 1
-                        implicitWidth: dialogKofiRow.implicitWidth + 20
-                        implicitHeight: 32
+                Rectangle {
+                    objectName: "aboutLinksCard"
+                    Layout.fillWidth: true
+                    implicitHeight: linksCol.implicitHeight + 24
+                    radius: 10
+                    color: Kirigami.Theme.alternateBackgroundColor
+                    border.color: Qt.alpha(Kirigami.Theme.textColor, 0.16)
+                    border.width: 1
+
+                    ColumnLayout {
+                        id: linksCol
+                        anchors.left: parent.left
+                        anchors.right: parent.right
+                        anchors.top: parent.top
+                        anchors.margins: 12
+                        spacing: 8
 
                         RowLayout {
-                            id: dialogKofiRow
-                            anchors.centerIn: parent
-                            spacing: 6
-
+                            Layout.fillWidth: true
+                            spacing: 8
                             QQC2.Label {
-                                text: "☕"
-                                font.pointSize: 10.5
-                            }
-
-                            QQC2.Label {
-                                text: qsTr("Buy Me a Coffee")
+                                text: qsTr("Author:")
                                 font.bold: true
-                                font.pointSize: 9.5
-                                color: "#ffffff"
+                                color: Kirigami.Theme.textColor
+                                Layout.preferredWidth: 130
+                            }
+                            QQC2.Label {
+                                text: "Russell Milliner (https://github.com/russellmilliner)"
+                                color: aboutWindow.isLightTheme ? "#0284c7" : "#38bdf8"
+                                font.underline: authorMouse.containsMouse
+                                Layout.fillWidth: true
+                                Layout.preferredWidth: 0
+                                elide: Text.ElideRight
+                                MouseArea {
+                                    id: authorMouse
+                                    anchors.fill: parent
+                                    hoverEnabled: true
+                                    cursorShape: Qt.PointingHandCursor
+                                    onClicked: Qt.openUrlExternally("https://github.com/russellmilliner")
+                                }
                             }
                         }
 
-                        MouseArea {
-                            id: dialogKofiMouse
-                            anchors.fill: parent
-                            hoverEnabled: true
-                            cursorShape: Qt.PointingHandCursor
-                            onClicked: Qt.openUrlExternally("https://ko-fi.com/russellmilliner")
+                        RowLayout {
+                            Layout.fillWidth: true
+                            spacing: 8
+                            QQC2.Label {
+                                text: qsTr("GitHub Repository:")
+                                font.bold: true
+                                color: Kirigami.Theme.textColor
+                                Layout.preferredWidth: 130
+                            }
+                            QQC2.Label {
+                                text: "https://github.com/russellmilliner/librelinkup-rust-desktop"
+                                color: aboutWindow.isLightTheme ? "#0284c7" : "#38bdf8"
+                                font.underline: repoMouse.containsMouse
+                                Layout.fillWidth: true
+                                Layout.preferredWidth: 0
+                                elide: Text.ElideRight
+                                MouseArea {
+                                    id: repoMouse
+                                    anchors.fill: parent
+                                    hoverEnabled: true
+                                    cursorShape: Qt.PointingHandCursor
+                                    onClicked: Qt.openUrlExternally("https://github.com/russellmilliner/librelinkup-rust-desktop")
+                                }
+                            }
                         }
-                    }
-                }
 
-                QQC2.Label {
-                    text: qsTr("Continuous blood glucose monitor for LibreLinkUp featuring AES-256-GCM encrypted credentials, KDE system tray badge & tooltip, interactive 12-hour CGM chart, and a customizable desktop overlay.")
-                    color: Kirigami.Theme.textColor
-                    opacity: 0.88
-                    Layout.fillWidth: true
-                    Layout.preferredWidth: 0
-                    wrapMode: Text.WordWrap
-                }
-            }
-        }
-
-        Rectangle {
-            objectName: "aboutLinksCard"
-            Layout.fillWidth: true
-            Layout.fillHeight: true
-            radius: 10
-            color: Kirigami.Theme.alternateBackgroundColor
-            border.color: Qt.alpha(Kirigami.Theme.textColor, 0.16)
-            border.width: 1
-
-            ColumnLayout {
-                anchors.left: parent.left
-                anchors.right: parent.right
-                anchors.top: parent.top
-                anchors.margins: 12
-                spacing: 8
-
-                RowLayout {
-                    Layout.fillWidth: true
-                    spacing: 8
-                    QQC2.Label {
-                        text: qsTr("Author:")
-                        font.bold: true
-                        color: Kirigami.Theme.textColor
-                        Layout.preferredWidth: 130
-                    }
-                    QQC2.Label {
-                        text: "Russell Milliner (https://github.com/russellmilliner)"
-                        color: aboutWindow.isLightTheme ? "#0284c7" : "#38bdf8"
-                        font.underline: authorMouse.containsMouse
-                        Layout.fillWidth: true
-                        Layout.preferredWidth: 0
-                        elide: Text.ElideRight
-                        MouseArea {
-                            id: authorMouse
-                            anchors.fill: parent
-                            hoverEnabled: true
-                            cursorShape: Qt.PointingHandCursor
-                            onClicked: Qt.openUrlExternally("https://github.com/russellmilliner")
+                        RowLayout {
+                            Layout.fillWidth: true
+                            spacing: 8
+                            QQC2.Label {
+                                text: qsTr("Ko-fi Support:")
+                                font.bold: true
+                                color: Kirigami.Theme.textColor
+                                Layout.preferredWidth: 130
+                            }
+                            QQC2.Label {
+                                text: "https://ko-fi.com/russellmilliner"
+                                color: aboutWindow.isLightTheme ? "#0284c7" : "#38bdf8"
+                                font.underline: kofiLinkMouse.containsMouse
+                                Layout.fillWidth: true
+                                Layout.preferredWidth: 0
+                                elide: Text.ElideRight
+                                MouseArea {
+                                    id: kofiLinkMouse
+                                    anchors.fill: parent
+                                    hoverEnabled: true
+                                    cursorShape: Qt.PointingHandCursor
+                                    onClicked: Qt.openUrlExternally("https://ko-fi.com/russellmilliner")
+                                }
+                            }
                         }
-                    }
-                }
 
-                RowLayout {
-                    Layout.fillWidth: true
-                    spacing: 8
-                    QQC2.Label {
-                        text: qsTr("GitHub Repository:")
-                        font.bold: true
-                        color: Kirigami.Theme.textColor
-                        Layout.preferredWidth: 130
-                    }
-                    QQC2.Label {
-                        text: "https://github.com/russellmilliner/librelinkup-rust-desktop"
-                        color: aboutWindow.isLightTheme ? "#0284c7" : "#38bdf8"
-                        font.underline: repoMouse.containsMouse
-                        Layout.fillWidth: true
-                        Layout.preferredWidth: 0
-                        elide: Text.ElideRight
-                        MouseArea {
-                            id: repoMouse
-                            anchors.fill: parent
-                            hoverEnabled: true
-                            cursorShape: Qt.PointingHandCursor
-                            onClicked: Qt.openUrlExternally("https://github.com/russellmilliner/librelinkup-rust-desktop")
+                        RowLayout {
+                            Layout.fillWidth: true
+                            spacing: 8
+                            QQC2.Label {
+                                text: qsTr("License:")
+                                font.bold: true
+                                color: Kirigami.Theme.textColor
+                                Layout.preferredWidth: 130
+                            }
+                            QQC2.Label {
+                                text: "Apache License 2.0 (https://www.apache.org/licenses/LICENSE-2.0)"
+                                color: aboutWindow.isLightTheme ? "#0284c7" : "#38bdf8"
+                                font.underline: licenseMouse.containsMouse
+                                Layout.fillWidth: true
+                                Layout.preferredWidth: 0
+                                elide: Text.ElideRight
+                                MouseArea {
+                                    id: licenseMouse
+                                    anchors.fill: parent
+                                    hoverEnabled: true
+                                    cursorShape: Qt.PointingHandCursor
+                                    onClicked: Qt.openUrlExternally("https://www.apache.org/licenses/LICENSE-2.0")
+                                }
+                            }
                         }
-                    }
-                }
 
-                RowLayout {
-                    Layout.fillWidth: true
-                    spacing: 8
-                    QQC2.Label {
-                        text: qsTr("Ko-fi Support:")
-                        font.bold: true
-                        color: Kirigami.Theme.textColor
-                        Layout.preferredWidth: 130
-                    }
-                    QQC2.Label {
-                        text: "https://ko-fi.com/russellmilliner"
-                        color: aboutWindow.isLightTheme ? "#0284c7" : "#38bdf8"
-                        font.underline: kofiLinkMouse.containsMouse
-                        Layout.fillWidth: true
-                        Layout.preferredWidth: 0
-                        elide: Text.ElideRight
-                        MouseArea {
-                            id: kofiLinkMouse
-                            anchors.fill: parent
-                            hoverEnabled: true
-                            cursorShape: Qt.PointingHandCursor
-                            onClicked: Qt.openUrlExternally("https://ko-fi.com/russellmilliner")
-                        }
-                    }
-                }
-
-                RowLayout {
-                    Layout.fillWidth: true
-                    spacing: 8
-                    QQC2.Label {
-                        text: qsTr("License:")
-                        font.bold: true
-                        color: Kirigami.Theme.textColor
-                        Layout.preferredWidth: 130
-                    }
-                    QQC2.Label {
-                        text: "Apache License 2.0 (https://www.apache.org/licenses/LICENSE-2.0)"
-                        color: aboutWindow.isLightTheme ? "#0284c7" : "#38bdf8"
-                        font.underline: licenseMouse.containsMouse
-                        Layout.fillWidth: true
-                        Layout.preferredWidth: 0
-                        elide: Text.ElideRight
-                        MouseArea {
-                            id: licenseMouse
-                            anchors.fill: parent
-                            hoverEnabled: true
-                            cursorShape: Qt.PointingHandCursor
-                            onClicked: Qt.openUrlExternally("https://www.apache.org/licenses/LICENSE-2.0")
-                        }
-                    }
-                }
-
-                RowLayout {
-                    Layout.fillWidth: true
-                    spacing: 8
-                    QQC2.Label {
-                        text: qsTr("Attribution:")
-                        font.bold: true
-                        color: Kirigami.Theme.textColor
-                        Layout.preferredWidth: 130
-                    }
-                    QQC2.Label {
-                        text: "Based on Crazy-Marvin/LibreLinkUpDesktop (Apache-2.0)"
-                        color: aboutWindow.isLightTheme ? "#0284c7" : "#38bdf8"
-                        font.underline: upstreamMouse.containsMouse
-                        Layout.fillWidth: true
-                        Layout.preferredWidth: 0
-                        elide: Text.ElideRight
-                        MouseArea {
-                            id: upstreamMouse
-                            anchors.fill: parent
-                            hoverEnabled: true
-                            cursorShape: Qt.PointingHandCursor
-                            onClicked: Qt.openUrlExternally("https://github.com/Crazy-Marvin/LibreLinkUpDesktop")
+                        RowLayout {
+                            Layout.fillWidth: true
+                            spacing: 8
+                            QQC2.Label {
+                                text: qsTr("Attribution:")
+                                font.bold: true
+                                color: Kirigami.Theme.textColor
+                                Layout.preferredWidth: 130
+                            }
+                            QQC2.Label {
+                                text: "Based on Crazy-Marvin/LibreLinkUpDesktop (Apache-2.0)"
+                                color: aboutWindow.isLightTheme ? "#0284c7" : "#38bdf8"
+                                font.underline: upstreamMouse.containsMouse
+                                Layout.fillWidth: true
+                                Layout.preferredWidth: 0
+                                elide: Text.ElideRight
+                                MouseArea {
+                                    id: upstreamMouse
+                                    anchors.fill: parent
+                                    hoverEnabled: true
+                                    cursorShape: Qt.PointingHandCursor
+                                    onClicked: Qt.openUrlExternally("https://github.com/Crazy-Marvin/LibreLinkUpDesktop")
+                                }
+                            }
                         }
                     }
                 }

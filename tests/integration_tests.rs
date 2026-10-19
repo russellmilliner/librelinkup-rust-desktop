@@ -210,8 +210,12 @@ fn test_glucose_conversion_settings_persistence_and_alerts() {
     );
 
     let default_settings = AppSettings::default();
+    assert!(!default_settings.overlay_visible);
+    assert!(!default_settings.overlay_only_mode);
     assert!(default_settings.overlay_dark_theme);
     assert_eq!(default_settings.overlay_opacity_percent, 88);
+    assert_eq!(default_settings.overlay_x, -1);
+    assert_eq!(default_settings.overlay_y, -1);
 
     let settings = AppSettings {
         theme_mode: "dark".to_string(),
@@ -221,8 +225,15 @@ fn test_glucose_conversion_settings_persistence_and_alerts() {
         override_threshold: true,
         custom_target_low: 80.0,
         custom_target_high: 160.0,
+        overlay_visible: true,
+        overlay_only_mode: true,
         overlay_dark_theme: false,
         overlay_opacity_percent: 65,
+        overlay_screen_name: "DP-2".to_string(),
+        overlay_x: 1420,
+        overlay_y: 48,
+        overlay_width: 280,
+        overlay_height: 92,
         ..Default::default()
     };
     assert!(settings.should_trigger_alert(75.0, 70.0, 180.0));
@@ -234,8 +245,15 @@ fn test_glucose_conversion_settings_persistence_and_alerts() {
     save_settings_to_path(&settings, &settings_path).unwrap();
     let loaded_settings = load_settings_from_path(&settings_path);
     assert_eq!(loaded_settings, settings);
+    assert!(loaded_settings.overlay_visible);
+    assert!(loaded_settings.overlay_only_mode);
     assert!(!loaded_settings.overlay_dark_theme);
     assert_eq!(loaded_settings.overlay_opacity_percent, 65);
+    assert_eq!(loaded_settings.overlay_screen_name, "DP-2");
+    assert_eq!(loaded_settings.overlay_x, 1420);
+    assert_eq!(loaded_settings.overlay_y, 48);
+    assert_eq!(loaded_settings.overlay_width, 280);
+    assert_eq!(loaded_settings.overlay_height, 92);
     let _ = std::fs::remove_file(&settings_path);
 }
 

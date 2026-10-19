@@ -309,6 +309,8 @@ Kirigami.ApplicationWindow {
             objectName: "dashboardContainer"
             Layout.fillWidth: true
             Layout.fillHeight: true
+            Layout.minimumHeight: 0
+            Layout.preferredHeight: 0
             visible: root.activeTab === "dashboard"
 
             // Login Card when not signed in
@@ -990,7 +992,6 @@ Kirigami.ApplicationWindow {
                                             font.bold: true
                                             color: glucoseCanvas.hoveredColorHex
                                             Layout.fillWidth: true
-                                            Layout.preferredWidth: 0
                                             elide: Text.ElideRight
                                         }
                                     }
@@ -1002,7 +1003,6 @@ Kirigami.ApplicationWindow {
                                         opacity: 0.85
                                         color: Kirigami.Theme.textColor
                                         Layout.fillWidth: true
-                                        Layout.preferredWidth: 0
                                         elide: Text.ElideRight
                                     }
                                 }
@@ -1162,8 +1162,11 @@ Kirigami.ApplicationWindow {
         QQC2.ScrollView {
             id: generalScrollView
             objectName: "generalScrollView"
+            implicitHeight: 0
             Layout.fillWidth: true
             Layout.fillHeight: true
+            Layout.minimumHeight: 0
+            Layout.preferredHeight: 0
             visible: root.activeTab === "general"
             clip: true
             contentWidth: availableWidth
@@ -1391,8 +1394,11 @@ Kirigami.ApplicationWindow {
         QQC2.ScrollView {
             id: alertsScrollView
             objectName: "alertsScrollView"
+            implicitHeight: 0
             Layout.fillWidth: true
             Layout.fillHeight: true
+            Layout.minimumHeight: 0
+            Layout.preferredHeight: 0
             visible: root.activeTab === "alerts"
             clip: true
             contentWidth: availableWidth
@@ -1552,8 +1558,11 @@ Kirigami.ApplicationWindow {
         QQC2.ScrollView {
             id: accountScrollView
             objectName: "accountScrollView"
+            implicitHeight: 0
             Layout.fillWidth: true
             Layout.fillHeight: true
+            Layout.minimumHeight: 0
+            Layout.preferredHeight: 0
             visible: root.activeTab === "account"
             clip: true
             contentWidth: availableWidth

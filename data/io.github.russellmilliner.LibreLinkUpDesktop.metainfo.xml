@@ -28,11 +28,11 @@
   </branding>
   <screenshots>
     <screenshot type="default">
-      <image>https://raw.githubusercontent.com/russellmilliner/librelinkup-rust-desktop/v0.2.0/docs/screenshots/app-dashboard.png</image>
+      <image>https://raw.githubusercontent.com/russellmilliner/librelinkup-rust-desktop/v0.3.0/docs/screenshots/app-dashboard.png</image>
       <caption>Live blood glucose dashboard and 12-hour interactive trend graph</caption>
     </screenshot>
     <screenshot>
-      <image>https://raw.githubusercontent.com/russellmilliner/librelinkup-rust-desktop/v0.2.0/docs/screenshots/app-settings.png</image>
+      <image>https://raw.githubusercontent.com/russellmilliner/librelinkup-rust-desktop/v0.3.0/docs/screenshots/app-settings.png</image>
       <caption>Appearance, system tray badge, and floating desktop overlay settings</caption>
     </screenshot>
   </screenshots>
@@ -42,6 +42,20 @@
   <url type="donation">https://ko-fi.com/russellmilliner</url>
   <content_rating type="oars-1.1" />
   <releases>
+    <release version="0.3.0" date="2026-10-19">
+      <description>
+        <p>Safety, reliability and Flatpak sandboxing improvements.</p>
+        <ul>
+          <li>Stale-reading detection: readings show their age and turn gray when no new data arrives, with an optional signal-loss alert</li>
+          <li>New alert engine with an urgent-low threshold, configurable repeat interval and snooze</li>
+          <li>Audible built-in alarm sound and desktop notifications for alerts</li>
+          <li>Network requests no longer freeze the window</li>
+          <li>Settings and credentials are stored in the Flatpak sandbox, and login autostart uses the Background portal</li>
+          <li>Credentials are no longer passed on command lines</li>
+          <li>The header adapts to larger desktop fonts</li>
+        </ul>
+      </description>
+    </release>
     <release version="0.2.0" date="2026-10-19">
       <description>
         <p>Added persistent multi-monitor overlay placement, task-manager-free floating overlay mode, strict layout overflow guards, and updated documentation.</p>

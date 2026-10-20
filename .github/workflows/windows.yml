@@ -82,6 +82,7 @@ jobs:
           $stage = "windows/dist/portable"
           New-Item -ItemType Directory -Force -Path $stage | Out-Null
           Copy-Item windows/target/release/LibreLinkUp.exe $stage/
+          Copy-Item windows/README.md "$stage/README.md"
           Copy-Item LICENSE "$stage/LICENSE.txt"
           Copy-Item NOTICE "$stage/NOTICE.txt"
           Compress-Archive -Path "$stage/*" -DestinationPath "windows/dist/LibreLinkUp-$v-windows-x64-portable.zip" -Force

@@ -68,9 +68,10 @@ fi
 
 echo "==> Packaging portable zip"
 cp "$EXE" "$DIST/portable/LibreLinkUp.exe"
+cp "$WIN_DIR/README.md" "$DIST/portable/README.md"
 cp "$REPO_ROOT/LICENSE" "$DIST/portable/LICENSE.txt"
 cp "$REPO_ROOT/NOTICE" "$DIST/portable/NOTICE.txt"
-(cd "$DIST/portable" && zip -q -9 "../LibreLinkUp-$VERSION-windows-x64-portable.zip" LibreLinkUp.exe LICENSE.txt NOTICE.txt)
+(cd "$DIST/portable" && zip -q -9 "../LibreLinkUp-$VERSION-windows-x64-portable.zip" LibreLinkUp.exe README.md LICENSE.txt NOTICE.txt)
 rm -rf "$DIST/portable"
 
 (cd "$DIST" && for f in *.exe *.zip; do [[ -f "$f" ]] && sha256sum "$f" > "$f.sha256"; done)

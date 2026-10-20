@@ -2,8 +2,9 @@ LibreLinkUp Rust Desktop
 Copyright 2026 Russell Milliner (https://github.com/russellmilliner)
 Repository: https://github.com/russellmilliner/librelinkup-rust-desktop
 
-This software is a native Rust + Qt 6 / KDE Plasma 6 Kirigami rewrite based on
-and inspired by LibreLinkUpDesktop:
+This software is a native Rust desktop rewrite (Qt 6 / KDE Plasma 6 Kirigami on
+Linux and eframe / egui on Windows 10/11) based on and inspired by
+LibreLinkUpDesktop:
   - Project: LibreLinkUpDesktop (https://github.com/Crazy-Marvin/LibreLinkUpDesktop)
   - Original Author: Crazy-Marvin (https://github.com/Crazy-Marvin) and contributors
   - Original License: Apache License, Version 2.0 (http://www.apache.org/licenses/LICENSE-2.0)

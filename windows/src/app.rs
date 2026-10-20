@@ -826,14 +826,21 @@ fn glucose_graph(ui: &mut egui::Ui, state: &Shared) {
 
 fn about_view(ui: &mut egui::Ui) {
     ui.heading("LibreLinkUp Rust Desktop for Windows");
-    ui.label(format!("Version {}", env!("CARGO_PKG_VERSION")));
+    ui.label(format!("Version {} • Native Rust + egui/eframe (Windows 10/11 x64)", env!("CARGO_PKG_VERSION")));
     ui.add_space(8.0);
-    ui.label("Native Rust desktop client for monitoring LibreLinkUp continuous glucose readings.");
+    ui.label(
+        "Continuous blood glucose monitor for LibreLinkUp featuring Windows DPAPI + AES-256-GCM \
+         encrypted credentials, system tray glucose badge & tooltip, interactive 12-hour CGM chart, \
+         stale-reading & urgent-low/snooze alert engine, and an always-on-top desktop overlay \
+         with scroll-wheel transparency and quick action buttons.",
+    );
     ui.add_space(8.0);
     ui.label(RichText::new("Unofficial app — not affiliated with or endorsed by Abbott. LibreLinkUp is a trademark of Abbott.").weak());
     ui.label(RichText::new("Not a medical device. Do not use for treatment decisions.").weak());
     ui.add_space(8.0);
     ui.hyperlink_to("GitHub: russellmilliner/librelinkup-rust-desktop", "https://github.com/russellmilliner/librelinkup-rust-desktop");
+    ui.hyperlink_to("Windows Documentation (windows/README.md)", "https://github.com/russellmilliner/librelinkup-rust-desktop/blob/main/windows/README.md");
+    ui.hyperlink_to("Based on Crazy-Marvin/LibreLinkUpDesktop (Apache-2.0)", "https://github.com/Crazy-Marvin/LibreLinkUpDesktop");
     ui.hyperlink_to("☕ Support on Ko-fi", "https://ko-fi.com/russellmilliner");
     ui.add_space(8.0);
     ui.label("Licensed under the Apache License 2.0.");

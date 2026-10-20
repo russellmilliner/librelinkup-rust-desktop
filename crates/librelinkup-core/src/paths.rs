@@ -199,6 +199,7 @@ mod tests {
     use super::*;
 
     #[test]
+    #[cfg(unix)] // XDG resolution is Linux-only; "/home/u" is not absolute on Windows
     fn xdg_base_uses_absolute_env_value() {
         let home = Path::new("/home/u");
         assert_eq!(
@@ -208,6 +209,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg(unix)] // XDG resolution is Linux-only; "/home/u" is not absolute on Windows
     fn xdg_base_falls_back_for_unset_empty_or_relative() {
         let home = Path::new("/home/u");
         let expected = PathBuf::from("/home/u/.config");

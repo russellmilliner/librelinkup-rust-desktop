@@ -1,9 +1,8 @@
-pub mod alert_sound;
-pub mod api;
+//! KDE Plasma 6 front-end. Platform-independent logic lives in `librelinkup-core`
+//! (re-exported here so `crate::api`, `crate::models`, … keep working).
+
+pub use librelinkup_core::{alert_sound, api, crypto, event_log, models, paths};
+
 pub mod bridge {
     pub mod app_controller;
 }
-pub mod crypto;
-pub mod event_log;
-pub mod models;
-pub mod paths;

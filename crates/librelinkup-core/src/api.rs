@@ -179,7 +179,15 @@ fn run_curl_blocking(method: &str, url: &str, secret_config: &str) -> Result<Str
     use std::io::Write;
     use std::process::Stdio;
 
-    let mut child = Command::new("curl")
+    let mut cmd = Command::new("curl");
+    #[cfg(windows)]
+    {
+        // GUI app: don't flash a console window for the curl fallback.
+        use std::os::windows::process::CommandExt;
+        const CREATE_NO_WINDOW: u32 = 0x0800_0000;
+        cmd.creation_flags(CREATE_NO_WINDOW);
+    }
+    let mut child = cmd
         .arg("-s")
         .arg("-S")
         .arg("--proto")

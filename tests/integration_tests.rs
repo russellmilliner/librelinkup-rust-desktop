@@ -1,17 +1,17 @@
-use librelinkup_core::api::{
+use librelinkup_kde::api::{
     authenticate_async, fetch_cgm_snapshot_async, normalize_country_code, resolve_base_url,
     sha256_account_id, ApiError,
 };
-use librelinkup_core::crypto::{
+use librelinkup_kde::crypto::{
     bytes_to_hex, decrypt_credentials_with_secret, encrypt_credentials_with_secret, hex_to_bytes,
     load_credentials_from_path, save_credentials_to_path, try_migrate_legacy_leveldb_credentials,
     StoredCredentials,
 };
-use librelinkup_core::event_log::{
+use librelinkup_kde::event_log::{
     clear_events, export_events_to_path, filter_events, format_events_as_text, get_all_events,
     get_event_count, get_events_json, log_error, log_info, log_warn,
 };
-use librelinkup_core::models::{
+use librelinkup_kde::models::{
     convert_mg_dl_to_unit, format_glucose_value, format_target_range, load_settings_from_path,
     save_settings_to_path, trend_arrow_description, trend_arrow_symbol, AppSettings,
     GlucoseRangeStatus, GlucoseSnapshot, GraphPoint,
@@ -481,7 +481,7 @@ fn test_live_libreview_waf_no_403_forbidden() {
         // Must return InvalidCredentials (HTTP 200 with {"status":2}), NEVER ServerError(403, ...)
         assert_eq!(res, Err(ApiError::InvalidCredentials));
 
-        let ldb_dir = librelinkup_core::paths::legacy_flatpak_leveldb_dir();
+        let ldb_dir = librelinkup_kde::paths::legacy_flatpak_leveldb_dir();
         if let Some(creds) = try_migrate_legacy_leveldb_credentials(&ldb_dir) {
             println!("Migrated creds country={} account_id={}", creds.country, creds.account_id);
             let snap_res = fetch_cgm_snapshot_async(&creds.country, &creds.token, &creds.account_id).await;
@@ -500,7 +500,7 @@ fn test_qml_ui_layout_no_box_or_window_overflow() {
     std::env::set_var("LIBRELINKUP_DATA_DIR", &dir);
 
     let report =
-        librelinkup_core::bridge::app_controller::qobject::librelinkup_run_ui_overflow_tests()
+        librelinkup_kde::bridge::app_controller::qobject::librelinkup_run_ui_overflow_tests()
             .to_string();
     let _ = std::fs::remove_dir_all(&dir);
 

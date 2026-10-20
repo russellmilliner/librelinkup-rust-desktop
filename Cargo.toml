@@ -8,7 +8,7 @@ homepage = "https://github.com/russellmilliner/librelinkup-rust-desktop"
 repository = "https://github.com/russellmilliner/librelinkup-rust-desktop"
 
 [lib]
-name = "librelinkup_core"
+name = "librelinkup_kde"
 path = "src/lib.rs"
 
 [[bin]]
@@ -16,6 +16,9 @@ name = "librelinkup-kde"
 path = "src/main.rs"
 
 [dependencies]
+# Shared platform-independent core (API client, crypto, models, alerts)
+librelinkup-core = { path = "crates/librelinkup-core" }
+
 # Qt 6 / QML Bridge (KDAB CXX-Qt)
 cxx = "1.0.130"
 cxx-qt = "0.7.2"

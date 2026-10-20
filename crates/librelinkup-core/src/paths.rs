@@ -1,17 +1,27 @@
+#![cfg_attr(windows, allow(dead_code, unused_imports))]
+
 use std::env;
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::sync::Once;
 
 pub const APP_ID: &str = "io.github.russellmilliner.LibreLinkUpDesktop";
+#[cfg(not(windows))]
 pub const APP_DIR_NAME: &str = "librelinkup-kde";
+/// Windows: %APPDATA%\LibreLinkUpDesktop (config) and %LOCALAPPDATA%\LibreLinkUpDesktop (data).
+#[cfg(windows)]
+pub const APP_DIR_NAME: &str = "LibreLinkUpDesktop";
 
 /// Files migrated (copied, never moved) from the legacy `~/.config/librelinkup-kde`
 /// directory into the XDG config directory on first run.
 const LEGACY_CONFIG_FILES: &[&str] = &["settings.json", "credentials.enc.json", "master.key"];
 
 fn home_dir() -> PathBuf {
-    env::var("HOME")
+    #[cfg(windows)]
+    let var = "USERPROFILE";
+    #[cfg(not(windows))]
+    let var = "HOME";
+    env::var(var)
         .ok()
         .filter(|s| !s.trim().is_empty())
         .map(PathBuf::from)
@@ -70,6 +80,14 @@ pub fn config_dir() -> PathBuf {
         let _ = fs::create_dir_all(&p);
         return p;
     }
+    #[cfg(windows)]
+    {
+        let dir = windows_known_dir("APPDATA", "AppData\\Roaming").join(APP_DIR_NAME);
+        let _ = fs::create_dir_all(&dir);
+        dir
+    }
+    #[cfg(not(windows))]
+    {
     // XDG_CONFIG_HOME is ~/.config on the host and ~/.var/app/<APP_ID>/config inside
     // Flatpak, so the sandboxed build persists data without any host filesystem access.
     let base = resolve_xdg_base(
@@ -93,6 +111,24 @@ pub fn config_dir() -> PathBuf {
         }
     });
     dir
+    }
+}
+
+/// Windows known folder from its environment variable, falling back to
+/// `%USERPROFILE%\<fallback_rel>` (or the temp dir) if unset.
+#[cfg(windows)]
+fn windows_known_dir(var: &str, fallback_rel: &str) -> PathBuf {
+    env::var(var)
+        .ok()
+        .filter(|s| !s.trim().is_empty())
+        .map(PathBuf::from)
+        .or_else(|| {
+            env::var("USERPROFILE")
+                .ok()
+                .filter(|s| !s.trim().is_empty())
+                .map(|p| PathBuf::from(p).join(fallback_rel))
+        })
+        .unwrap_or_else(env::temp_dir)
 }
 
 pub fn data_dir() -> PathBuf {
@@ -100,6 +136,9 @@ pub fn data_dir() -> PathBuf {
         let _ = fs::create_dir_all(&p);
         return p;
     }
+    #[cfg(windows)]
+    let base = windows_known_dir("LOCALAPPDATA", "AppData\\Local");
+    #[cfg(not(windows))]
     let base = resolve_xdg_base(
         env::var("XDG_DATA_HOME").ok().as_deref(),
         &home_dir(),

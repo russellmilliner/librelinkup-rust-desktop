@@ -187,6 +187,9 @@ pub fn decrypt_credentials_with_secret(
 }
 
 fn set_owner_only_permissions(path: &Path) {
+    // Windows: %APPDATA% is already restricted to the user by its ACL.
+    #[cfg(not(unix))]
+    let _ = path;
     #[cfg(unix)]
     {
         use std::os::unix::fs::PermissionsExt;
@@ -247,6 +250,40 @@ pub fn save_credentials_to_path(
         .map_err(|e| format!("Failed to write encrypted credentials file: {e}"))?;
     set_owner_only_permissions(creds_path);
     Ok(())
+}
+
+/// Encrypts and saves credentials using a caller-supplied master secret (e.g. a key
+/// protected by Windows DPAPI) instead of the file + machine-id derived secret.
+pub fn save_credentials_with_secret(
+    creds: &StoredCredentials,
+    creds_path: &Path,
+    master_secret: &[u8],
+) -> Result<(), String> {
+    let envelope = encrypt_credentials_with_secret(creds, master_secret)?;
+    if let Some(parent) = creds_path.parent() {
+        let _ = fs::create_dir_all(parent);
+    }
+    let serialized = serde_json::to_string_pretty(&envelope)
+        .map_err(|e| format!("Failed to serialize encrypted envelope: {e}"))?;
+    fs::write(creds_path, serialized)
+        .map_err(|e| format!("Failed to write encrypted credentials file: {e}"))?;
+    set_owner_only_permissions(creds_path);
+    Ok(())
+}
+
+/// Loads and decrypts credentials using a caller-supplied master secret.
+pub fn load_credentials_with_secret(
+    creds_path: &Path,
+    master_secret: &[u8],
+) -> Result<Option<StoredCredentials>, String> {
+    if !creds_path.exists() {
+        return Ok(None);
+    }
+    let raw = fs::read_to_string(creds_path)
+        .map_err(|e| format!("Failed to read encrypted credentials file: {e}"))?;
+    let envelope: EncryptedEnvelope = serde_json::from_str(&raw)
+        .map_err(|e| format!("Corrupted encrypted credentials envelope: {e}"))?;
+    decrypt_credentials_with_secret(&envelope, master_secret).map(Some)
 }
 
 pub fn load_credentials_from_path(

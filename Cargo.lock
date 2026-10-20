@@ -806,6 +806,19 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "65cd87c9a6d60536580b316ad985726104730a5151c99845f2490428ef91240a"
 
 [[package]]
+name = "librelinkup-core"
+version = "0.3.0"
+dependencies = [
+ "chrono",
+ "reqwest",
+ "ring",
+ "serde",
+ "serde_json",
+ "tokio",
+ "zeroize",
+]
+
+[[package]]
 name = "librelinkup-kde"
 version = "0.3.0"
 dependencies = [
@@ -814,6 +827,7 @@ dependencies = [
  "cxx-qt",
  "cxx-qt-build",
  "cxx-qt-lib",
+ "librelinkup-core",
  "reqwest",
  "ring",
  "serde",

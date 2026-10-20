@@ -11,7 +11,7 @@ use std::path::{Path, PathBuf};
 
 use crate::paths::default_alert_sound_path;
 
-const SAMPLE_RATE: u32 = 44_100;
+pub const SAMPLE_RATE: u32 = 44_100;
 const TONE_HZ: f64 = 880.0;
 const BEEP_SECS: f64 = 0.16;
 const GAP_SECS: f64 = 0.08;

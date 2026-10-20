@@ -1,0 +1,42 @@
+[package]
+name = "librelinkup-windows"
+version = "0.3.0"
+edition = "2021"
+license = "Apache-2.0"
+description = "LibreLinkUp Rust Desktop for Windows — blood glucose monitor for LibreLinkUp"
+repository = "https://github.com/russellmilliner/librelinkup-rust-desktop"
+publish = false
+build = "build.rs"
+
+# Standalone package (own Cargo.lock) so the Linux/Flathub build never vendors
+# Windows-only GUI dependencies.
+[workspace]
+
+[[bin]]
+name = "LibreLinkUp"
+path = "src/main.rs"
+
+[dependencies]
+ab_glyph = "0.2.32"
+chrono = "0.4.45"
+eframe = { version = "0.37.0", default-features = false, features = ["default_fonts", "glow", "wgpu", "persistence", "accesskit", "clipboard", "links"] }
+egui = { version = "0.37", features = ["monochrome_emoji_fonts"] }
+epaint_default_fonts = "0.37"
+librelinkup-core = { path = "../crates/librelinkup-core" }
+notify-rust = "4.18.2"
+raw-window-handle = "0.6"
+rfd = "0.17.2"
+rodio = { version = "0.23.0", default-features = false, features = ["playback", "wav", "mp3", "vorbis"] }
+serde_json = "1.0.154"
+tokio = { version = "1.54.0", features = ["rt-multi-thread", "macros", "sync", "time"] }
+tray-icon = "0.26.1"
+windows-sys = { version = "0.61.2", features = ["Win32_Foundation", "Win32_Security_Cryptography", "Win32_System_Registry", "Win32_System_Threading", "Win32_System_Console", "Win32_UI_WindowsAndMessaging", "Win32_UI_Shell", "Win32_System_Memory"] }
+zeroize = "1.9.1"
+
+[profile.release]
+lto = "thin"
+codegen-units = 4
+strip = true
+
+[build-dependencies]
+winresource = "0.1.34"

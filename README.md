@@ -19,7 +19,8 @@ A native **Rust + Qt 6 / KDE Plasma 6 Kirigami** desktop application for monitor
 | **Current Version** | [**v0.3.0** (GitHub Release)](https://github.com/russellmilliner/librelinkup-rust-desktop/releases/tag/v0.3.0) • [All Releases](https://github.com/russellmilliner/librelinkup-rust-desktop/releases) |
 | **Flatpak Bundle (`x86_64`)** | [**`librelinkup-rust-desktop-v0.3.0-x86_64.flatpak`**](https://github.com/russellmilliner/librelinkup-rust-desktop/releases/download/v0.3.0/librelinkup-rust-desktop-v0.3.0-x86_64.flatpak) ([SHA-256](https://github.com/russellmilliner/librelinkup-rust-desktop/releases/download/v0.3.0/librelinkup-rust-desktop-v0.3.0-x86_64.flatpak.sha256)) |
 | **Flatpak Runtime** | [`org.kde.Platform//6.11`](https://flathub.org/) via [Flatpak](https://flatpak.org/) |
-| **Supported Platforms** | [Linux (`x86_64`)](https://www.kernel.org/) • [KDE Plasma 6](https://kde.org/plasma-desktop/) ([Kirigami](https://develop.kde.org/frameworks/kirigami/) / [Qt 6](https://www.qt.io/)) |
+| **Supported Platforms** | [Linux (`x86_64`)](https://www.kernel.org/) • [KDE Plasma 6](https://kde.org/plasma-desktop/) ([Kirigami](https://develop.kde.org/frameworks/kirigami/) / [Qt 6](https://www.qt.io/)) • **Windows 10/11 (`x64`)** ([egui](https://github.com/emilk/egui)) |
+| **Windows Downloads** | `LibreLinkUp-Setup-<version>-x64.exe` (installer) and `LibreLinkUp-<version>-windows-x64-portable.zip` on the [Releases page](https://github.com/russellmilliner/librelinkup-rust-desktop/releases) |
 | **Core Stack** | [Rust](https://www.rust-lang.org/) + [KDAB CXX-Qt](https://github.com/KDAB/cxx-qt) + [Ring (AES-256-GCM)](https://github.com/briansmith/ring) |
 
 ### Quick Flatpak Install (from GitHub Release)
@@ -29,6 +30,14 @@ curl -LO https://github.com/russellmilliner/librelinkup-rust-desktop/releases/do
 flatpak install --user -y librelinkup-rust-desktop-v0.3.0-x86_64.flatpak
 flatpak run io.github.russellmilliner.LibreLinkUpDesktop
 ```
+
+### Windows 10 / 11
+
+Download **`LibreLinkUp-Setup-<version>-x64.exe`** from the [Releases page](https://github.com/russellmilliner/librelinkup-rust-desktop/releases) and run it. It installs for the current user (no administrator prompt), adds a Start Menu shortcut and can start the app at sign-in, minimized to the tray. A **portable zip** is also available.
+
+The installer is not code-signed yet, so Windows SmartScreen may warn "Windows protected your PC". Click **More info → Run anyway**.
+
+The Windows app has the same features as the KDE version: live dashboard and 12-hour graph, tray badge, floating always-on-top overlay, stale-reading detection, urgent-low/repeat/snooze alerts with an alarm sound and Windows notifications. Credentials are stored with AES-256-GCM, and the key is protected by **Windows DPAPI** (bound to your Windows account). Data lives in `%APPDATA%\LibreLinkUpDesktop` and `%LOCALAPPDATA%\LibreLinkUpDesktop`.
 
 ---
 
@@ -109,6 +118,32 @@ cargo build --release
 ./target/release/librelinkup-kde
 ./target/release/librelinkup-kde --minimized
 ```
+
+## Project Layout
+
+| Path | Contents |
+| :--- | :--- |
+| `crates/librelinkup-core/` | Platform-independent core shared by both apps: LibreView API client, encrypted credential envelope, settings, staleness and alert logic |
+| `src/`, `build.rs` | KDE Plasma 6 app (Qt 6 / Kirigami via CXX-Qt) |
+| `windows/` | Windows app (egui), installer script and build tooling. It is a separate Cargo package with its own `Cargo.lock`, so the Flatpak build never vendors Windows-only crates |
+
+## Building the Windows App
+
+On **Windows** (MSVC toolchain):
+
+```powershell
+cargo build --release --manifest-path windows/Cargo.toml
+windows\target\release\LibreLinkUp.exe --self-test
+```
+
+**Cross-compiling from Linux** (MinGW + Wine; also builds the Inno Setup installer):
+
+```bash
+rustup target add x86_64-pc-windows-gnu      # plus mingw-w64-gcc and wine from your distro
+windows/scripts/build-windows.sh --self-test  # -> windows/dist/
+```
+
+GitHub Actions (`.github/workflows/windows.yml`) builds, self-tests and packages the Windows app on `windows-latest`, and attaches the installer and zip to releases for `v*` tags.
 
 ## Building & Installing the Flatpak
 

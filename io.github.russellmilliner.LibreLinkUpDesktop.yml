@@ -44,3 +44,7 @@ modules:
     sources:
       - type: dir
         path: .
+        skip:
+          - target
+          - windows/target
+          - windows/dist

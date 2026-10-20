@@ -84,6 +84,15 @@ pub fn hex_to_bytes(hex: &str) -> Result<Vec<u8>, String> {
     Ok(out)
 }
 
+/// Returns a new random 256-bit key from the OS CSPRNG.
+pub fn generate_random_key() -> Result<[u8; KEY_LEN], String> {
+    let mut key = [0u8; KEY_LEN];
+    SystemRandom::new()
+        .fill(&mut key)
+        .map_err(|_| "CSPRNG failure generating key".to_string())?;
+    Ok(key)
+}
+
 fn derive_aes_key(master_secret: &[u8], salt: &[u8]) -> [u8; KEY_LEN] {
     let mut key = [0u8; KEY_LEN];
     let iterations = NonZeroU32::new(PBKDF2_ITERATIONS).expect("non-zero iterations");

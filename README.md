@@ -1,7 +1,7 @@
 # LibreLinkUp Rust Desktop
 
-[![Version v0.3.0](https://img.shields.io/badge/Version-v0.3.0-0284c7?style=for-the-badge&logo=github)](https://github.com/russellmilliner/librelinkup-rust-desktop/releases/tag/v0.3.0)
-[![Flatpak Bundle](https://img.shields.io/badge/Flatpak-Download_v0.3.0-4a90d9?style=for-the-badge&logo=flatpak&logoColor=white)](https://github.com/russellmilliner/librelinkup-rust-desktop/releases/download/v0.3.0/librelinkup-rust-desktop-v0.3.0-x86_64.flatpak)
+[![Version v0.4.0](https://img.shields.io/badge/Version-v0.4.0-0284c7?style=for-the-badge&logo=github)](https://github.com/russellmilliner/librelinkup-rust-desktop/releases/tag/v0.4.0)
+[![Flatpak Bundle](https://img.shields.io/badge/Flatpak-Download_v0.4.0-4a90d9?style=for-the-badge&logo=flatpak&logoColor=white)](https://github.com/russellmilliner/librelinkup-rust-desktop/releases/download/v0.4.0/librelinkup-rust-desktop-v0.4.0-x86_64.flatpak)
 [![Platform: Linux x86_64](https://img.shields.io/badge/Platform-Linux%20x86__64-fcc624?style=for-the-badge&logo=linux&logoColor=black)](https://www.kernel.org/)
 [![Desktop: KDE Plasma 6](https://img.shields.io/badge/KDE-Plasma%206%20%2F%20Kirigami-1d99f3?style=for-the-badge&logo=kde&logoColor=white)](https://kde.org/plasma-desktop/)
 [![Built with Rust](https://img.shields.io/badge/Rust-2021_Edition-dea584?style=for-the-badge&logo=rust&logoColor=black)](https://www.rust-lang.org/)
@@ -16,8 +16,8 @@ A native **Rust + Qt 6 / KDE Plasma 6 Kirigami** desktop application for monitor
 
 | Item | Link / Details |
 | :--- | :--- |
-| **Current Version** | [**v0.3.0** (GitHub Release)](https://github.com/russellmilliner/librelinkup-rust-desktop/releases/tag/v0.3.0) • [All Releases](https://github.com/russellmilliner/librelinkup-rust-desktop/releases) |
-| **Flatpak Bundle (`x86_64`)** | [**`librelinkup-rust-desktop-v0.3.0-x86_64.flatpak`**](https://github.com/russellmilliner/librelinkup-rust-desktop/releases/download/v0.3.0/librelinkup-rust-desktop-v0.3.0-x86_64.flatpak) ([SHA-256](https://github.com/russellmilliner/librelinkup-rust-desktop/releases/download/v0.3.0/librelinkup-rust-desktop-v0.3.0-x86_64.flatpak.sha256)) |
+| **Current Version** | [**v0.4.0** (GitHub Release)](https://github.com/russellmilliner/librelinkup-rust-desktop/releases/tag/v0.4.0) • [All Releases](https://github.com/russellmilliner/librelinkup-rust-desktop/releases) |
+| **Flatpak Bundle (`x86_64`)** | [**`librelinkup-rust-desktop-v0.4.0-x86_64.flatpak`**](https://github.com/russellmilliner/librelinkup-rust-desktop/releases/download/v0.4.0/librelinkup-rust-desktop-v0.4.0-x86_64.flatpak) ([SHA-256](https://github.com/russellmilliner/librelinkup-rust-desktop/releases/download/v0.4.0/librelinkup-rust-desktop-v0.4.0-x86_64.flatpak.sha256)) |
 | **Flatpak Runtime** | [`org.kde.Platform//6.11`](https://flathub.org/) via [Flatpak](https://flatpak.org/) |
 | **Supported Platforms** | [Linux (`x86_64`)](https://www.kernel.org/) • [KDE Plasma 6](https://kde.org/plasma-desktop/) ([Kirigami](https://develop.kde.org/frameworks/kirigami/) / [Qt 6](https://www.qt.io/)) • **Windows 10/11 (`x64`)** ([egui](https://github.com/emilk/egui)) |
 | **Windows Downloads** | `LibreLinkUp-Setup-<version>-x64.exe` (installer) and `LibreLinkUp-<version>-windows-x64-portable.zip` on the [Releases page](https://github.com/russellmilliner/librelinkup-rust-desktop/releases) |
@@ -26,8 +26,8 @@ A native **Rust + Qt 6 / KDE Plasma 6 Kirigami** desktop application for monitor
 ### Quick Flatpak Install (from GitHub Release)
 
 ```bash
-curl -LO https://github.com/russellmilliner/librelinkup-rust-desktop/releases/download/v0.3.0/librelinkup-rust-desktop-v0.3.0-x86_64.flatpak
-flatpak install --user -y librelinkup-rust-desktop-v0.3.0-x86_64.flatpak
+curl -LO https://github.com/russellmilliner/librelinkup-rust-desktop/releases/download/v0.4.0/librelinkup-rust-desktop-v0.4.0-x86_64.flatpak
+flatpak install --user -y librelinkup-rust-desktop-v0.4.0-x86_64.flatpak
 flatpak run io.github.russellmilliner.LibreLinkUpDesktop
 ```
 

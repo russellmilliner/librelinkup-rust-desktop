@@ -36,6 +36,6 @@ modules:
     sources:
       - type: git
         url: https://github.com/russellmilliner/librelinkup-rust-desktop.git
-        tag: v0.3.0
-        commit: a2ad37daeeabda24a46d865cccaf715f1c754533
+        tag: v0.4.0
+        commit: 6bb0bcb47da97c1493ffc179f430423389693b04
       - cargo-sources.json

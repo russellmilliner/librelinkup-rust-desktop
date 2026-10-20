@@ -839,27 +839,72 @@ fn about_view(ui: &mut egui::Ui) {
     ui.label("Licensed under the Apache License 2.0.");
 }
 
-/// Floating always-on-top overlay. Drag to move; right-click for options.
+/// Floating always-on-top overlay. Drag to move; scroll wheel adjusts transparency; right-click or buttons for options.
 fn overlay_ui(ui: &mut egui::Ui, shared: &SharedState, tx: &UnboundedSender<Command>, ui_handle: &Arc<UiHandle>) {
     let state = shared.lock().unwrap_or_else(|p| p.into_inner()).clone();
     let s = &state.settings;
     let snap = &state.snapshot;
     let (label, color_hex, stale, age_text) = reading_status(&state);
-    let alpha = (s.overlay_opacity_percent.clamp(20, 100) as f32 / 100.0 * 255.0) as u8;
+
+    let ctx = ui.ctx().clone();
+    let rect = ui.max_rect();
+
+    // Adjust transparency with mouse scroll wheel when hovering the overlay.
+    let is_hovered = ctx.input(|i| i.pointer.hover_pos().map_or(false, |p| rect.contains(p)));
+    let scroll_y = if is_hovered {
+        ctx.input(|i| {
+            let mut wheel_y = 0.0;
+            for event in &i.raw.events {
+                if let egui::Event::MouseWheel { delta, .. } = event {
+                    wheel_y += delta.y;
+                }
+            }
+            if wheel_y.abs() > 0.01 {
+                wheel_y
+            } else if i.smooth_scroll_delta.y.abs() > 0.01 {
+                i.smooth_scroll_delta.y
+            } else {
+                0.0
+            }
+        })
+    } else {
+        0.0
+    };
+
+    let mut current_opacity = s.overlay_opacity_percent.clamp(20, 100);
+    if scroll_y != 0.0 {
+        let delta = if scroll_y > 0.0 { 5 } else { -5 };
+        let new_opacity = (current_opacity + delta).clamp(20, 100);
+        if new_opacity != current_opacity {
+            current_opacity = new_opacity;
+            let mut ns = s.clone();
+            ns.overlay_opacity_percent = new_opacity;
+            if let Ok(mut guard) = shared.lock() {
+                guard.settings = ns.clone();
+            }
+            let _ = tx.send(Command::SaveSettings(Box::new(ns)));
+            ui_handle.repaint_all();
+        }
+    }
+
+    let alpha = (current_opacity as f32 / 100.0 * 255.0) as u8;
     let status_color = hex_color(color_hex);
     let bg = if s.overlay_dark_theme {
         Color32::from_rgba_unmultiplied(15, 23, 42, alpha)
     } else {
         Color32::from_rgba_unmultiplied(status_color.r(), status_color.g(), status_color.b(), alpha)
     };
-    let ctx = ui.ctx().clone();
-    let rect = ui.max_rect();
-    let response = ui.interact(rect, ui.scope_id().with("overlay-drag"), Sense::click_and_drag());
+
     let painter = ui.painter();
     painter.rect_filled(rect, CornerRadius::same(12), bg);
+    painter.rect_stroke(rect, CornerRadius::same(12), Stroke::new(1.0, Color32::from_white_alpha(35)), egui::StrokeKind::Inside);
     if s.overlay_dark_theme {
         painter.rect_filled(Rect::from_min_size(rect.min, Vec2::new(6.0, rect.height())), CornerRadius::same(3), status_color);
     }
+
+    // Drag and right-click interaction for the background
+    let response = ui.interact(rect, ui.scope_id().with("overlay-drag"), Sense::click_and_drag());
+
     let value = format_glucose_value(snap.value_mg_dl, &s.result_unit);
     painter.text(
         rect.left_center() + Vec2::new(18.0, -8.0),
@@ -890,10 +935,66 @@ fn overlay_ui(ui: &mut egui::Ui, shared: &SharedState, tx: &UnboundedSender<Comm
     };
     painter.text(rect.left_center() + Vec2::new(18.0, 22.0), Align2::LEFT_CENTER, sub, FontId::proportional(12.0), Color32::from_white_alpha(230));
 
-    if response.drag_started() {
+    // 2x2 grid of action buttons on the right side
+    let btn_size = Vec2::splat(22.0);
+    let btn_spacing = 4.0;
+    let grid_w = btn_size.x * 2.0 + btn_spacing;
+    let grid_h = btn_size.y * 2.0 + btn_spacing;
+    let buttons_rect = Rect::from_min_size(
+        Pos2::new(rect.max.x - 10.0 - grid_w, rect.min.y + (rect.height() - grid_h) * 0.5),
+        Vec2::new(grid_w, grid_h),
+    );
+
+    let btn_theme_rect = Rect::from_min_size(buttons_rect.min, btn_size);
+    let btn_restore_rect = Rect::from_min_size(buttons_rect.min + Vec2::new(btn_size.x + btn_spacing, 0.0), btn_size);
+    let btn_menu_rect = Rect::from_min_size(buttons_rect.min + Vec2::new(0.0, btn_size.y + btn_spacing), btn_size);
+    let btn_close_rect = Rect::from_min_size(buttons_rect.min + Vec2::new(btn_size.x + btn_spacing, btn_size.y + btn_spacing), btn_size);
+
+    let theme_icon = if s.overlay_dark_theme { "🌙" } else { "🎨" };
+    let theme_tooltip = if s.overlay_dark_theme {
+        format!("Overlay Dark Theme ON (Click for Color Fill • Scroll wheel adjusts {}% opacity)", current_opacity)
+    } else {
+        format!("Overlay Color Fill ON (Click for Dark Theme • Scroll wheel adjusts {}% opacity)", current_opacity)
+    };
+    let btn_theme_resp = draw_overlay_button(ui, btn_theme_rect, "btn_theme", theme_icon, 10.0, &theme_tooltip, false);
+    if btn_theme_resp.clicked() {
+        let mut ns = s.clone();
+        ns.overlay_dark_theme = !ns.overlay_dark_theme;
+        if let Ok(mut guard) = shared.lock() {
+            guard.settings = ns.clone();
+        }
+        let _ = tx.send(Command::SaveSettings(Box::new(ns)));
+        ui_handle.repaint_all();
+    }
+
+    let btn_restore_resp = draw_overlay_button(ui, btn_restore_rect, "btn_restore", "↗", 12.0, "Open LibreLinkUp Rust Desktop", false);
+    if btn_restore_resp.clicked() {
+        ui_handle.show_main_window();
+    }
+
+    let btn_menu_resp = draw_overlay_button(ui, btn_menu_rect, "btn_menu", "☰", 11.0, "Open Menu (or right-click anywhere on overlay)", false);
+    egui::Popup::menu(&btn_menu_resp).show(|ui| {
+        show_overlay_menu(ui, s, shared, tx, ui_handle);
+    });
+
+    let btn_close_resp = draw_overlay_button(ui, btn_close_rect, "btn_close", "✕", 11.0, "Hide Overlay", true);
+    if btn_close_resp.clicked() {
+        let mut ns = s.clone();
+        ns.overlay_visible = false;
+        if let Ok(mut guard) = shared.lock() {
+            guard.settings = ns.clone();
+        }
+        let _ = tx.send(Command::SaveSettings(Box::new(ns)));
+        ui_handle.repaint_all();
+    }
+
+    let pointer_pos = ctx.input(|i| i.pointer.hover_pos().or_else(|| i.pointer.interact_pos()));
+    let on_buttons = pointer_pos.map_or(false, |p| buttons_rect.contains(p));
+
+    if response.drag_started() && !on_buttons {
         ctx.send_viewport_cmd(ViewportCommand::StartDrag);
     }
-    if response.drag_stopped() || response.clicked() {
+    if (response.drag_stopped() || response.clicked()) && !on_buttons {
         // Persist the new position.
         if let Some(outer) = ctx.input(|i| i.viewport().outer_rect) {
             let mut ns = s.clone();
@@ -907,29 +1008,96 @@ fn overlay_ui(ui: &mut egui::Ui, shared: &SharedState, tx: &UnboundedSender<Comm
             }
         }
     }
-    if response.double_clicked() {
+    if response.double_clicked() && !on_buttons {
         ui_handle.show_main_window();
     }
-    response.context_menu(|ui| {
-        if ui.button("Show main window").clicked() {
-            ui_handle.show_main_window();
-            ui.close();
-        }
-        if ui.button("Refresh now").clicked() {
-            let _ = tx.send(Command::RefreshNow);
-            ui.close();
-        }
-        if ui.button("Hide overlay").clicked() {
-            let mut ns = s.clone();
-            ns.overlay_visible = false;
-            if let Ok(mut guard) = shared.lock() {
-                guard.settings = ns.clone();
-            }
-            let _ = tx.send(Command::SaveSettings(Box::new(ns)));
-            ui_handle.repaint_all();
-            ui.close();
-        }
-    });
+    if !on_buttons {
+        response.context_menu(|ui| {
+            show_overlay_menu(ui, s, shared, tx, ui_handle);
+        });
+    }
+
     // Re-render periodically so the reading age stays current.
     ctx.request_repaint_after(std::time::Duration::from_secs(30));
+}
+
+fn draw_overlay_button(
+    ui: &mut egui::Ui,
+    rect: Rect,
+    id_str: &str,
+    icon: &str,
+    font_size: f32,
+    tooltip: &str,
+    is_close: bool,
+) -> egui::Response {
+    let id = ui.make_persistent_id(id_str);
+    let resp = ui.interact(rect, id, Sense::click());
+    let painter = ui.painter();
+    let hovered = resp.hovered();
+    let bg = if hovered {
+        if is_close {
+            Color32::from_rgba_unmultiplied(239, 68, 68, 170)
+        } else {
+            Color32::from_white_alpha(70)
+        }
+    } else {
+        Color32::from_white_alpha(35)
+    };
+    let border = if hovered {
+        Color32::from_white_alpha(120)
+    } else {
+        Color32::from_white_alpha(65)
+    };
+    painter.rect_filled(rect, CornerRadius::same(6), bg);
+    painter.rect_stroke(rect, CornerRadius::same(6), Stroke::new(1.0, border), egui::StrokeKind::Inside);
+    painter.text(
+        rect.center(),
+        Align2::CENTER_CENTER,
+        icon,
+        FontId::proportional(font_size),
+        Color32::WHITE,
+    );
+    resp.on_hover_text(tooltip)
+}
+
+fn show_overlay_menu(
+    ui: &mut egui::Ui,
+    s: &AppSettings,
+    shared: &SharedState,
+    tx: &UnboundedSender<Command>,
+    ui_handle: &Arc<UiHandle>,
+) {
+    if ui.button("Show main window").clicked() {
+        ui_handle.show_main_window();
+        ui.close();
+    }
+    if ui.button("Refresh now").clicked() {
+        let _ = tx.send(Command::RefreshNow);
+        ui.close();
+    }
+    let theme_label = if s.overlay_dark_theme {
+        "Switch to color theme"
+    } else {
+        "Switch to dark theme"
+    };
+    if ui.button(theme_label).clicked() {
+        let mut ns = s.clone();
+        ns.overlay_dark_theme = !ns.overlay_dark_theme;
+        if let Ok(mut guard) = shared.lock() {
+            guard.settings = ns.clone();
+        }
+        let _ = tx.send(Command::SaveSettings(Box::new(ns)));
+        ui_handle.repaint_all();
+        ui.close();
+    }
+    if ui.button("Hide overlay").clicked() {
+        let mut ns = s.clone();
+        ns.overlay_visible = false;
+        if let Ok(mut guard) = shared.lock() {
+            guard.settings = ns.clone();
+        }
+        let _ = tx.send(Command::SaveSettings(Box::new(ns)));
+        ui_handle.repaint_all();
+        ui.close();
+    }
 }

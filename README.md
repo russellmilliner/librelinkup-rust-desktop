@@ -190,10 +190,11 @@ GitHub Actions ([`.github/workflows/windows.yml`](.github/workflows/windows.yml)
 
 ## Interactive Release & GitHub Sync Scripts
 
-The `scripts/` directory includes interactive automation scripts (which also support non-interactive `--yes` CLI flags):
+Interactive multi-project release and sync scripts are located in the parent workspace directory (`/home/millinr/Builds/`) and let you choose which project to work on interactively:
 
 | Script | Purpose & Usage |
 | :--- | :--- |
-| [**`./scripts/bump-version.sh`**](scripts/bump-version.sh) | Interactively increments Patch, Minor, Major, or Custom version across `Cargo.toml`, `crates/librelinkup-core/Cargo.toml`, `windows/Cargo.toml`, `src/qml/AboutDialog.qml`, `README.md`, `windows/README.md`, and AppStream `metainfo.xml`.<br>`./scripts/bump-version.sh` *(interactive)* or `./scripts/bump-version.sh --minor -y` |
-| [**`./scripts/sync-github.sh`**](scripts/sync-github.sh) | Interactively stages files (`all`, `tracked`, or `patch`), prompts for a commit message, optionally creates an annotated git tag `vX.Y.Z`, and pushes to GitHub.<br>`./scripts/sync-github.sh` *(interactive)* or `./scripts/sync-github.sh -m "feat: update" -y` |
-| [**`./scripts/deploy-release.sh`**](scripts/deploy-release.sh) | End-to-end release pipeline: optional version bump → core & integration tests → Linux Flatpak bundle + Windows 10/11 Inno Setup installer & portable `.zip` (`--self-test`) + SHA-256 checksums → git commit/tag/push → GitHub Release creation/upload via `gh`.<br>`./scripts/deploy-release.sh` *(interactive)* or `./scripts/deploy-release.sh --patch -y` |
+| **`../release-menu.sh`** | Unified interactive menu: choose which project in `~/Builds` to work on, then choose whether to bump version, sync to GitHub, deploy a release, or run tests. |
+| **`../bump-version.sh`** | Select a project and interactively increment Patch, Minor, Major, or Custom version across `Cargo.toml`, `crates/librelinkup-core/Cargo.toml`, `windows/Cargo.toml`, `src/qml/AboutDialog.qml`, `README.md`, `windows/README.md`, and AppStream `metainfo.xml`. |
+| **`../sync-github.sh`** | Select a project and interactively stage files (`all`, `tracked`, or `patch`), commit, optionally tag `vX.Y.Z`, and push to GitHub. |
+| **`../deploy-release.sh`** | Select a project and run the end-to-end release pipeline (optional version bump → core & integration tests → Linux Flatpak bundle + Windows 10/11 Inno Setup installer & portable `.zip` (`--self-test`) + SHA-256 checksums → git tag/push → GitHub Release creation via `gh`). |

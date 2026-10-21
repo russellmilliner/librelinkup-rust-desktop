@@ -105,6 +105,9 @@ Start-Process -FilePath "$env:TEMP\LibreLinkUp-Setup-0.4.0-x64.exe"
   - Sensitive strings are wiped from memory on drop via `zeroize`.
 - **Diagnostic Log Viewer**:
   - Built-in Log Viewer with category filtering (`AUTH`, `API`, `CRYPTO`, `TRAY`, `ALERT`, `APP`), minimum severity filtering (`DEBUG`, `INFO`, `WARN`, `ERROR`), real-time search, clipboard copy, and `.log` file export.
+- **Built-in Update Checker**:
+  - Automatically checks GitHub Releases on startup (configurable via the **Check for updates on startup** toggle in Settings) and provides a one-click **Check for Updates** button in the Settings page, About dialog, System Tray menu (Windows), and CLI (`--check-update` / `-u`).
+  - Displays a prominent top update banner with a direct download link whenever a newer release is available.
 
 ---
 

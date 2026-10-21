@@ -258,6 +258,31 @@ impl eframe::App for LibreLinkUpApp {
                     });
                 ui.add_space(6.0);
             }
+            if let Some(ref upd) = state.update_info {
+                if upd.update_available {
+                    egui::Frame::new()
+                        .fill(Color32::from_rgb(3, 105, 161))
+                        .corner_radius(6)
+                        .inner_margin(8)
+                        .show(ui, |ui| {
+                            ui.horizontal(|ui| {
+                                ui.label(
+                                    RichText::new(format!(
+                                        "⬆ New version available: {} (current: {})",
+                                        upd.latest_version, upd.current_version
+                                    ))
+                                    .strong()
+                                    .color(Color32::WHITE),
+                                );
+                                ui.hyperlink_to(
+                                    RichText::new("View Release / Download").color(Color32::from_rgb(224, 242, 254)).underline(),
+                                    &upd.release_url,
+                                );
+                            });
+                        });
+                    ui.add_space(6.0);
+                }
+            }
             egui::ScrollArea::vertical().auto_shrink([false, false]).show(ui, |ui| match self.tab {
                 Tab::Dashboard if !state.logged_in => self.login_view(ui, &state),
                 Tab::Dashboard => self.dashboard(ui, &state),
@@ -265,7 +290,7 @@ impl eframe::App for LibreLinkUpApp {
                 Tab::Alerts => self.alerts_view(ui, &state),
                 Tab::Account => self.account_view(ui, &state),
                 Tab::Logs => self.logs_view(ui),
-                Tab::About => about_view(ui),
+                Tab::About => self.about_view(ui, &state),
             });
         });
 
@@ -505,7 +530,41 @@ impl LibreLinkUpApp {
                 ui.label("Opacity");
                 ui.add(egui::Slider::new(&mut s.overlay_opacity_percent, 20..=100).suffix("%"));
             });
-            ui.label(RichText::new("Drag the overlay to move it. Right-click it for options.").small().weak());
+            ui.label(RichText::new("Drag the overlay to move it. Scroll wheel adjusts opacity. Right-click or use buttons for options.").small().weak());
+        });
+        ui.add_space(8.0);
+        egui::Frame::group(ui.style()).inner_margin(12).show(ui, |ui| {
+            ui.label(RichText::new("Application updates").strong());
+            ui.checkbox(
+                &mut s.check_updates_on_startup,
+                "Automatically check GitHub Releases for updates on startup",
+            );
+            ui.horizontal(|ui| {
+                let btn_label = if state.checking_updates {
+                    "Checking..."
+                } else {
+                    "🔄 Check for Updates Now"
+                };
+                if ui
+                    .add_enabled(!state.checking_updates, egui::Button::new(btn_label))
+                    .clicked()
+                {
+                    self.send(Command::CheckUpdates { manual: true });
+                }
+                if let Some(ref upd) = state.update_info {
+                    let color = if upd.update_available {
+                        Color32::from_rgb(56, 189, 248)
+                    } else {
+                        ui.visuals().text_color()
+                    };
+                    ui.label(RichText::new(&upd.message).color(color));
+                    if upd.update_available {
+                        ui.hyperlink_to(format!("Download {}", upd.latest_version), &upd.release_url);
+                    }
+                } else {
+                    ui.label(RichText::new(format!("Current version: v{}", env!("CARGO_PKG_VERSION"))).weak());
+                }
+            });
         });
         if s != state.settings {
             self.save_settings(s);
@@ -824,26 +883,52 @@ fn glucose_graph(ui: &mut egui::Ui, state: &Shared) {
     let _ = convert_mg_dl_to_unit; // unit conversion handled by format_glucose_value
 }
 
-fn about_view(ui: &mut egui::Ui) {
-    ui.heading("LibreLinkUp Rust Desktop for Windows");
-    ui.label(format!("Version {} • Native Rust + egui/eframe (Windows 10/11 x64)", env!("CARGO_PKG_VERSION")));
-    ui.add_space(8.0);
-    ui.label(
-        "Continuous blood glucose monitor for LibreLinkUp featuring Windows DPAPI + AES-256-GCM \
-         encrypted credentials, system tray glucose badge & tooltip, interactive 12-hour CGM chart, \
-         stale-reading & urgent-low/snooze alert engine, and an always-on-top desktop overlay \
-         with scroll-wheel transparency and quick action buttons.",
-    );
-    ui.add_space(8.0);
-    ui.label(RichText::new("Unofficial app — not affiliated with or endorsed by Abbott. LibreLinkUp is a trademark of Abbott.").weak());
-    ui.label(RichText::new("Not a medical device. Do not use for treatment decisions.").weak());
-    ui.add_space(8.0);
-    ui.hyperlink_to("GitHub: russellmilliner/librelinkup-rust-desktop", "https://github.com/russellmilliner/librelinkup-rust-desktop");
-    ui.hyperlink_to("Windows Documentation (windows/README.md)", "https://github.com/russellmilliner/librelinkup-rust-desktop/blob/main/windows/README.md");
-    ui.hyperlink_to("Based on Crazy-Marvin/LibreLinkUpDesktop (Apache-2.0)", "https://github.com/Crazy-Marvin/LibreLinkUpDesktop");
-    ui.hyperlink_to("☕ Support on Ko-fi", "https://ko-fi.com/russellmilliner");
-    ui.add_space(8.0);
-    ui.label("Licensed under the Apache License 2.0.");
+impl LibreLinkUpApp {
+    fn about_view(&mut self, ui: &mut egui::Ui, state: &Shared) {
+        ui.heading("LibreLinkUp Rust Desktop for Windows");
+        ui.label(format!("Version {} • Native Rust + egui/eframe (Windows 10/11 x64)", env!("CARGO_PKG_VERSION")));
+        ui.add_space(8.0);
+        ui.label(
+            "Continuous blood glucose monitor for LibreLinkUp featuring Windows DPAPI + AES-256-GCM \
+             encrypted credentials, system tray glucose badge & tooltip, interactive 12-hour CGM chart, \
+             stale-reading & urgent-low/snooze alert engine, and an always-on-top desktop overlay \
+             with scroll-wheel transparency and quick action buttons.",
+        );
+        ui.add_space(8.0);
+        egui::Frame::group(ui.style()).inner_margin(12).show(ui, |ui| {
+            ui.horizontal(|ui| {
+                let btn_label = if state.checking_updates {
+                    "Checking..."
+                } else {
+                    "🔄 Check for Updates"
+                };
+                if ui
+                    .add_enabled(!state.checking_updates, egui::Button::new(btn_label))
+                    .clicked()
+                {
+                    self.send(Command::CheckUpdates { manual: true });
+                }
+                if let Some(ref upd) = state.update_info {
+                    ui.label(&upd.message);
+                    if upd.update_available {
+                        ui.hyperlink_to(format!("Download {}", upd.latest_version), &upd.release_url);
+                    }
+                } else {
+                    ui.label(format!("Installed: v{}", env!("CARGO_PKG_VERSION")));
+                }
+            });
+        });
+        ui.add_space(8.0);
+        ui.label(RichText::new("Unofficial app — not affiliated with or endorsed by Abbott. LibreLinkUp is a trademark of Abbott.").weak());
+        ui.label(RichText::new("Not a medical device. Do not use for treatment decisions.").weak());
+        ui.add_space(8.0);
+        ui.hyperlink_to("GitHub: russellmilliner/librelinkup-rust-desktop", "https://github.com/russellmilliner/librelinkup-rust-desktop");
+        ui.hyperlink_to("Windows Documentation (windows/README.md)", "https://github.com/russellmilliner/librelinkup-rust-desktop/blob/main/windows/README.md");
+        ui.hyperlink_to("Based on Crazy-Marvin/LibreLinkUpDesktop (Apache-2.0)", "https://github.com/Crazy-Marvin/LibreLinkUpDesktop");
+        ui.hyperlink_to("☕ Support on Ko-fi", "https://ko-fi.com/russellmilliner");
+        ui.add_space(8.0);
+        ui.label("Licensed under the Apache License 2.0.");
+    }
 }
 
 /// Floating always-on-top overlay. Drag to move; scroll wheel adjusts transparency; right-click or buttons for options.

@@ -51,6 +51,7 @@ A borderless, translucent, always-on-top desktop widget (`276×88` default, conf
 - **Left-click** the tray icon to restore and bring the main window to the foreground.
 - **Right-click** the tray icon for the native Windows menu:
   - **Refresh Now**
+  - **Check for Updates**
   - **Show / Hide Floating Overlay**
   - **Snooze Alerts — 30 min / 1 hour / 2 hours** & **Clear Alert Snooze**
   - **Open LibreLinkUp**
@@ -99,6 +100,7 @@ Options:
   --self-test                Run headless verification of paths, DPAPI, AES-256-GCM vault,
                              autostart registry, tray badge renderer, audio synthesizer,
                              and LibreView HTTPS connectivity
+  --check-update, -u         Check GitHub Releases for a newer version and exit
   --version, -V              Print version and exit
 ```
 

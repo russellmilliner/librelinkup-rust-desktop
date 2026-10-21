@@ -140,6 +140,46 @@ Window {
                             Layout.preferredWidth: 0
                             wrapMode: Text.WordWrap
                         }
+
+                        RowLayout {
+                            Layout.fillWidth: true
+                            spacing: 8
+
+                            QQC2.Label {
+                                text: controller ? controller.updateStatusMessage : ""
+                                font.bold: controller ? controller.updateAvailable : false
+                                color: (controller && controller.updateAvailable)
+                                    ? (aboutWindow.isLightTheme ? "#0284c7" : "#38bdf8")
+                                    : Kirigami.Theme.textColor
+                                opacity: 0.9
+                                Layout.fillWidth: true
+                                Layout.preferredWidth: 0
+                                wrapMode: Text.WordWrap
+                            }
+
+                            QQC2.Button {
+                                objectName: "aboutCheckUpdatesButton"
+                                icon.name: "system-software-update"
+                                text: (controller && controller.checkingForUpdates) ? qsTr("Checking...") : qsTr("Check Updates")
+                                enabled: controller ? !controller.checkingForUpdates : false
+                                onClicked: {
+                                    if (controller) {
+                                        controller.checkForUpdates()
+                                    }
+                                }
+                            }
+
+                            QQC2.Button {
+                                visible: controller ? controller.updateAvailable : false
+                                icon.name: "download"
+                                text: controller ? qsTr("Download %1").arg(controller.latestVersion) : ""
+                                onClicked: {
+                                    if (controller && controller.updateUrl) {
+                                        Qt.openUrlExternally(controller.updateUrl)
+                                    }
+                                }
+                            }
+                        }
                     }
                 }
 

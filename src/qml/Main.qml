@@ -346,6 +346,49 @@ Kirigami.ApplicationWindow {
             }
         }
 
+        Rectangle {
+            id: updateBanner
+            objectName: "updateBanner"
+            Layout.fillWidth: true
+            visible: appController.updateAvailable
+            implicitHeight: updateRow.implicitHeight + 16
+            radius: 8
+            color: Qt.rgba(0.02, 0.52, 0.78, 0.16)
+            border.color: "#0284c7"
+            border.width: 1
+
+            RowLayout {
+                id: updateRow
+                anchors.left: parent.left
+                anchors.right: parent.right
+                anchors.top: parent.top
+                anchors.margins: 8
+                spacing: 10
+
+                Kirigami.Icon {
+                    source: "system-software-update"
+                    Layout.preferredWidth: 22
+                    Layout.preferredHeight: 22
+                }
+
+                QQC2.Label {
+                    text: qsTr("New version available: %1 (current: v%2)").arg(appController.latestVersion).arg(appController.appVersion)
+                    font.bold: true
+                    wrapMode: Text.WordWrap
+                    color: Kirigami.Theme.textColor
+                    Layout.fillWidth: true
+                    Layout.preferredWidth: 0
+                }
+
+                QQC2.Button {
+                    objectName: "bannerViewUpdateButton"
+                    icon.name: "globe"
+                    text: qsTr("View Release")
+                    onClicked: Qt.openUrlExternally(appController.updateUrl)
+                }
+            }
+        }
+
         // ==================== TAB 1: DASHBOARD / LOGIN ====================
         Item {
             id: dashboardContainer
@@ -1438,6 +1481,43 @@ Kirigami.ApplicationWindow {
                                 stepSize: 15
                                 value: appController.pollIntervalSeconds
                                 onValueModified: appController.updatePollIntervalSeconds(value)
+                            }
+                        }
+
+                        QQC2.Switch {
+                            objectName: "checkUpdatesSwitch"
+                            text: qsTr("Automatically check GitHub Releases for updates on startup")
+                            checked: appController.checkUpdatesOnStartup
+                            onToggled: appController.updateCheckUpdatesOnStartup(checked)
+                            Layout.fillWidth: true
+                        }
+
+                        RowLayout {
+                            Layout.fillWidth: true
+                            spacing: 10
+
+                            QQC2.Button {
+                                objectName: "checkUpdatesNowButton"
+                                icon.name: "system-software-update"
+                                text: appController.checkingForUpdates ? qsTr("Checking...") : qsTr("Check for Updates")
+                                enabled: !appController.checkingForUpdates
+                                onClicked: appController.checkForUpdates()
+                            }
+
+                            QQC2.Label {
+                                text: appController.updateStatusMessage
+                                color: appController.updateAvailable ? "#0284c7" : Kirigami.Theme.textColor
+                                font.bold: appController.updateAvailable
+                                Layout.fillWidth: true
+                                Layout.preferredWidth: 0
+                                wrapMode: Text.WordWrap
+                            }
+
+                            QQC2.Button {
+                                visible: appController.updateAvailable
+                                icon.name: "globe"
+                                text: qsTr("Download %1").arg(appController.latestVersion)
+                                onClicked: Qt.openUrlExternally(appController.updateUrl)
                             }
                         }
                     }

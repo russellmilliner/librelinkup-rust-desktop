@@ -197,6 +197,8 @@ pub struct AppSettings {
     pub alert_on_stale: bool,
     /// Non-urgent alerts are silenced until this Unix epoch second (0 = not snoozed).
     pub snooze_until_epoch: i64,
+    /// Check GitHub Releases for a newer version automatically at startup.
+    pub check_updates_on_startup: bool,
 }
 
 impl Default for AppSettings {
@@ -236,6 +238,7 @@ impl Default for AppSettings {
             stale_after_minutes: DEFAULT_STALE_AFTER_MINUTES,
             alert_on_stale: true,
             snooze_until_epoch: 0,
+            check_updates_on_startup: true,
         }
     }
 }

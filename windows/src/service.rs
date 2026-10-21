@@ -18,6 +18,7 @@ use librelinkup_core::models::{
     save_default_settings, trend_arrow_symbol, AlertKind, AppSettings, GlucoseSnapshot, GraphPoint,
 };
 use librelinkup_core::paths::credentials_file_path;
+use librelinkup_core::updater::{check_for_updates_async, UpdateCheckResult};
 use tokio::sync::mpsc::{unbounded_channel, UnboundedReceiver, UnboundedSender};
 use tokio::time::{sleep_until, Instant};
 
@@ -36,6 +37,8 @@ pub struct Shared {
     pub snapshot: GlucoseSnapshot,
     pub last_alert: Option<(AlertKind, i64)>,
     pub vault_ok: bool,
+    pub checking_updates: bool,
+    pub update_info: Option<UpdateCheckResult>,
 }
 
 pub type SharedState = Arc<Mutex<Shared>>;
@@ -51,6 +54,7 @@ pub enum Command {
     Snooze(i32),
     TestAlert,
     LoadDemo,
+    CheckUpdates { manual: bool },
 }
 
 /// Callbacks into the UI layer (implemented in `main.rs`).
@@ -114,6 +118,9 @@ impl Service {
             format!("Starting LibreLinkUp Rust Desktop v{} (Windows)", env!("CARGO_PKG_VERSION")),
         );
         self.load_vault();
+        if lock(&self.shared).settings.check_updates_on_startup {
+            self.spawn_update_check(false);
+        }
 
         let mut next_poll = Instant::now();
         let mut staleness = tokio::time::interval(Duration::from_secs(30));
@@ -293,7 +300,78 @@ impl Service {
                 });
                 false
             }
+            Command::CheckUpdates { manual } => {
+                self.spawn_update_check(manual);
+                false
+            }
         }
+    }
+
+    fn spawn_update_check(&self, manual: bool) {
+        {
+            let mut s = lock(&self.shared);
+            if s.checking_updates {
+                return;
+            }
+            s.checking_updates = true;
+        }
+        self.notifier.state_changed();
+        if manual {
+            log_info("SYSTEM", "Checking GitHub Releases for application updates...");
+        }
+
+        let shared = self.shared.clone();
+        let notifier = self.notifier.clone();
+        tokio::spawn(async move {
+            let outcome = check_for_updates_async(env!("CARGO_PKG_VERSION")).await;
+            match outcome {
+                Ok(res) => {
+                    let update_available = res.update_available;
+                    let latest = res.latest_version.clone();
+                    let current = res.current_version.clone();
+                    let url = res.release_url.clone();
+                    let msg = res.message.clone();
+                    {
+                        let mut s = lock(&shared);
+                        s.checking_updates = false;
+                        s.update_info = Some(res);
+                    }
+                    notifier.state_changed();
+                    if update_available {
+                        log_info(
+                            "SYSTEM",
+                            format!("Update available: {latest} (current {current}). Release: {url}"),
+                        );
+                        alerts::show_notification(
+                            "LibreLinkUp Update Available",
+                            &format!("Version {latest} is available on GitHub Releases (you have {current})."),
+                        );
+                    } else if manual {
+                        log_info("SYSTEM", format!("Update check complete: {msg}"));
+                    }
+                }
+                Err(err) => {
+                    {
+                        let mut s = lock(&shared);
+                        s.checking_updates = false;
+                        s.update_info = Some(UpdateCheckResult {
+                            checked: true,
+                            update_available: false,
+                            current_version: format!("v{}", env!("CARGO_PKG_VERSION")),
+                            latest_version: String::new(),
+                            release_url: librelinkup_core::updater::GITHUB_RELEASES_PAGE_URL.to_string(),
+                            download_url: librelinkup_core::updater::GITHUB_RELEASES_PAGE_URL.to_string(),
+                            release_notes: String::new(),
+                            message: err.clone(),
+                        });
+                    }
+                    notifier.state_changed();
+                    if manual {
+                        log_warn("SYSTEM", format!("Update check failed: {err}"));
+                    }
+                }
+            }
+        });
     }
 
     async fn login(&mut self, username: String, password: String, country: String) -> bool {

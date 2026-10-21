@@ -104,6 +104,12 @@ pub mod qobject {
         #[qproperty(i32, alert_repeat_minutes)]
         #[qproperty(i32, stale_after_minutes)]
         #[qproperty(bool, alert_on_stale)]
+        #[qproperty(bool, update_available)]
+        #[qproperty(QString, latest_version)]
+        #[qproperty(QString, update_url)]
+        #[qproperty(QString, update_status_message)]
+        #[qproperty(bool, checking_for_updates)]
+        #[qproperty(bool, check_updates_on_startup)]
         type AppController = super::AppControllerRust;
 
         #[qinvokable]
@@ -239,6 +245,12 @@ pub mod qobject {
 
         #[qinvokable]
         fn quit_application(self: Pin<&mut AppController>);
+
+        #[qinvokable]
+        fn check_for_updates(self: Pin<&mut AppController>);
+
+        #[qinvokable]
+        fn update_check_updates_on_startup(self: Pin<&mut AppController>, enabled: bool);
     }
 
     // Lets background tokio tasks queue result handlers back onto the Qt GUI thread.
@@ -270,6 +282,9 @@ use crate::models::{
     DEFAULT_TARGET_HIGH_MG_DL, DEFAULT_TARGET_LOW_MG_DL, STALE_COLOR_HEX,
 };
 use crate::paths::{autostart_desktop_path, credentials_file_path, APP_ID};
+use crate::updater::{
+    check_for_updates_async, UpdateCheckResult, GITHUB_RELEASES_PAGE_URL,
+};
 
 /// Single long-lived multi-thread runtime for all LibreView network I/O, so nothing
 /// network-related ever blocks the Qt GUI thread (and connections/TLS can be reused).
@@ -400,6 +415,12 @@ pub struct AppControllerRust {
     alert_repeat_minutes: i32,
     stale_after_minutes: i32,
     alert_on_stale: bool,
+    update_available: bool,
+    latest_version: QString,
+    update_url: QString,
+    update_status_message: QString,
+    checking_for_updates: bool,
+    check_updates_on_startup: bool,
     /// Non-urgent alerts silenced until this epoch second (persisted in settings).
     snooze_until_epoch: i64,
     /// Last alert fired: (kind, epoch seconds). Reset when glucose returns to normal.
@@ -490,6 +511,14 @@ impl Default for AppControllerRust {
             alert_repeat_minutes: settings.alert_repeat_minutes.clamp(1, 240) as i32,
             stale_after_minutes: settings.effective_stale_after_minutes() as i32,
             alert_on_stale: settings.alert_on_stale,
+            update_available: false,
+            latest_version: QString::from(format!("v{}", env!("CARGO_PKG_VERSION")).as_str()),
+            update_url: QString::from(GITHUB_RELEASES_PAGE_URL),
+            update_status_message: QString::from(
+                format!("Current version: v{}", env!("CARGO_PKG_VERSION")).as_str(),
+            ),
+            checking_for_updates: false,
+            check_updates_on_startup: settings.check_updates_on_startup,
             snooze_until_epoch: settings.snooze_until_epoch,
             last_alert: None,
             snapshot: GlucoseSnapshot::default(),
@@ -537,6 +566,7 @@ fn current_settings_from_controller(ctrl: &qobject::AppController) -> AppSetting
         stale_after_minutes: (*ctrl.stale_after_minutes()).clamp(5, 120) as u32,
         alert_on_stale: *ctrl.alert_on_stale(),
         snooze_until_epoch: ctrl.rust().snooze_until_epoch,
+        check_updates_on_startup: *ctrl.check_updates_on_startup(),
         ui_text_scale: 100,
     }
 }
@@ -830,6 +860,13 @@ impl qobject::AppController {
 
         if *self.overlay_visible() && *self.overlay_only_mode() {
             qobject::librelinkup_hide_main_window();
+        }
+
+        if *self.check_updates_on_startup()
+            && std::env::var_os("QT_QPA_PLATFORM").as_deref()
+                != Some(std::ffi::OsStr::new("offscreen"))
+        {
+            self.as_mut().start_update_check(false);
         }
 
         self.as_mut().sync_tray_and_ui();
@@ -1610,5 +1647,94 @@ impl qobject::AppController {
 
     pub fn quit_application(self: Pin<&mut Self>) {
         qobject::librelinkup_quit_app();
+    }
+
+    pub fn check_for_updates(mut self: Pin<&mut Self>) {
+        self.as_mut().start_update_check(true);
+    }
+
+    pub fn update_check_updates_on_startup(mut self: Pin<&mut Self>, enabled: bool) {
+        self.as_mut().set_check_updates_on_startup(enabled);
+        let settings = current_settings_from_controller(&self);
+        let _ = save_default_settings(&settings);
+        log_info(
+            "SYSTEM",
+            format!("Updated check_updates_on_startup setting to {enabled}"),
+        );
+        self.as_mut().sync_logs_to_properties();
+    }
+
+    fn start_update_check(mut self: Pin<&mut Self>, manual: bool) {
+        if *self.checking_for_updates() {
+            return;
+        }
+        let Some(runtime) = background_runtime() else {
+            return;
+        };
+        self.as_mut().set_checking_for_updates(true);
+        self.as_mut()
+            .set_update_status_message(QString::from("Checking GitHub Releases for updates..."));
+        if manual {
+            log_info("SYSTEM", "Checking GitHub Releases for application updates...");
+            self.as_mut().sync_logs_to_properties();
+        }
+
+        let current_version = env!("CARGO_PKG_VERSION").to_string();
+        let qt_thread = self.qt_thread();
+        runtime.spawn(async move {
+            let outcome = check_for_updates_async(&current_version).await;
+            let _ = qt_thread.queue(move |qobject| {
+                qobject.apply_update_check_outcome(manual, outcome);
+            });
+        });
+    }
+
+    fn apply_update_check_outcome(
+        mut self: Pin<&mut Self>,
+        manual: bool,
+        outcome: Result<UpdateCheckResult, String>,
+    ) {
+        self.as_mut().set_checking_for_updates(false);
+        match outcome {
+            Ok(res) => {
+                self.as_mut().set_update_available(res.update_available);
+                self.as_mut()
+                    .set_latest_version(QString::from(res.latest_version.as_str()));
+                self.as_mut()
+                    .set_update_url(QString::from(res.release_url.as_str()));
+                self.as_mut()
+                    .set_update_status_message(QString::from(res.message.as_str()));
+                if res.update_available {
+                    log_info(
+                        "SYSTEM",
+                        format!(
+                            "Update available: {} (current {}). Release page: {}",
+                            res.latest_version, res.current_version, res.release_url
+                        ),
+                    );
+                    qobject::librelinkup_show_notification(
+                        &QString::from("LibreLinkUp Update Available"),
+                        &QString::from(
+                            format!(
+                                "Version {} is available on GitHub Releases (you have {}).",
+                                res.latest_version, res.current_version
+                            )
+                            .as_str(),
+                        ),
+                        false,
+                    );
+                } else if manual {
+                    log_info("SYSTEM", format!("Update check complete: {}", res.message));
+                }
+            }
+            Err(err) => {
+                self.as_mut()
+                    .set_update_status_message(QString::from(err.as_str()));
+                if manual {
+                    log_warn("SYSTEM", format!("Update check failed: {err}"));
+                }
+            }
+        }
+        self.as_mut().sync_logs_to_properties();
     }
 }

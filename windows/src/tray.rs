@@ -34,6 +34,7 @@ pub enum TrayAction {
     Snooze(i32),
     SetOverlay(bool),
     SetAutostart(bool),
+    CheckUpdates,
     Quit,
 }
 
@@ -54,6 +55,7 @@ struct MenuIds {
     snooze: Vec<(MenuItem, i32)>,
     overlay: CheckMenuItem,
     autostart: CheckMenuItem,
+    check_updates: MenuItem,
     quit: MenuItem,
 }
 
@@ -75,6 +77,7 @@ fn build_menu() -> (Menu, MenuIds) {
     }
     let overlay = CheckMenuItem::new("Show Floating Overlay", true, false, None);
     let autostart = CheckMenuItem::new("Start at Login", true, false, None);
+    let check_updates = MenuItem::new("Check for Updates", true, None);
     let quit = MenuItem::new("Quit", true, None);
 
     let _ = menu.append(&status);
@@ -84,9 +87,10 @@ fn build_menu() -> (Menu, MenuIds) {
     let _ = menu.append(&snooze_menu);
     let _ = menu.append(&overlay);
     let _ = menu.append(&autostart);
+    let _ = menu.append(&check_updates);
     let _ = menu.append(&PredefinedMenuItem::separator());
     let _ = menu.append(&quit);
-    (menu, MenuIds { show, refresh, status, snooze_status, snooze, overlay, autostart, quit })
+    (menu, MenuIds { show, refresh, status, snooze_status, snooze, overlay, autostart, check_updates, quit })
 }
 
 fn run(rx: Receiver<TrayView>, on_action: impl Fn(TrayAction)) {
@@ -125,6 +129,8 @@ fn run(rx: Receiver<TrayView>, on_action: impl Fn(TrayAction)) {
                 on_action(TrayAction::SetOverlay(ids.overlay.is_checked()));
             } else if id == *ids.autostart.id() {
                 on_action(TrayAction::SetAutostart(ids.autostart.is_checked()));
+            } else if id == *ids.check_updates.id() {
+                on_action(TrayAction::CheckUpdates);
             } else if let Some((_, minutes)) = ids.snooze.iter().find(|(item, _)| *item.id() == id) {
                 on_action(TrayAction::Snooze(*minutes));
             }

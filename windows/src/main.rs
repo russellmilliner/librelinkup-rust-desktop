@@ -52,9 +52,10 @@ fn print_usage() {
         "LibreLinkUp Rust Desktop for Windows v{}\n\n\
          Usage: LibreLinkUp.exe [OPTIONS]\n\n\
          Options:\n  \
-           -m, --minimized   Start hidden in the system tray\n  \
-           -V, --version     Print version information\n  \
-           -h, --help        Print this help message",
+           -m, --minimized     Start hidden in the system tray\n  \
+           -u, --check-update  Check GitHub Releases for updates and exit\n  \
+           -V, --version       Print version information\n  \
+           -h, --help          Print this help message",
         env!("CARGO_PKG_VERSION")
     );
 }
@@ -69,6 +70,23 @@ fn main() {
     if args.iter().any(|a| a == "--help" || a == "-h" || a == "/?") {
         platform::attach_parent_console();
         print_usage();
+        return;
+    }
+    if args.iter().any(|a| a == "--check-update" || a == "-u") {
+        platform::attach_parent_console();
+        match librelinkup_core::updater::check_for_updates_blocking(env!("CARGO_PKG_VERSION")) {
+            Ok(res) => {
+                println!("{}", res.message);
+                println!("Release page: {}", res.release_url);
+                if res.update_available {
+                    println!("Download URL: {}", res.download_url);
+                }
+            }
+            Err(e) => {
+                eprintln!("{e}");
+                std::process::exit(1);
+            }
+        }
         return;
     }
     if args.iter().any(|a| a == "--self-test") {
@@ -187,6 +205,9 @@ fn handle_tray_action(
         }
         TrayAction::SetOverlay(visible) => update_settings(&|s| s.overlay_visible = visible),
         TrayAction::SetAutostart(enabled) => update_settings(&|s| s.autostart_enabled = enabled),
+        TrayAction::CheckUpdates => {
+            let _ = tx.send(Command::CheckUpdates { manual: true });
+        }
         TrayAction::Quit => {
             ui.quit();
             // Safety net if the window cannot process the close request.
@@ -302,6 +323,12 @@ fn self_test() -> i32 {
     check("alert-sound", {
         let samples = librelinkup_core::alert_sound::generate_alert_samples();
         if samples.len() > 44_100 { Ok(format!("{} samples", samples.len())) } else { Err("too short".into()) }
+    });
+
+    check("updater", {
+        let sample = r#"{"tag_name":"v9.9.9","html_url":"https://github.com/russellmilliner/librelinkup-rust-desktop/releases/tag/v9.9.9"}"#;
+        librelinkup_core::updater::parse_github_release_json(sample, env!("CARGO_PKG_VERSION"))
+            .and_then(|res| if res.update_available { Ok(res.message) } else { Err("expected update_available=true".into()) })
     });
 
     check("network", (|| {

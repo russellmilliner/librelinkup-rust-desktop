@@ -14,9 +14,27 @@ fn main() {
              Usage: librelinkup-kde [OPTIONS]\n\n\
              Options:\n  \
                -m, --minimized, --start-minimized, --autostart   Start hidden in the system tray\n  \
+               -u, --check-update                                Check GitHub Releases for updates and exit\n  \
                -V, --version                                     Print version information\n  \
                -h, --help                                        Print this help message"
         );
+        return;
+    }
+
+    if args.iter().any(|a| a == "--check-update" || a == "-u") {
+        match librelinkup_kde::updater::check_for_updates_blocking(env!("CARGO_PKG_VERSION")) {
+            Ok(res) => {
+                println!("{}", res.message);
+                println!("Release page: {}", res.release_url);
+                if res.update_available {
+                    println!("Download URL: {}", res.download_url);
+                }
+            }
+            Err(e) => {
+                eprintln!("{e}");
+                std::process::exit(1);
+            }
+        }
         return;
     }
 

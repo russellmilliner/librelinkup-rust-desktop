@@ -93,8 +93,14 @@ fn test_encryption_nonce_uniqueness_and_tamper_detection() {
     assert_ne!(env1.ciphertext_hex, env2.ciphertext_hex);
     assert_ne!(env1.nonce_hex, env2.nonce_hex);
     assert_ne!(env1.salt_hex, env2.salt_hex);
-    assert_eq!(decrypt_credentials_with_secret(&env1, secret).unwrap(), creds);
-    assert_eq!(decrypt_credentials_with_secret(&env2, secret).unwrap(), creds);
+    assert_eq!(
+        decrypt_credentials_with_secret(&env1, secret).unwrap(),
+        creds
+    );
+    assert_eq!(
+        decrypt_credentials_with_secret(&env2, secret).unwrap(),
+        creds
+    );
 
     // Tampering with ciphertext must fail GCM authentication tag verification
     let mut tampered = env1.clone();
@@ -294,14 +300,8 @@ fn test_log_viewer_filtering_and_export() {
 #[test]
 fn test_mock_librelinkup_api_server() {
     assert_eq!(normalize_country_code("ch"), "eu");
-    assert_eq!(
-        resolve_base_url("us"),
-        "https://api-us.libreview.io/llu"
-    );
-    assert_eq!(
-        resolve_base_url("global"),
-        "https://api.libreview.io/llu"
-    );
+    assert_eq!(resolve_base_url("us"), "https://api-us.libreview.io/llu");
+    assert_eq!(resolve_base_url("global"), "https://api.libreview.io/llu");
 
     let listener = TcpListener::bind("127.0.0.1:0").unwrap();
     let addr = listener.local_addr().unwrap();
@@ -461,6 +461,9 @@ fn test_all_11_supported_regional_endpoints() {
         ("ae", "https://api-ae.libreview.io/llu"),
         ("ca", "https://api-ca.libreview.io/llu"),
         ("ch", "https://api-eu.libreview.io/llu"),
+        ("fi", "https://api-eu.libreview.io/llu"),
+        ("gb", "https://api-eu2.libreview.io/llu"),
+        ("la", "https://api-la.libreview.io/llu"),
         ("global", "https://api.libreview.io/llu"),
     ];
     for (region, url) in expected {
@@ -476,17 +479,38 @@ fn test_live_libreview_waf_no_403_forbidden() {
         .unwrap();
 
     rt.block_on(async {
-        let res = authenticate_async("us", "nonexistent_probe_user@example.com", "invalid_password_123").await;
+        let res = authenticate_async(
+            "us",
+            "nonexistent_probe_user@example.com",
+            "invalid_password_123",
+        )
+        .await;
         println!("Live probe result: {:?}", res);
         // Must return InvalidCredentials (HTTP 200 with {"status":2}), NEVER ServerError(403, ...)
         assert_eq!(res, Err(ApiError::InvalidCredentials));
 
         let ldb_dir = librelinkup_kde::paths::legacy_flatpak_leveldb_dir();
         if let Some(creds) = try_migrate_legacy_leveldb_credentials(&ldb_dir) {
-            println!("Migrated creds country={} account_id={}", creds.country, creds.account_id);
-            let snap_res = fetch_cgm_snapshot_async(&creds.country, &creds.token, &creds.account_id).await;
-            println!("Live snapshot result: {:?}", snap_res.as_ref().map(|s| (s.value_mg_dl, s.trend_arrow, &s.first_name, s.graph_points.len())));
-            assert!(snap_res.is_ok(), "Expected live CGM snapshot to succeed, got: {:?}", snap_res);
+            println!(
+                "Migrated creds country={} account_id={}",
+                creds.country, creds.account_id
+            );
+            let snap_res =
+                fetch_cgm_snapshot_async(&creds.country, &creds.token, &creds.account_id).await;
+            println!(
+                "Live snapshot result: {:?}",
+                snap_res.as_ref().map(|s| (
+                    s.value_mg_dl,
+                    s.trend_arrow,
+                    &s.first_name,
+                    s.graph_points.len()
+                ))
+            );
+            assert!(
+                snap_res.is_ok(),
+                "Expected live CGM snapshot to succeed, got: {:?}",
+                snap_res
+            );
         }
     });
 }

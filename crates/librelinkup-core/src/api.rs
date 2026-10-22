@@ -75,10 +75,31 @@ pub fn normalize_country_code(country: &str) -> String {
     if lower.is_empty() {
         return "global".to_string();
     }
-    if lower == "ch" {
-        return "eu".to_string();
+    if lower.starts_with("http://") || lower.starts_with("https://") {
+        return lower.trim_end_matches('/').to_string();
     }
-    lower
+    match lower.as_str() {
+        // Direct LibreView API regional identifiers
+        "global" | "us" | "eu" | "eu2" | "de" | "fr" | "ca" | "au" | "ap" | "jp" | "ae" | "la" => {
+            lower
+        }
+        // UK & Ireland route to eu2 (https://api-eu2.libreview.io/llu)
+        "gb" | "uk" | "ie" => "eu2".to_string(),
+        // European / EEA / EMEA countries routed to eu (https://api-eu.libreview.io/llu)
+        // per Abbott's official /llu/config/country regionalMap
+        "at" | "be" | "bg" | "bh" | "ch" | "cy" | "cz" | "dk" | "ee" | "eg" | "es" | "fi"
+        | "gr" | "hr" | "hu" | "il" | "is" | "it" | "jo" | "kw" | "lb" | "li" | "lt" | "lu"
+        | "lv" | "mt" | "nl" | "no" | "om" | "pl" | "pt" | "qa" | "ro" | "sa" | "se" | "si"
+        | "sk" | "tr" | "za" => "eu".to_string(),
+        // Asia-Pacific countries routed to ap (https://api-ap.libreview.io/llu)
+        "hk" | "id" | "in" | "kr" | "my" | "ph" | "sg" | "th" | "tw" | "vn" => "ap".to_string(),
+        // Oceania routed to au (https://api-au.libreview.io/llu)
+        "nz" => "au".to_string(),
+        // Latin America routed to la (https://api-la.libreview.io/llu)
+        "latam" | "ar" | "bo" | "br" | "cl" | "co" | "cr" | "do" | "ec" | "gt" | "mx" | "pa"
+        | "pe" | "py" | "uy" => "la".to_string(),
+        _ => lower,
+    }
 }
 
 pub fn resolve_base_url(country_code: &str) -> String {
@@ -431,9 +452,12 @@ pub fn parse_login_response(
         return Ok((Some(target_region), None));
     }
 
-    let final_country = region_redirect
-        .or(user_country)
-        .unwrap_or_else(|| normalize_country_code(requested_country));
+    // When login succeeds without redirect, preserve the regional endpoint that
+    // issued the authTicket (`requested_country`, or explicit `data.region` if present).
+    // Do NOT overwrite the chosen API region with `data.user.country` (which is the
+    // user's ISO residence country such as "FI", not an API server subdomain).
+    let final_country =
+        region_redirect.unwrap_or_else(|| normalize_country_code(requested_country));
 
     Ok((
         None,
@@ -738,5 +762,53 @@ mod tests {
     #[test]
     fn curl_secret_config_empty_without_secrets() {
         assert!(build_curl_secret_config(None, None, None).is_empty());
+    }
+
+    #[test]
+    fn login_preserves_selected_region_when_user_country_differs() {
+        let body = serde_json::json!({
+            "status": 0,
+            "data": {
+                "user": {
+                    "id": "u-fi-1",
+                    "firstName": "Matti",
+                    "lastName": "Meikalainen",
+                    "country": "FI"
+                },
+                "authTicket": {
+                    "token": "jwt-eu-tok",
+                    "expires": 1999999999
+                }
+            }
+        });
+        let (redirect, auth) = parse_login_response(&body, "eu").expect("parse login");
+        assert!(redirect.is_none());
+        let auth = auth.expect("auth present");
+        assert_eq!(auth.country, "eu");
+        assert_eq!(
+            resolve_base_url(&auth.country),
+            "https://api-eu.libreview.io/llu"
+        );
+    }
+
+    #[test]
+    fn normalize_iso_countries_to_libreview_regions() {
+        for eu_country in ["FI", "fi", "SE", "NO", "DK", "NL", "BE", "AT", "ES", "IT", "PL", "PT", "CH", "ZA"] {
+            assert_eq!(normalize_country_code(eu_country), "eu", "failed for {eu_country}");
+            assert_eq!(
+                resolve_base_url(eu_country),
+                "https://api-eu.libreview.io/llu"
+            );
+        }
+        for eu2_country in ["GB", "uk", "IE"] {
+            assert_eq!(normalize_country_code(eu2_country), "eu2", "failed for {eu2_country}");
+            assert_eq!(
+                resolve_base_url(eu2_country),
+                "https://api-eu2.libreview.io/llu"
+            );
+        }
+        assert_eq!(normalize_country_code("NZ"), "au");
+        assert_eq!(normalize_country_code("BR"), "la");
+        assert_eq!(normalize_country_code("SG"), "ap");
     }
 }

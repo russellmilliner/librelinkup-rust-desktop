@@ -47,14 +47,15 @@ Kirigami.ApplicationWindow {
         { value: "us", label: "United States (us)" },
         { value: "global", label: "Global (global)" },
         { value: "eu", label: "European Union (eu)" },
-        { value: "eu2", label: "European Union 2 (eu2)" },
+        { value: "eu2", label: "United Kingdom & Ireland (eu2)" },
         { value: "de", label: "Germany (de)" },
         { value: "fr", label: "France (fr)" },
         { value: "ca", label: "Canada (ca)" },
-        { value: "au", label: "Australia (au)" },
+        { value: "au", label: "Australia & New Zealand (au)" },
         { value: "ap", label: "Asia / Pacific (ap)" },
         { value: "jp", label: "Japan (jp)" },
-        { value: "ae", label: "United Arab Emirates (ae)" }
+        { value: "ae", label: "United Arab Emirates (ae)" },
+        { value: "la", label: "Latin America (la)" }
     ]
 
     function regionIndexForCode(code) {
@@ -501,6 +502,20 @@ Kirigami.ApplicationWindow {
                                     valueRole: "value"
                                     Component.onCompleted: {
                                         currentIndex = root.regionIndexForCode(appController.country)
+                                    }
+                                    onActivated: function(index) {
+                                        if (index >= 0 && index < root.regionOptions.length) {
+                                            appController.updateCountry(root.regionOptions[index].value)
+                                        }
+                                    }
+                                    Connections {
+                                        target: appController
+                                        function onCountryChanged() {
+                                            const targetIdx = root.regionIndexForCode(appController.country)
+                                            if (loginRegionCombo.currentIndex !== targetIdx) {
+                                                loginRegionCombo.currentIndex = targetIdx
+                                            }
+                                        }
                                     }
                                 }
                             }
@@ -1845,12 +1860,29 @@ Kirigami.ApplicationWindow {
                             wrapMode: Text.WordWrap
                         }
 
-                        QQC2.Label {
-                            text: qsTr("Regional Endpoint: %1").arg(appController.country.toUpperCase())
-                            color: Kirigami.Theme.textColor
+                        RowLayout {
                             Layout.fillWidth: true
-                            Layout.preferredWidth: 0
-                            wrapMode: Text.WordWrap
+                            spacing: 10
+                            QQC2.Label {
+                                text: qsTr("Regional Endpoint: %1").arg(appController.country.toUpperCase())
+                                color: Kirigami.Theme.textColor
+                                Layout.fillWidth: true
+                                Layout.preferredWidth: 0
+                                wrapMode: Text.WordWrap
+                            }
+                            QQC2.ComboBox {
+                                id: settingsRegionCombo
+                                Layout.preferredWidth: 230
+                                model: root.regionOptions
+                                textRole: "label"
+                                valueRole: "value"
+                                currentIndex: root.regionIndexForCode(appController.country)
+                                onActivated: function(index) {
+                                    if (index >= 0 && index < root.regionOptions.length) {
+                                        appController.updateCountry(root.regionOptions[index].value)
+                                    }
+                                }
+                            }
                         }
 
                         QQC2.Label {

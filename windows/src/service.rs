@@ -7,7 +7,9 @@
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
-use librelinkup_core::api::{authenticate_async, fetch_cgm_snapshot_async, ApiError};
+use librelinkup_core::api::{
+    authenticate_async, fetch_cgm_snapshot_async, normalize_country_code, ApiError,
+};
 use librelinkup_core::crypto::{
     clear_credentials_at_path, load_credentials_with_secret, save_credentials_with_secret,
     StoredCredentials,
@@ -76,6 +78,7 @@ fn lock(shared: &SharedState) -> std::sync::MutexGuard<'_, Shared> {
 /// Loads settings and starts the service thread. Returns the shared state and command sender.
 pub fn start(notifier: Arc<dyn UiNotifier>) -> (SharedState, UnboundedSender<Command>) {
     let mut settings = load_default_settings();
+    settings.country = normalize_country_code(&settings.country);
     // The registry Run key is the source of truth on Windows (the installer may set it).
     settings.autostart_enabled = platform::is_autostart_registered();
     let shared = Arc::new(Mutex::new(Shared {
@@ -166,19 +169,35 @@ impl Service {
             }
         };
         match load_credentials_with_secret(&credentials_file_path(), &secret) {
-            Ok(Some(creds)) if creds.has_valid_session() => {
+            Ok(Some(mut creds)) if creds.has_valid_session() => {
+                let normalized_country = normalize_country_code(&creds.country);
+                if normalized_country != creds.country {
+                    log_info(
+                        "CRYPTO",
+                        format!(
+                            "Normalized stored credential region '{}' -> '{}'",
+                            creds.country, normalized_country
+                        ),
+                    );
+                    creds.country = normalized_country;
+                    self.save_vault(&creds);
+                }
                 log_info(
                     "CRYPTO",
                     format!("Loaded DPAPI-protected credentials (region '{}').", creds.country),
                 );
                 let username = creds.username.clone();
+                let active_country = creds.country.clone();
                 self.creds = Some(creds);
                 self.update(|s| {
                     s.logged_in = true;
                     s.vault_ok = true;
                     s.username = username;
+                    s.settings.country = active_country;
                     s.status = "Signed in — fetching glucose data...".into();
                 });
+                let settings = lock(&self.shared).settings.clone();
+                let _ = save_default_settings(&settings);
             }
             Ok(_) => {
                 log_info("AUTH", "No stored session — awaiting sign-in.");
@@ -224,6 +243,8 @@ impl Service {
             }
             Command::RefreshNow => true,
             Command::SaveSettings(settings) => {
+                let mut settings = *settings;
+                settings.country = normalize_country_code(&settings.country);
                 let previous = lock(&self.shared).settings.clone();
                 if previous.autostart_enabled != settings.autostart_enabled
                     || previous.start_minimized != settings.start_minimized
@@ -234,12 +255,31 @@ impl Service {
                         Err(e) => log_error("SYSTEM", format!("Failed to update autostart: {e}")),
                     }
                 }
+                let mut country_changed = false;
+                if let Some(ref mut creds) = self.creds {
+                    if creds.country != settings.country {
+                        log_info(
+                            "AUTH",
+                            format!(
+                                "Updated active regional endpoint '{}' -> '{}'",
+                                creds.country, settings.country
+                            ),
+                        );
+                        creds.country = settings.country.clone();
+                        country_changed = true;
+                    }
+                }
+                if country_changed {
+                    if let Some(ref creds) = self.creds {
+                        self.save_vault(creds);
+                    }
+                }
                 if let Err(e) = save_default_settings(&settings) {
                     log_error("SYSTEM", format!("Failed to save settings: {e}"));
                 }
-                self.update(|s| s.settings = *settings);
+                self.update(|s| s.settings = settings);
                 self.evaluate_alerts();
-                false
+                country_changed
             }
             Command::Snooze(minutes) => {
                 let until = if minutes > 0 { now_epoch() + i64::from(minutes.min(1440)) * 60 } else { 0 };
@@ -380,7 +420,11 @@ impl Service {
             self.update(|s| s.error = "Please enter both your LibreLinkUp email and password.".into());
             return false;
         }
-        let country = if country.trim().is_empty() { "us".to_string() } else { country.trim().to_lowercase() };
+        let country = if country.trim().is_empty() {
+            "us".to_string()
+        } else {
+            normalize_country_code(&country)
+        };
         log_info("AUTH", format!("Attempting LibreLinkUp login (region: {country})"));
         self.update(|s| {
             s.busy = true;

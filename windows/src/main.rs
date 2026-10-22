@@ -331,12 +331,24 @@ fn self_test() -> i32 {
             .and_then(|res| if res.update_available { Ok(res.message) } else { Err("expected update_available=true".into()) })
     });
 
+    check("region-normalization", (|| {
+        use librelinkup_core::api::{normalize_country_code, resolve_base_url};
+        let fi = normalize_country_code("FI");
+        let gb = normalize_country_code("GB");
+        let eu_url = resolve_base_url("FI");
+        if fi == "eu" && gb == "eu2" && eu_url == "https://api-eu.libreview.io/llu" {
+            Ok(format!("FI -> {fi} ({eu_url}), GB -> {gb}"))
+        } else {
+            Err(format!("unexpected mapping: FI->{fi} ({eu_url}), GB->{gb}"))
+        }
+    })());
+
     check("network", (|| {
         let rt = tokio::runtime::Builder::new_current_thread().enable_all().build().map_err(|e| e.to_string())?;
         // Invalid credentials must yield LibreView's "invalid credentials" (proves DNS, TLS and
-        // the HTTP client/curl fallback work), never a transport error.
-        match rt.block_on(librelinkup_core::api::authenticate_async("us", "llu-self-test@example.invalid", "not-a-real-password")) {
-            Err(librelinkup_core::api::ApiError::InvalidCredentials) => Ok("LibreView reachable (invalid test credentials rejected as expected)".into()),
+        // the HTTP client/curl fallback work), never a transport error. Also test "FI" -> api-eu.
+        match rt.block_on(librelinkup_core::api::authenticate_async("FI", "llu-self-test@example.invalid", "not-a-real-password")) {
+            Err(librelinkup_core::api::ApiError::InvalidCredentials) => Ok("LibreView EU reachable via FI->eu normalization (invalid test credentials rejected as expected)".into()),
             Err(librelinkup_core::api::ApiError::NetworkError(e)) => Err(format!("network error: {e}")),
             other => Ok(format!("LibreView responded: {other:?}")),
         }

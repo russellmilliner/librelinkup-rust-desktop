@@ -25,7 +25,7 @@ pub struct UpdateCheckResult {
     pub message: String,
 }
 
-/// Parses a version string such as `"v0.4.0"` or `"0.4.0-rc1"` into `(major, minor, patch)`.
+/// Parses a version string such as `"v0.4.1"` or `"0.4.1-rc1"` into `(major, minor, patch)`.
 pub fn parse_semver(version: &str) -> Option<(u32, u32, u32)> {
     let cleaned = version
         .trim()
@@ -154,7 +154,10 @@ fn github_headers(current_version: &str) -> HeaderMap {
     } else {
         headers.insert(
             USER_AGENT,
-            HeaderValue::from_static("librelinkup-rust-desktop/0.4.0"),
+            HeaderValue::from_static(concat!(
+                "librelinkup-rust-desktop/",
+                env!("CARGO_PKG_VERSION")
+            )),
         );
     }
     headers.insert(
@@ -292,10 +295,10 @@ mod tests {
             ]
         }"####;
 
-        let res = parse_github_release_json(sample, "0.4.0").expect("valid release JSON");
+        let res = parse_github_release_json(sample, "0.4.1").expect("valid release JSON");
         assert!(res.checked);
         assert!(res.update_available);
-        assert_eq!(res.current_version, "v0.4.0");
+        assert_eq!(res.current_version, "v0.4.1");
         assert_eq!(res.latest_version, "v0.5.0");
         assert_eq!(
             res.release_url,

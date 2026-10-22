@@ -266,7 +266,9 @@ use cxx_qt::{CxxQtType, Threading};
 use cxx_qt_lib::QString;
 
 use crate::alert_sound::default_alert_sound;
-use crate::api::{authenticate_async, fetch_cgm_snapshot_async, ApiError, AuthSuccess};
+use crate::api::{
+    authenticate_async, fetch_cgm_snapshot_async, normalize_country_code, ApiError, AuthSuccess,
+};
 use crate::crypto::{
     clear_default_credentials, load_default_credentials, save_default_credentials,
     StoredCredentials,
@@ -276,15 +278,13 @@ use crate::event_log::{
     log_warn,
 };
 use crate::models::{
-    format_glucose_value, format_target_range, load_default_settings, save_default_settings,
-    format_reading_age, reading_age_minutes, trend_arrow_description, trend_arrow_symbol,
+    format_glucose_value, format_reading_age, format_target_range, load_default_settings,
+    reading_age_minutes, save_default_settings, trend_arrow_description, trend_arrow_symbol,
     AlertKind, AppSettings, GlucoseRangeStatus, GlucoseSnapshot, GraphPoint,
     DEFAULT_TARGET_HIGH_MG_DL, DEFAULT_TARGET_LOW_MG_DL, STALE_COLOR_HEX,
 };
 use crate::paths::{autostart_desktop_path, credentials_file_path, APP_ID};
-use crate::updater::{
-    check_for_updates_async, UpdateCheckResult, GITHUB_RELEASES_PAGE_URL,
-};
+use crate::updater::{check_for_updates_async, UpdateCheckResult, GITHUB_RELEASES_PAGE_URL};
 
 /// Single long-lived multi-thread runtime for all LibreView network I/O, so nothing
 /// network-related ever blocks the Qt GUI thread (and connections/TLS can be reused).
@@ -320,19 +320,20 @@ fn fire_alert(settings: &AppSettings, title: &str, body: &str, critical: bool) {
     }
     if settings.audio_alert_enabled {
         let custom = settings.custom_sound_path.trim();
-        let sound_path = if settings.use_custom_sound && !custom.is_empty() && Path::new(custom).is_file() {
-            custom.to_string()
-        } else {
-            if settings.use_custom_sound && !custom.is_empty() {
-                log_warn(
-                    "ALERT",
-                    format!("Custom alert sound not found ({custom}); using built-in alarm."),
-                );
-            }
-            default_alert_sound()
-                .map(|p| p.to_string_lossy().into_owned())
-                .unwrap_or_default()
-        };
+        let sound_path =
+            if settings.use_custom_sound && !custom.is_empty() && Path::new(custom).is_file() {
+                custom.to_string()
+            } else {
+                if settings.use_custom_sound && !custom.is_empty() {
+                    log_warn(
+                        "ALERT",
+                        format!("Custom alert sound not found ({custom}); using built-in alarm."),
+                    );
+                }
+                default_alert_sound()
+                    .map(|p| p.to_string_lossy().into_owned())
+                    .unwrap_or_default()
+            };
         qobject::librelinkup_play_alert_sound(&QString::from(sound_path.as_str()));
     }
     qobject::librelinkup_show_notification(&QString::from(title), &QString::from(body), critical);
@@ -448,7 +449,7 @@ impl Default for AppControllerRust {
             status_message: QString::from("Ready"),
             error_message: QString::from(""),
             username: QString::from(""),
-            country: QString::from(settings.country.as_str()),
+            country: QString::from(normalize_country_code(&settings.country).as_str()),
             language: QString::from(settings.language.as_str()),
             patient_name: QString::from(""),
             patient_id: QString::from(""),
@@ -586,7 +587,10 @@ fn sync_autostart_desktop_file(enabled: bool, start_minimized: bool) {
                 ),
             );
         } else {
-            log_warn("SYSTEM", "Could not reach the Background portal to update autostart.");
+            log_warn(
+                "SYSTEM",
+                "Could not reach the Background portal to update autostart.",
+            );
         }
         return;
     }
@@ -622,7 +626,8 @@ impl qobject::AppController {
     fn sync_logs_to_properties(mut self: Pin<&mut Self>) {
         let json = get_events_json();
         let count = get_event_count() as i32;
-        self.as_mut().set_event_log_json(QString::from(json.as_str()));
+        self.as_mut()
+            .set_event_log_json(QString::from(json.as_str()));
         self.as_mut().set_event_log_count(count);
     }
 
@@ -811,7 +816,21 @@ impl qobject::AppController {
         }
 
         match load_default_credentials() {
-            Ok(Some(creds)) if creds.has_valid_session() => {
+            Ok(Some(mut creds)) if creds.has_valid_session() => {
+                if !creds.country.is_empty() {
+                    let norm_country = normalize_country_code(&creds.country);
+                    if norm_country != creds.country {
+                        log_info(
+                            "API",
+                            format!(
+                                "Normalized stored country code '{}' to regional endpoint '{}'.",
+                                creds.country, norm_country
+                            ),
+                        );
+                        creds.country = norm_country;
+                        let _ = save_default_credentials(&creds);
+                    }
+                }
                 log_info(
                     "CRYPTO",
                     format!(
@@ -826,15 +845,16 @@ impl qobject::AppController {
                 if !creds.country.is_empty() {
                     self.as_mut()
                         .set_country(QString::from(creds.country.as_str()));
+                    let settings = current_settings_from_controller(&self);
+                    let _ = save_default_settings(&settings);
                 }
                 if !creds.language.is_empty() {
                     self.as_mut()
                         .set_language(QString::from(creds.language.as_str()));
                 }
-                let full_name =
-                    format!("{} {}", creds.first_name.trim(), creds.last_name.trim())
-                        .trim()
-                        .to_string();
+                let full_name = format!("{} {}", creds.first_name.trim(), creds.last_name.trim())
+                    .trim()
+                    .to_string();
                 if !full_name.is_empty() {
                     self.as_mut()
                         .set_patient_name(QString::from(full_name.as_str()));
@@ -853,7 +873,10 @@ impl qobject::AppController {
                     .set_status_message(QString::from("Please sign in to LibreLinkUp"));
             }
             Err(e) => {
-                log_warn("CRYPTO", format!("Could not decrypt stored credentials: {e}"));
+                log_warn(
+                    "CRYPTO",
+                    format!("Could not decrypt stored credentials: {e}"),
+                );
                 self.as_mut().set_error_message(QString::from(e.as_str()));
             }
         }
@@ -893,7 +916,7 @@ impl qobject::AppController {
         let country_str = if country.to_string().trim().is_empty() {
             "us".to_string()
         } else {
-            country.to_string().trim().to_lowercase()
+            normalize_country_code(&country.to_string())
         };
         let lang_str = if language.to_string().trim().is_empty() {
             "en".to_string()
@@ -943,7 +966,10 @@ impl qobject::AppController {
                 qobject.apply_login_outcome(generation, user_str, pass_str, lang_str, auth_res);
             });
             if queued.is_err() {
-                log_warn("SYSTEM", "Login finished after the controller was destroyed.");
+                log_warn(
+                    "SYSTEM",
+                    "Login finished after the controller was destroyed.",
+                );
             }
         });
         true
@@ -987,7 +1013,10 @@ impl qobject::AppController {
                         self.as_mut().set_credentials_encrypted(true);
                     }
                     Err(e) => {
-                        log_error("CRYPTO", format!("Failed to save encrypted credentials: {e}"));
+                        log_error(
+                            "CRYPTO",
+                            format!("Failed to save encrypted credentials: {e}"),
+                        );
                     }
                 }
 
@@ -1038,7 +1067,10 @@ impl qobject::AppController {
         self.as_mut().set_error_message(QString::from(""));
         self.as_mut()
             .set_status_message(QString::from("Signed out — encrypted vault cleared."));
-        log_info("AUTH", "User signed out and encrypted credentials file deleted.");
+        log_info(
+            "AUTH",
+            "User signed out and encrypted credentials file deleted.",
+        );
         self.as_mut().sync_tray_and_ui();
         self.as_mut().sync_logs_to_properties();
     }
@@ -1104,7 +1136,10 @@ impl qobject::AppController {
                 qobject.apply_refresh_outcome(generation, seq, outcome);
             });
             if queued.is_err() {
-                log_warn("SYSTEM", "Refresh finished after the controller was destroyed.");
+                log_warn(
+                    "SYSTEM",
+                    "Refresh finished after the controller was destroyed.",
+                );
             }
         });
     }
@@ -1256,7 +1291,11 @@ impl qobject::AppController {
         stale_after_minutes: i32,
         alert_on_stale: bool,
     ) {
-        let urgent_low = if urgent_low.is_finite() { urgent_low.clamp(40.0, 100.0) } else { 55.0 };
+        let urgent_low = if urgent_low.is_finite() {
+            urgent_low.clamp(40.0, 100.0)
+        } else {
+            55.0
+        };
         self.as_mut().set_urgent_low_mg_dl(urgent_low);
         self.as_mut()
             .set_alert_repeat_minutes(repeat_minutes.clamp(1, 240));
@@ -1307,12 +1346,22 @@ impl qobject::AppController {
     }
 
     pub fn update_country(mut self: Pin<&mut Self>, country: QString) {
-        let clean = country.to_string().trim().to_lowercase();
-        if !clean.is_empty() {
+        let raw = country.to_string();
+        if !raw.trim().is_empty() {
+            let clean = normalize_country_code(&raw);
             self.as_mut().set_country(QString::from(clean.as_str()));
+            if let Some(ref mut creds) = self.as_mut().rust_mut().creds {
+                if creds.country != clean {
+                    creds.country = clean.clone();
+                    let _ = save_default_credentials(creds);
+                }
+            }
             let settings = current_settings_from_controller(&self);
             let _ = save_default_settings(&settings);
             log_info("API", format!("Updated regional server to '{clean}'."));
+            if *self.logged_in() {
+                self.as_mut().refresh_glucose_now();
+            }
             self.as_mut().sync_logs_to_properties();
         }
     }
@@ -1388,10 +1437,7 @@ impl qobject::AppController {
         self.as_mut().set_overlay_dark_theme(enabled);
         let settings = current_settings_from_controller(&self);
         let _ = save_default_settings(&settings);
-        log_info(
-            "SYSTEM",
-            format!("Desktop overlay dark theme: {enabled}"),
-        );
+        log_info("SYSTEM", format!("Desktop overlay dark theme: {enabled}"));
         self.as_mut().sync_logs_to_properties();
     }
 
@@ -1437,7 +1483,9 @@ impl qobject::AppController {
             let _ = save_default_settings(&settings);
             log_info(
                 "SYSTEM",
-                format!("Saved overlay placement: screen='{clean_screen}' pos=({x},{y}) size={w}x{h}"),
+                format!(
+                    "Saved overlay placement: screen='{clean_screen}' pos=({x},{y}) size={w}x{h}"
+                ),
             );
             self.as_mut().sync_logs_to_properties();
         }
@@ -1501,7 +1549,10 @@ impl qobject::AppController {
         }
         let settings = current_settings_from_controller(&self);
         let _ = save_default_settings(&settings);
-        log_info("SYSTEM", format!("Start minimized to tray on login: {enabled}"));
+        log_info(
+            "SYSTEM",
+            format!("Start minimized to tray on login: {enabled}"),
+        );
         self.as_mut().sync_tray_and_ui();
         self.as_mut().sync_logs_to_properties();
     }
@@ -1573,14 +1624,38 @@ impl qobject::AppController {
 
     pub fn load_demo_sample_data(mut self: Pin<&mut Self>) {
         let sample_points = vec![
-            GraphPoint { timestamp: "08:00".to_string(), value_mg_dl: 98.0 },
-            GraphPoint { timestamp: "08:30".to_string(), value_mg_dl: 104.0 },
-            GraphPoint { timestamp: "09:00".to_string(), value_mg_dl: 118.0 },
-            GraphPoint { timestamp: "09:30".to_string(), value_mg_dl: 132.0 },
-            GraphPoint { timestamp: "10:00".to_string(), value_mg_dl: 125.0 },
-            GraphPoint { timestamp: "10:30".to_string(), value_mg_dl: 114.0 },
-            GraphPoint { timestamp: "11:00".to_string(), value_mg_dl: 109.0 },
-            GraphPoint { timestamp: "11:30".to_string(), value_mg_dl: 112.0 },
+            GraphPoint {
+                timestamp: "08:00".to_string(),
+                value_mg_dl: 98.0,
+            },
+            GraphPoint {
+                timestamp: "08:30".to_string(),
+                value_mg_dl: 104.0,
+            },
+            GraphPoint {
+                timestamp: "09:00".to_string(),
+                value_mg_dl: 118.0,
+            },
+            GraphPoint {
+                timestamp: "09:30".to_string(),
+                value_mg_dl: 132.0,
+            },
+            GraphPoint {
+                timestamp: "10:00".to_string(),
+                value_mg_dl: 125.0,
+            },
+            GraphPoint {
+                timestamp: "10:30".to_string(),
+                value_mg_dl: 114.0,
+            },
+            GraphPoint {
+                timestamp: "11:00".to_string(),
+                value_mg_dl: 109.0,
+            },
+            GraphPoint {
+                timestamp: "11:30".to_string(),
+                value_mg_dl: 112.0,
+            },
         ];
         self.as_mut().rust_mut().snapshot = GlucoseSnapshot {
             value_mg_dl: 112.0,
@@ -1597,7 +1672,10 @@ impl qobject::AppController {
         self.as_mut().set_logged_in(true);
         self.as_mut()
             .set_status_message(QString::from("Sample CGM telemetry loaded"));
-        log_info("GLUCOSE", "Loaded sample CGM telemetry (112 mg/dL → Stable).");
+        log_info(
+            "GLUCOSE",
+            "Loaded sample CGM telemetry (112 mg/dL → Stable).",
+        );
         self.as_mut().sync_tray_and_ui();
         self.as_mut().sync_logs_to_properties();
     }
@@ -1675,7 +1753,10 @@ impl qobject::AppController {
         self.as_mut()
             .set_update_status_message(QString::from("Checking GitHub Releases for updates..."));
         if manual {
-            log_info("SYSTEM", "Checking GitHub Releases for application updates...");
+            log_info(
+                "SYSTEM",
+                "Checking GitHub Releases for application updates...",
+            );
             self.as_mut().sync_logs_to_properties();
         }
 

@@ -7,6 +7,7 @@ use eframe::egui::{
     self, Align, Align2, Color32, CornerRadius, FontId, Layout, Pos2, Rect, RichText, Sense, Shape,
     Stroke, Vec2, ViewportBuilder, ViewportCommand, ViewportId,
 };
+use librelinkup_core::api::normalize_country_code;
 use librelinkup_core::event_log::{clear_events, export_events_to_path, get_all_events};
 use librelinkup_core::models::{
     convert_mg_dl_to_unit, format_glucose_value, format_reading_age, format_target_range,
@@ -25,7 +26,7 @@ pub const REGIONS: &[(&str, &str)] = &[
     ("us", "United States"),
     ("global", "Global"),
     ("eu", "European Union"),
-    ("eu2", "European Union 2"),
+    ("eu2", "European Union 2 / UK"),
     ("de", "Germany"),
     ("fr", "France"),
     ("ca", "Canada"),
@@ -33,6 +34,7 @@ pub const REGIONS: &[(&str, &str)] = &[
     ("ap", "Asia / Pacific"),
     ("jp", "Japan"),
     ("ae", "United Arab Emirates"),
+    ("la", "Latin America"),
 ];
 
 /// Cross-thread handle to the main window (used by the tray and the service notifier).
@@ -103,7 +105,10 @@ pub struct LibreLinkUpApp {
 
 impl LibreLinkUpApp {
     pub fn new(shared: SharedState, tx: UnboundedSender<Command>, ui_handle: Arc<UiHandle>) -> Self {
-        let region = shared.lock().map(|s| s.settings.country.clone()).unwrap_or_else(|_| "us".into());
+        let region = shared
+            .lock()
+            .map(|s| normalize_country_code(&s.settings.country))
+            .unwrap_or_else(|_| "us".into());
         Self {
             shared,
             tx,
@@ -510,6 +515,9 @@ impl LibreLinkUpApp {
                 ui.end_row();
                 ui.label("Refresh every");
                 ui.add(egui::DragValue::new(&mut s.poll_interval_seconds).range(15..=3600).suffix(" s"));
+                ui.end_row();
+                ui.label("Regional endpoint");
+                region_combo(ui, &mut s.country);
                 ui.end_row();
             });
         });

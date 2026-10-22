@@ -38,6 +38,11 @@ if [[ -f "$TOOLCHAIN_ENV" ]]; then
   . "$TOOLCHAIN_ENV"
 fi
 
+if [[ "$TARGET" == "x86_64-pc-windows-gnu" && -x /usr/bin/x86_64-w64-mingw32-gcc ]]; then
+  GCC_LIB_DIR="$(/usr/bin/x86_64-w64-mingw32-gcc -print-libgcc-file-name | xargs dirname)"
+  export RUSTFLAGS="${RUSTFLAGS:+$RUSTFLAGS }-L native=$GCC_LIB_DIR"
+fi
+
 VERSION="$(grep -E '^version\s*=' "$WIN_DIR/Cargo.toml" | head -n 1 | sed -E 's/.*"([^"]+)".*/\1/')"
 EXE="$WIN_DIR/target/$TARGET/release/LibreLinkUp.exe"
 DIST="$WIN_DIR/dist"

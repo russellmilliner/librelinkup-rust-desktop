@@ -43,6 +43,11 @@
   <url type="donation">https://ko-fi.com/russellmilliner</url>
   <content_rating type="oars-1.1" />
   <releases>
+    <release version="0.4.1" date="2026-10-21">
+      <description>
+        <p>Fix regional endpoint selection (e.g. FI -&gt; api-eu.libreview.io), add ISO country-to-region normalization, and auto-heal stored credential vaults.</p>
+      </description>
+    </release>
     <release version="0.4.0" date="2026-10-20">
       <description>
         <p>New native Windows 10/11 version that shares its core with the Linux app. On Linux, the code was restructured into a shared core library; there are no functional changes.</p>

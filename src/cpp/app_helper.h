@@ -878,6 +878,20 @@ private:
             show_log_viewer_window();
         });
 
+        QAction* checkUpdatesAction = m_menu->addAction(
+            QIcon::fromTheme(QStringLiteral("system-software-update")),
+            QStringLiteral("Check for Updates")
+        );
+        QObject::connect(checkUpdatesAction, &QAction::triggered, [this]() {
+            if (m_controller) {
+                QMetaObject::invokeMethod(
+                    m_controller,
+                    "checkForUpdates",
+                    Qt::QueuedConnection
+                );
+            }
+        });
+
         QAction* aboutAction = m_menu->addAction(
             QIcon::fromTheme(QStringLiteral("help-about")),
             QStringLiteral("About LibreLinkUp Rust Desktop...")

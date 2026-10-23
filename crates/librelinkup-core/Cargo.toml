@@ -1,6 +1,6 @@
 [package]
 name = "librelinkup-core"
-version = "0.4.2"
+version = "0.4.3"
 edition = "2021"
 license = "Apache-2.0"
 description = "Platform-independent core of LibreLinkUp Rust Desktop: LibreView API client, encrypted credential envelope, settings, staleness and alert logic"

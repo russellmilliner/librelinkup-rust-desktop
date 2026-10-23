@@ -1,8 +1,8 @@
 ; Inno Setup script for LibreLinkUp Rust Desktop (Windows).
-; Build:  ISCC.exe /DAppVersion=0.4.2 /DSourceExe=..\target\x86_64-pc-windows-gnu\release\LibreLinkUp.exe LibreLinkUp.iss
+; Build:  ISCC.exe /DAppVersion=0.4.3 /DSourceExe=..\target\x86_64-pc-windows-gnu\release\LibreLinkUp.exe LibreLinkUp.iss
 
 #ifndef AppVersion
-  #define AppVersion "0.4.2"
+  #define AppVersion "0.4.3"
 #endif
 #ifndef SourceExe
   #define SourceExe "..\target\x86_64-pc-windows-gnu\release\LibreLinkUp.exe"

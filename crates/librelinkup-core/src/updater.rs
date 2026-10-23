@@ -1,6 +1,6 @@
 //! Update checker against GitHub Releases (`russellmilliner/librelinkup-rust-desktop`).
 
-#[cfg(unix)]
+use std::path::PathBuf;
 use std::process::Command;
 use std::time::Duration;
 
@@ -258,6 +258,137 @@ pub fn check_for_updates_blocking(current_version: &str) -> Result<UpdateCheckRe
             }
             Err(format!("Update check failed: {err}"))
         }
+    }
+}
+
+/// Downloads the platform release package (`.exe` installer on Windows or `.flatpak` bundle on Linux)
+/// and launches the upgrade process.
+pub async fn download_and_install_update_async(
+    download_url: &str,
+    latest_version: &str,
+) -> Result<PathBuf, String> {
+    if download_url.trim().is_empty()
+        || (!download_url.ends_with(".exe") && !download_url.ends_with(".flatpak"))
+    {
+        return Err("Direct installer asset URL is not available; please use View Release.".into());
+    }
+
+    let clean_ver = latest_version.trim().trim_start_matches(['v', 'V']);
+    let file_name = if cfg!(target_os = "windows") {
+        format!("LibreLinkUp-Setup-{clean_ver}-x64.exe")
+    } else {
+        format!("librelinkup-rust-desktop-v{clean_ver}-x86_64.flatpak")
+    };
+
+    let dest_path = std::env::temp_dir().join(&file_name);
+
+    let client = reqwest::Client::builder()
+        .timeout(Duration::from_secs(180))
+        .default_headers(github_headers(env!("CARGO_PKG_VERSION")))
+        .build()
+        .map_err(|e| format!("HTTP client error: {e}"))?;
+
+    let mut downloaded = false;
+    if let Ok(resp) = client.get(download_url).send().await {
+        if resp.status().is_success() {
+            if let Ok(bytes) = resp.bytes().await {
+                if bytes.len() > 1024 {
+                    std::fs::write(&dest_path, &bytes)
+                        .map_err(|e| format!("Failed writing update package: {e}"))?;
+                    downloaded = true;
+                }
+            }
+        }
+    }
+
+    #[cfg(unix)]
+    if !downloaded {
+        let url_owned = download_url.to_string();
+        let dest_clone = dest_path.clone();
+        tokio::task::spawn_blocking(move || {
+            let status = Command::new("curl")
+                .args([
+                    "-fsSL",
+                    "--max-time",
+                    "180",
+                    "-o",
+                    &dest_clone.to_string_lossy(),
+                    &url_owned,
+                ])
+                .status()
+                .map_err(|e| format!("Failed to invoke curl to download update: {e}"))?;
+            if !status.success() {
+                return Err("curl failed to download update package".to_string());
+            }
+            Ok::<(), String>(())
+        })
+        .await
+        .map_err(|e| format!("Download task join error: {e}"))??;
+        downloaded = dest_path.is_file();
+    }
+
+    if !downloaded || !dest_path.is_file() {
+        return Err(format!("Failed to download update from {download_url}"));
+    }
+
+    #[cfg(target_os = "windows")]
+    {
+        Command::new(&dest_path)
+            .args(["/SILENT", "/CLOSEAPPLICATIONS", "/RESTARTAPPLICATIONS"])
+            .spawn()
+            .map_err(|e| format!("Failed to launch Windows update installer: {e}"))?;
+        Ok(dest_path)
+    }
+
+    #[cfg(unix)]
+    {
+        let dest_clone = dest_path.clone();
+        tokio::task::spawn_blocking(move || {
+            let in_flatpak = std::path::Path::new("/.flatpak-info").exists();
+            if in_flatpak {
+                // Inside Flatpak sandbox: copy bundle to ~/.cache so host flatpak can read it,
+                // then invoke flatpak-spawn --host to install and relaunch.
+                let host_cache = std::env::var_os("HOME")
+                    .map(PathBuf::from)
+                    .unwrap_or_else(|| PathBuf::from("/tmp"))
+                    .join(".cache");
+                let _ = std::fs::create_dir_all(&host_cache);
+                let shared_bundle = host_cache.join(
+                    dest_clone
+                        .file_name()
+                        .unwrap_or_else(|| std::ffi::OsStr::new("update.flatpak")),
+                );
+                if dest_clone != shared_bundle {
+                    let _ = std::fs::copy(&dest_clone, &shared_bundle);
+                }
+                let script = format!(
+                    "flatpak install --user -y --reinstall '{}' && (flatpak kill io.github.russellmilliner.LibreLinkUpDesktop 2>/dev/null || true) && nohup flatpak run io.github.russellmilliner.LibreLinkUpDesktop >/dev/null 2>&1 &",
+                    shared_bundle.display()
+                );
+                Command::new("flatpak-spawn")
+                    .args(["--host", "sh", "-c", &script])
+                    .spawn()
+                    .map_err(|e| format!("Failed to invoke flatpak-spawn updater: {e}"))?;
+                Ok(shared_bundle)
+            } else {
+                let status = Command::new("flatpak")
+                    .args([
+                        "install",
+                        "--user",
+                        "-y",
+                        "--reinstall",
+                        &dest_clone.to_string_lossy(),
+                    ])
+                    .status()
+                    .map_err(|e| format!("Failed to run flatpak install: {e}"))?;
+                if !status.success() {
+                    return Err("flatpak install returned non-zero status".into());
+                }
+                Ok(dest_clone)
+            }
+        })
+        .await
+        .map_err(|e| format!("Install task join error: {e}"))?
     }
 }
 

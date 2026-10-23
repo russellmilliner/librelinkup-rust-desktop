@@ -116,6 +116,17 @@ Kirigami.ApplicationWindow {
         }
     }
 
+    // Periodically check GitHub Releases every 6 hours while running in the background
+    Timer {
+        id: updateCheckTimer
+        interval: 6 * 3600 * 1000
+        repeat: true
+        running: appController.checkUpdatesOnStartup
+        onTriggered: {
+            appController.checkForUpdatesSilent()
+        }
+    }
+
     LogViewerDialog {
         id: logViewerWindow
         controller: appController
@@ -379,6 +390,14 @@ Kirigami.ApplicationWindow {
                     color: Kirigami.Theme.textColor
                     Layout.fillWidth: true
                     Layout.preferredWidth: 0
+                }
+
+                QQC2.Button {
+                    objectName: "bannerInstallUpdateButton"
+                    icon.name: "download"
+                    text: appController.installingUpdate ? qsTr("Installing...") : qsTr("Install %1").arg(appController.latestVersion)
+                    enabled: !appController.installingUpdate
+                    onClicked: appController.installUpdate()
                 }
 
                 QQC2.Button {
@@ -1501,7 +1520,7 @@ Kirigami.ApplicationWindow {
 
                         QQC2.Switch {
                             objectName: "checkUpdatesSwitch"
-                            text: qsTr("Automatically check GitHub Releases for updates on startup")
+                            text: qsTr("Automatically check GitHub Releases for updates (on startup & every 6 hours)")
                             checked: appController.checkUpdatesOnStartup
                             onToggled: appController.updateCheckUpdatesOnStartup(checked)
                             Layout.fillWidth: true
@@ -1530,8 +1549,16 @@ Kirigami.ApplicationWindow {
 
                             QQC2.Button {
                                 visible: appController.updateAvailable
+                                icon.name: "download"
+                                text: appController.installingUpdate ? qsTr("Installing...") : qsTr("Install %1").arg(appController.latestVersion)
+                                enabled: !appController.installingUpdate
+                                onClicked: appController.installUpdate()
+                            }
+
+                            QQC2.Button {
+                                visible: appController.updateAvailable
                                 icon.name: "globe"
-                                text: qsTr("Download %1").arg(appController.latestVersion)
+                                text: qsTr("Release Notes")
                                 onClicked: Qt.openUrlExternally(appController.updateUrl)
                             }
                         }

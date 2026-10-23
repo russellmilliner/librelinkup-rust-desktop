@@ -17,7 +17,7 @@ Window {
 
     property var controller: null
     readonly property bool isLightTheme: (0.2126 * color.r + 0.7152 * color.g + 0.0722 * color.b) > 0.45
-    readonly property string versionText: controller ? String(controller.appVersion || "0.4.2") : "0.4.2"
+    readonly property string versionText: controller ? String(controller.appVersion || "0.4.3") : "0.4.3"
 
     function openAboutWindow() {
         aboutWindow.show()
@@ -172,7 +172,19 @@ Window {
                             QQC2.Button {
                                 visible: controller ? controller.updateAvailable : false
                                 icon.name: "download"
-                                text: controller ? qsTr("Download %1").arg(controller.latestVersion) : ""
+                                text: controller ? (controller.installingUpdate ? qsTr("Installing...") : qsTr("Install %1").arg(controller.latestVersion)) : ""
+                                enabled: controller ? !controller.installingUpdate : false
+                                onClicked: {
+                                    if (controller) {
+                                        controller.installUpdate()
+                                    }
+                                }
+                            }
+
+                            QQC2.Button {
+                                visible: controller ? controller.updateAvailable : false
+                                icon.name: "globe"
+                                text: qsTr("View Release")
                                 onClicked: {
                                     if (controller && controller.updateUrl) {
                                         Qt.openUrlExternally(controller.updateUrl)

@@ -20,7 +20,9 @@ use librelinkup_core::models::{
     save_default_settings, trend_arrow_symbol, AlertKind, AppSettings, GlucoseSnapshot, GraphPoint,
 };
 use librelinkup_core::paths::credentials_file_path;
-use librelinkup_core::updater::{check_for_updates_async, UpdateCheckResult};
+use librelinkup_core::updater::{
+    check_for_updates_async, download_and_install_update_async, UpdateCheckResult,
+};
 use tokio::sync::mpsc::{unbounded_channel, UnboundedReceiver, UnboundedSender};
 use tokio::time::{sleep_until, Instant};
 
@@ -40,6 +42,8 @@ pub struct Shared {
     pub last_alert: Option<(AlertKind, i64)>,
     pub vault_ok: bool,
     pub checking_updates: bool,
+    pub installing_update: bool,
+    pub last_notified_update_version: String,
     pub update_info: Option<UpdateCheckResult>,
 }
 
@@ -57,6 +61,7 @@ pub enum Command {
     TestAlert,
     LoadDemo,
     CheckUpdates { manual: bool },
+    InstallUpdate,
 }
 
 /// Callbacks into the UI layer (implemented in `main.rs`).
@@ -127,6 +132,8 @@ impl Service {
 
         let mut next_poll = Instant::now();
         let mut staleness = tokio::time::interval(Duration::from_secs(30));
+        let mut update_check_timer = tokio::time::interval(Duration::from_secs(6 * 3600));
+        update_check_timer.tick().await; // consume initial immediate tick
         loop {
             let polling = self.creds.as_ref().is_some_and(|c| c.has_valid_session());
             tokio::select! {
@@ -144,6 +151,11 @@ impl Service {
                 _ = staleness.tick() => {
                     self.evaluate_alerts();
                     self.notifier.state_changed();
+                }
+                _ = update_check_timer.tick() => {
+                    if lock(&self.shared).settings.check_updates_on_startup {
+                        self.spawn_update_check(false);
+                    }
                 }
             }
         }
@@ -344,7 +356,67 @@ impl Service {
                 self.spawn_update_check(manual);
                 false
             }
+            Command::InstallUpdate => {
+                self.spawn_install_update();
+                false
+            }
         }
+    }
+
+    fn spawn_install_update(&self) {
+        let (download_url, latest_version) = {
+            let mut s = lock(&self.shared);
+            if s.installing_update {
+                return;
+            }
+            let Some((dl, ver)) = s
+                .update_info
+                .as_ref()
+                .map(|i| (i.download_url.clone(), i.latest_version.clone()))
+            else {
+                return;
+            };
+            s.installing_update = true;
+            (dl, ver)
+        };
+        self.notifier.state_changed();
+        log_info(
+            "SYSTEM",
+            format!("Downloading and launching installer for {latest_version} ({download_url})..."),
+        );
+
+        let shared = self.shared.clone();
+        let notifier = self.notifier.clone();
+        tokio::spawn(async move {
+            let outcome = download_and_install_update_async(&download_url, &latest_version).await;
+            match outcome {
+                Ok(path) => {
+                    log_info(
+                        "SYSTEM",
+                        format!("Launched update installer: {}", path.display()),
+                    );
+                    {
+                        let mut s = lock(&shared);
+                        s.installing_update = false;
+                        if let Some(ref mut info) = s.update_info {
+                            info.message = format!("Installer launched ({latest_version}) — upgrading...");
+                        }
+                    }
+                    notifier.state_changed();
+                }
+                Err(err) => {
+                    log_error("SYSTEM", format!("Auto-update install failed: {err}"));
+                    {
+                        let mut s = lock(&shared);
+                        s.installing_update = false;
+                        if let Some(ref mut info) = s.update_info {
+                            info.message = err;
+                        }
+                    }
+                    notifier.state_changed();
+                }
+            }
+        });
     }
 
     fn spawn_update_check(&self, manual: bool) {
@@ -371,23 +443,34 @@ impl Service {
                     let current = res.current_version.clone();
                     let url = res.release_url.clone();
                     let msg = res.message.clone();
-                    {
+                    let should_notify = {
                         let mut s = lock(&shared);
                         s.checking_updates = false;
-                        s.update_info = Some(res);
-                    }
+                        let already = s.last_notified_update_version == latest;
+                        if update_available && (manual || !already) {
+                            s.last_notified_update_version = latest.clone();
+                            s.update_info = Some(res);
+                            true
+                        } else {
+                            s.update_info = Some(res);
+                            false
+                        }
+                    };
                     notifier.state_changed();
                     if update_available {
                         log_info(
                             "SYSTEM",
                             format!("Update available: {latest} (current {current}). Release: {url}"),
                         );
-                        alerts::show_notification(
-                            "LibreLinkUp Update Available",
-                            &format!("Version {latest} is available on GitHub Releases (you have {current})."),
-                        );
+                        if should_notify {
+                            alerts::show_notification(
+                                "LibreLinkUp Update Available",
+                                &format!("Version {latest} is available on GitHub Releases (you have {current})."),
+                            );
+                        }
                     } else if manual {
                         log_info("SYSTEM", format!("Update check complete: {msg}"));
+                        alerts::show_notification("LibreLinkUp Up to Date", &msg);
                     }
                 }
                 Err(err) => {

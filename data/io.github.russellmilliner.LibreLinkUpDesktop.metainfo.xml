@@ -43,6 +43,11 @@
   <url type="donation">https://ko-fi.com/russellmilliner</url>
   <content_rating type="oars-1.1" />
   <releases>
+    <release version="0.4.3" date="2026-10-22">
+      <description>
+        <p>Add periodic background auto-update version checking (every 6h) and one-click in-app update installer for Linux Flatpak &amp; Windows</p>
+      </description>
+    </release>
     <release version="0.4.2" date="2026-10-22">
       <description>
         <p>Update dependencies: tokio 1.54.1, async-compression 0.4.51, cc 1.9.0, compression-codecs 0.4.46, compression-core 0.4.34, crc32fast 1.5.3 (+17 more)</p>

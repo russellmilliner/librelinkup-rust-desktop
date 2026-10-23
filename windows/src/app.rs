@@ -279,8 +279,19 @@ impl eframe::App for LibreLinkUpApp {
                                     .strong()
                                     .color(Color32::WHITE),
                                 );
+                                let inst_label = if state.installing_update {
+                                    "Installing...".to_string()
+                                } else {
+                                    format!("⬇ Install {}", upd.latest_version)
+                                };
+                                if ui
+                                    .add_enabled(!state.installing_update, egui::Button::new(inst_label))
+                                    .clicked()
+                                {
+                                    self.send(Command::InstallUpdate);
+                                }
                                 ui.hyperlink_to(
-                                    RichText::new("View Release / Download").color(Color32::from_rgb(224, 242, 254)).underline(),
+                                    RichText::new("View Release Notes").color(Color32::from_rgb(224, 242, 254)).underline(),
                                     &upd.release_url,
                                 );
                             });
@@ -545,7 +556,7 @@ impl LibreLinkUpApp {
             ui.label(RichText::new("Application updates").strong());
             ui.checkbox(
                 &mut s.check_updates_on_startup,
-                "Automatically check GitHub Releases for updates on startup",
+                "Automatically check GitHub Releases for updates (on startup & every 6 hours)",
             );
             ui.horizontal(|ui| {
                 let btn_label = if state.checking_updates {
@@ -567,7 +578,18 @@ impl LibreLinkUpApp {
                     };
                     ui.label(RichText::new(&upd.message).color(color));
                     if upd.update_available {
-                        ui.hyperlink_to(format!("Download {}", upd.latest_version), &upd.release_url);
+                        let inst_label = if state.installing_update {
+                            "Installing...".to_string()
+                        } else {
+                            format!("⬇ Install {}", upd.latest_version)
+                        };
+                        if ui
+                            .add_enabled(!state.installing_update, egui::Button::new(inst_label))
+                            .clicked()
+                        {
+                            self.send(Command::InstallUpdate);
+                        }
+                        ui.hyperlink_to("Release Notes", &upd.release_url);
                     }
                 } else {
                     ui.label(RichText::new(format!("Current version: v{}", env!("CARGO_PKG_VERSION"))).weak());
@@ -919,7 +941,18 @@ impl LibreLinkUpApp {
                 if let Some(ref upd) = state.update_info {
                     ui.label(&upd.message);
                     if upd.update_available {
-                        ui.hyperlink_to(format!("Download {}", upd.latest_version), &upd.release_url);
+                        let inst_label = if state.installing_update {
+                            "Installing...".to_string()
+                        } else {
+                            format!("⬇ Install {}", upd.latest_version)
+                        };
+                        if ui
+                            .add_enabled(!state.installing_update, egui::Button::new(inst_label))
+                            .clicked()
+                        {
+                            self.send(Command::InstallUpdate);
+                        }
+                        ui.hyperlink_to("View Release", &upd.release_url);
                     }
                 } else {
                     ui.label(format!("Installed: v{}", env!("CARGO_PKG_VERSION")));

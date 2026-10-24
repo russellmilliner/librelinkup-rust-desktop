@@ -7,18 +7,25 @@ import org.kde.kirigami as Kirigami
 Window {
     id: overlayWindow
     objectName: "librelinkupOverlayWindow"
-    title: qsTr("LibreLinkUp Rust Desktop Overlay")
+    title: onAllDesktops
+        ? qsTr("LibreLinkUp Rust Desktop Overlay")
+        : qsTr("LibreLinkUp Rust Desktop Overlay [SingleDesktop]")
     width: controller ? Math.max(240, Math.min(600, controller.overlayWidth)) : 276
     height: controller ? Math.max(80, Math.min(260, controller.overlayHeight)) : 88
     minimumWidth: 240
     minimumHeight: 80
-    flags: Qt.Tool | Qt.FramelessWindowHint | Qt.WindowStaysOnTopHint | Qt.BypassWindowManagerHint
+    flags: Qt.Tool
+        | Qt.FramelessWindowHint
+        | Qt.WindowStaysOnTopHint
+        | (onAllDesktops ? Qt.BypassWindowManagerHint : Qt.Widget)
     color: "transparent"
     visible: Boolean(controller && controller.overlayVisible)
 
     property var controller: null
     property bool placementReady: false
     readonly property bool isDarkOverlay: Boolean(controller ? controller.overlayDarkTheme : true)
+    readonly property bool onAllDesktops: Boolean(controller ? controller.overlayOnAllDesktops : true)
+    onOnAllDesktopsChanged: allDesktopsCanvas.requestPaint()
     readonly property int opacityPercent: controller ? Math.max(20, Math.min(100, controller.overlayOpacityPercent)) : 88
     readonly property real opacityAlpha: opacityPercent / 100.0
     readonly property color statusAccentColor: Qt.color(controller ? controller.rangeColorHex : "#22c55e")
@@ -186,158 +193,233 @@ Window {
                 }
             }
 
-            GridLayout {
-                columns: 2
-                rowSpacing: 4
-                columnSpacing: 4
+            ColumnLayout {
+                spacing: 4
 
-                // 1. Toggle Dark / Color Overlay Theme
-                Rectangle {
-                    id: overlayThemeToggleBtn
-                    objectName: "overlayThemeToggleBtn"
-                    Layout.preferredWidth: 22
-                    Layout.preferredHeight: 22
-                    implicitWidth: 22
-                    implicitHeight: 22
-                    radius: 6
-                    color: themeBtnMouse.containsMouse ? Qt.rgba(1, 1, 1, 0.28) : Qt.rgba(1, 1, 1, 0.14)
-                    border.color: Qt.rgba(1, 1, 1, 0.3)
-                    border.width: 1
+                RowLayout {
+                    spacing: 4
 
-                    QQC2.Label {
-                        anchors.centerIn: parent
-                        text: overlayWindow.isDarkOverlay ? "🌙" : "🎨"
-                        font.pointSize: 8.5
-                        color: "#ffffff"
-                    }
+                    // 1. Toggle Dark / Color Overlay Theme
+                    Rectangle {
+                        id: overlayThemeToggleBtn
+                        objectName: "overlayThemeToggleBtn"
+                        Layout.preferredWidth: 20
+                        Layout.preferredHeight: 22
+                        implicitWidth: 20
+                        implicitHeight: 22
+                        radius: 6
+                        color: themeBtnMouse.containsMouse ? Qt.rgba(1, 1, 1, 0.28) : Qt.rgba(1, 1, 1, 0.14)
+                        border.color: Qt.rgba(1, 1, 1, 0.3)
+                        border.width: 1
 
-                    MouseArea {
-                        id: themeBtnMouse
-                        anchors.fill: parent
-                        hoverEnabled: true
-                        cursorShape: Qt.PointingHandCursor
-                        onClicked: {
-                            if (overlayWindow.controller) {
-                                overlayWindow.controller.updateOverlayDarkTheme(!overlayWindow.isDarkOverlay)
+                        QQC2.Label {
+                            anchors.centerIn: parent
+                            text: overlayWindow.isDarkOverlay ? "🌙" : "🎨"
+                            font.pointSize: 8.5
+                            color: "#ffffff"
+                        }
+
+                        MouseArea {
+                            id: themeBtnMouse
+                            anchors.fill: parent
+                            hoverEnabled: true
+                            cursorShape: Qt.PointingHandCursor
+                            onClicked: {
+                                if (overlayWindow.controller) {
+                                    overlayWindow.controller.updateOverlayDarkTheme(!overlayWindow.isDarkOverlay)
+                                }
                             }
                         }
+
+                        QQC2.ToolTip.visible: themeBtnMouse.containsMouse
+                        QQC2.ToolTip.text: overlayWindow.isDarkOverlay
+                            ? qsTr("Overlay Dark Theme ON (Click for Color Fill • Scroll wheel adjusts %1% opacity)").arg(overlayWindow.opacityPercent)
+                            : qsTr("Overlay Color Fill ON (Click for Dark Theme • Scroll wheel adjusts %1% opacity)").arg(overlayWindow.opacityPercent)
                     }
 
-                    QQC2.ToolTip.visible: themeBtnMouse.containsMouse
-                    QQC2.ToolTip.text: overlayWindow.isDarkOverlay
-                        ? qsTr("Overlay Dark Theme ON (Click for Color Fill • Scroll wheel adjusts %1% opacity)").arg(overlayWindow.opacityPercent)
-                        : qsTr("Overlay Color Fill ON (Click for Dark Theme • Scroll wheel adjusts %1% opacity)").arg(overlayWindow.opacityPercent)
+                    // 2. Toggle Show on All Virtual Desktops
+                    Rectangle {
+                        id: overlayAllDesktopsBtn
+                        objectName: "overlayAllDesktopsBtn"
+                        Layout.preferredWidth: 20
+                        Layout.preferredHeight: 22
+                        implicitWidth: 20
+                        implicitHeight: 22
+                        radius: 6
+                        color: overlayWindow.onAllDesktops
+                            ? (allDeskBtnMouse.containsMouse ? Qt.rgba(0.22, 0.74, 0.97, 0.38) : Qt.rgba(0.22, 0.74, 0.97, 0.24))
+                            : (allDeskBtnMouse.containsMouse ? Qt.rgba(1, 1, 1, 0.28) : Qt.rgba(1, 1, 1, 0.14))
+                        border.color: overlayWindow.onAllDesktops ? "#38bdf8" : Qt.rgba(1, 1, 1, 0.3)
+                        border.width: 1
+
+                        Canvas {
+                            id: allDesktopsCanvas
+                            width: 14
+                            height: 14
+                            anchors.centerIn: parent
+                            onPaint: {
+                                const ctx = getContext("2d")
+                                ctx.reset()
+                                const allDesk = overlayWindow.onAllDesktops
+                                const activeCol = allDesk ? "#38bdf8" : "#ffffff"
+                                const dimCol = "rgba(255, 255, 255, 0.40)"
+                                ctx.lineWidth = 1.25
+                                ctx.lineJoin = "round"
+
+                                const cells = [
+                                    { x: 1.5, y: 1.5, active: true },
+                                    { x: 8.0, y: 1.5, active: allDesk },
+                                    { x: 1.5, y: 8.0, active: allDesk },
+                                    { x: 8.0, y: 8.0, active: allDesk }
+                                ]
+                                for (let i = 0; i < cells.length; ++i) {
+                                    const c = cells[i]
+                                    ctx.strokeStyle = c.active ? activeCol : dimCol
+                                    ctx.fillStyle = c.active
+                                        ? (allDesk ? "rgba(56, 189, 248, 0.45)" : "#ffffff")
+                                        : "transparent"
+                                    ctx.beginPath()
+                                    ctx.rect(c.x, c.y, 4.5, 4.5)
+                                    if (c.active) {
+                                        ctx.fill()
+                                    }
+                                    ctx.stroke()
+                                }
+                            }
+                        }
+
+                        MouseArea {
+                            id: allDeskBtnMouse
+                            anchors.fill: parent
+                            hoverEnabled: true
+                            cursorShape: Qt.PointingHandCursor
+                            onClicked: {
+                                if (overlayWindow.controller) {
+                                    overlayWindow.controller.updateOverlayOnAllDesktops(!overlayWindow.onAllDesktops)
+                                }
+                            }
+                        }
+
+                        QQC2.ToolTip.visible: allDeskBtnMouse.containsMouse
+                        QQC2.ToolTip.text: overlayWindow.onAllDesktops
+                            ? qsTr("On All Desktops: ON (Visible across all virtual desktops • Click for current desktop only)")
+                            : qsTr("On All Desktops: OFF (Current virtual desktop only • Click to show on all desktops)")
+                    }
+
+                    // 3. Open Main Window
+                    Rectangle {
+                        id: overlayRestoreBtn
+                        objectName: "overlayRestoreBtn"
+                        Layout.preferredWidth: 20
+                        Layout.preferredHeight: 22
+                        implicitWidth: 20
+                        implicitHeight: 22
+                        radius: 6
+                        color: restoreBtnMouse.containsMouse ? Qt.rgba(1, 1, 1, 0.28) : Qt.rgba(1, 1, 1, 0.14)
+                        border.color: Qt.rgba(1, 1, 1, 0.3)
+                        border.width: 1
+
+                        QQC2.Label {
+                            anchors.centerIn: parent
+                            text: "↗"
+                            font.pointSize: 9.5
+                            font.bold: true
+                            color: "#ffffff"
+                        }
+
+                        MouseArea {
+                            id: restoreBtnMouse
+                            anchors.fill: parent
+                            hoverEnabled: true
+                            cursorShape: Qt.PointingHandCursor
+                            onClicked: {
+                                if (overlayWindow.controller) {
+                                    overlayWindow.controller.showMainWindow()
+                                }
+                            }
+                        }
+
+                        QQC2.ToolTip.visible: restoreBtnMouse.containsMouse
+                        QQC2.ToolTip.text: qsTr("Open LibreLinkUp Rust Desktop")
+                    }
                 }
 
-                // 2. Open Main Window
-                Rectangle {
-                    id: overlayRestoreBtn
-                    objectName: "overlayRestoreBtn"
-                    Layout.preferredWidth: 22
-                    Layout.preferredHeight: 22
-                    implicitWidth: 22
-                    implicitHeight: 22
-                    radius: 6
-                    color: restoreBtnMouse.containsMouse ? Qt.rgba(1, 1, 1, 0.28) : Qt.rgba(1, 1, 1, 0.14)
-                    border.color: Qt.rgba(1, 1, 1, 0.3)
-                    border.width: 1
+                RowLayout {
+                    spacing: 4
 
-                    QQC2.Label {
-                        anchors.centerIn: parent
-                        text: "↗"
-                        font.pointSize: 9.5
-                        font.bold: true
-                        color: "#ffffff"
-                    }
+                    // 4. Context Menu button (accessible even when tray icon is hidden in overlay-only mode)
+                    Rectangle {
+                        id: overlayMenuBtn
+                        objectName: "overlayMenuBtn"
+                        Layout.preferredWidth: 32
+                        Layout.preferredHeight: 22
+                        implicitWidth: 32
+                        implicitHeight: 22
+                        radius: 6
+                        color: menuBtnMouse.containsMouse ? Qt.rgba(1, 1, 1, 0.28) : Qt.rgba(1, 1, 1, 0.14)
+                        border.color: Qt.rgba(1, 1, 1, 0.3)
+                        border.width: 1
 
-                    MouseArea {
-                        id: restoreBtnMouse
-                        anchors.fill: parent
-                        hoverEnabled: true
-                        cursorShape: Qt.PointingHandCursor
-                        onClicked: {
-                            if (overlayWindow.controller) {
-                                overlayWindow.controller.showMainWindow()
+                        QQC2.Label {
+                            anchors.centerIn: parent
+                            text: "☰"
+                            font.pointSize: 8.5
+                            font.bold: true
+                            color: "#ffffff"
+                        }
+
+                        MouseArea {
+                            id: menuBtnMouse
+                            anchors.fill: parent
+                            hoverEnabled: true
+                            cursorShape: Qt.PointingHandCursor
+                            onClicked: {
+                                if (overlayWindow.controller) {
+                                    overlayWindow.controller.popupTrayMenuAtCursor()
+                                }
                             }
                         }
+
+                        QQC2.ToolTip.visible: menuBtnMouse.containsMouse
+                        QQC2.ToolTip.text: qsTr("Open Menu (or right-click anywhere on overlay)")
                     }
 
-                    QQC2.ToolTip.visible: restoreBtnMouse.containsMouse
-                    QQC2.ToolTip.text: qsTr("Open LibreLinkUp Rust Desktop")
-                }
+                    // 5. Hide Overlay
+                    Rectangle {
+                        id: overlayCloseBtn
+                        objectName: "overlayCloseBtn"
+                        Layout.preferredWidth: 32
+                        Layout.preferredHeight: 22
+                        implicitWidth: 32
+                        implicitHeight: 22
+                        radius: 6
+                        color: closeBtnMouse.containsMouse ? Qt.rgba(0.94, 0.27, 0.27, 0.65) : Qt.rgba(1, 1, 1, 0.14)
+                        border.color: Qt.rgba(1, 1, 1, 0.3)
+                        border.width: 1
 
-                // 3. Context Menu button (accessible even when tray icon is hidden in overlay-only mode)
-                Rectangle {
-                    id: overlayMenuBtn
-                    objectName: "overlayMenuBtn"
-                    Layout.preferredWidth: 22
-                    Layout.preferredHeight: 22
-                    implicitWidth: 22
-                    implicitHeight: 22
-                    radius: 6
-                    color: menuBtnMouse.containsMouse ? Qt.rgba(1, 1, 1, 0.28) : Qt.rgba(1, 1, 1, 0.14)
-                    border.color: Qt.rgba(1, 1, 1, 0.3)
-                    border.width: 1
+                        QQC2.Label {
+                            anchors.centerIn: parent
+                            text: "✕"
+                            font.pointSize: 8.5
+                            font.bold: true
+                            color: "#ffffff"
+                        }
 
-                    QQC2.Label {
-                        anchors.centerIn: parent
-                        text: "☰"
-                        font.pointSize: 8.5
-                        font.bold: true
-                        color: "#ffffff"
-                    }
-
-                    MouseArea {
-                        id: menuBtnMouse
-                        anchors.fill: parent
-                        hoverEnabled: true
-                        cursorShape: Qt.PointingHandCursor
-                        onClicked: {
-                            if (overlayWindow.controller) {
-                                overlayWindow.controller.popupTrayMenuAtCursor()
+                        MouseArea {
+                            id: closeBtnMouse
+                            anchors.fill: parent
+                            hoverEnabled: true
+                            cursorShape: Qt.PointingHandCursor
+                            onClicked: {
+                                if (overlayWindow.controller) {
+                                    overlayWindow.controller.updateOverlayVisible(false)
+                                }
                             }
                         }
+
+                        QQC2.ToolTip.visible: closeBtnMouse.containsMouse
+                        QQC2.ToolTip.text: qsTr("Hide Overlay")
                     }
-
-                    QQC2.ToolTip.visible: menuBtnMouse.containsMouse
-                    QQC2.ToolTip.text: qsTr("Open Menu (or right-click anywhere on overlay)")
-                }
-
-                // 4. Hide Overlay
-                Rectangle {
-                    id: overlayCloseBtn
-                    objectName: "overlayCloseBtn"
-                    Layout.preferredWidth: 22
-                    Layout.preferredHeight: 22
-                    implicitWidth: 22
-                    implicitHeight: 22
-                    radius: 6
-                    color: closeBtnMouse.containsMouse ? Qt.rgba(0.94, 0.27, 0.27, 0.65) : Qt.rgba(1, 1, 1, 0.14)
-                    border.color: Qt.rgba(1, 1, 1, 0.3)
-                    border.width: 1
-
-                    QQC2.Label {
-                        anchors.centerIn: parent
-                        text: "✕"
-                        font.pointSize: 8.5
-                        font.bold: true
-                        color: "#ffffff"
-                    }
-
-                    MouseArea {
-                        id: closeBtnMouse
-                        anchors.fill: parent
-                        hoverEnabled: true
-                        cursorShape: Qt.PointingHandCursor
-                        onClicked: {
-                            if (overlayWindow.controller) {
-                                overlayWindow.controller.updateOverlayVisible(false)
-                            }
-                        }
-                    }
-
-                    QQC2.ToolTip.visible: closeBtnMouse.containsMouse
-                    QQC2.ToolTip.text: qsTr("Hide Overlay")
                 }
             }
         }

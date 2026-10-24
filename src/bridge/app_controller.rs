@@ -28,6 +28,7 @@ pub mod qobject {
             width: i32,
             height: i32,
         );
+        fn librelinkup_apply_overlay_all_desktops(on_all_desktops: bool);
         fn librelinkup_begin_overlay_drag();
         fn librelinkup_update_overlay_drag();
         fn librelinkup_end_overlay_drag(controller: Pin<&mut AppController>);
@@ -71,6 +72,7 @@ pub mod qobject {
         #[qproperty(QString, window_mode)]
         #[qproperty(bool, overlay_visible)]
         #[qproperty(bool, overlay_only_mode)]
+        #[qproperty(bool, overlay_on_all_desktops)]
         #[qproperty(bool, overlay_dark_theme)]
         #[qproperty(i32, overlay_opacity_percent)]
         #[qproperty(QString, overlay_screen_name)]
@@ -149,6 +151,9 @@ pub mod qobject {
 
         #[qinvokable]
         fn update_overlay_only_mode(self: Pin<&mut AppController>, only_overlay: bool);
+
+        #[qinvokable]
+        fn update_overlay_on_all_desktops(self: Pin<&mut AppController>, enabled: bool);
 
         #[qinvokable]
         fn update_overlay_dark_theme(self: Pin<&mut AppController>, enabled: bool);
@@ -394,6 +399,7 @@ pub struct AppControllerRust {
     window_mode: QString,
     overlay_visible: bool,
     overlay_only_mode: bool,
+    overlay_on_all_desktops: bool,
     overlay_dark_theme: bool,
     overlay_opacity_percent: i32,
     overlay_screen_name: QString,
@@ -489,6 +495,7 @@ impl Default for AppControllerRust {
             window_mode: QString::from(settings.window_mode.as_str()),
             overlay_visible: initial_overlay_visible,
             overlay_only_mode: settings.overlay_only_mode,
+            overlay_on_all_desktops: settings.overlay_on_all_desktops,
             overlay_dark_theme: settings.overlay_dark_theme,
             overlay_opacity_percent: settings.overlay_opacity_percent.clamp(20, 100),
             overlay_screen_name: QString::from(settings.overlay_screen_name.as_str()),
@@ -560,6 +567,7 @@ fn current_settings_from_controller(ctrl: &qobject::AppController) -> AppSetting
         window_mode: ctrl.window_mode().to_string(),
         overlay_visible: *ctrl.overlay_visible(),
         overlay_only_mode: *ctrl.overlay_only_mode(),
+        overlay_on_all_desktops: *ctrl.overlay_on_all_desktops(),
         overlay_dark_theme: *ctrl.overlay_dark_theme(),
         overlay_opacity_percent: (*ctrl.overlay_opacity_percent()).clamp(20, 100),
         overlay_screen_name: ctrl.overlay_screen_name().to_string(),
@@ -787,6 +795,9 @@ impl qobject::AppController {
         if *self.overlay_visible() {
             flags |= 0x10;
         }
+        if *self.overlay_on_all_desktops() {
+            flags |= 0x20;
+        }
 
         let q_theme = QString::from(settings.theme_mode.as_str());
         let q_badge = QString::from(badge_text.as_str());
@@ -827,6 +838,7 @@ impl qobject::AppController {
         let ov_w = *self.overlay_width();
         let ov_h = *self.overlay_height();
         qobject::librelinkup_restore_overlay_placement(&ov_screen, ov_x, ov_y, ov_w, ov_h);
+        qobject::librelinkup_apply_overlay_all_desktops(*self.overlay_on_all_desktops());
 
         // Inside Flatpak, (re)register login autostart with the Background portal so the
         // entry exists and carries the current --minimized preference.
@@ -1450,6 +1462,19 @@ impl qobject::AppController {
             let _ = save_default_settings(&settings);
             self.as_mut().sync_tray_and_ui();
         }
+    }
+
+    pub fn update_overlay_on_all_desktops(mut self: Pin<&mut Self>, enabled: bool) {
+        self.as_mut().set_overlay_on_all_desktops(enabled);
+        qobject::librelinkup_apply_overlay_all_desktops(enabled);
+        let settings = current_settings_from_controller(&self);
+        let _ = save_default_settings(&settings);
+        log_info(
+            "SYSTEM",
+            format!("Desktop overlay on all virtual desktops: {enabled}"),
+        );
+        self.as_mut().sync_tray_and_ui();
+        self.as_mut().sync_logs_to_properties();
     }
 
     pub fn update_overlay_dark_theme(mut self: Pin<&mut Self>, enabled: bool) {

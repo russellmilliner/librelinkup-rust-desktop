@@ -308,6 +308,45 @@ pub fn flash_window(hwnd: isize) {
 #[cfg(not(windows))]
 pub fn flash_window(_hwnd: isize) {}
 
+/// Configures whether the `"LibreLinkUp Overlay"` window appears on all Windows 10/11
+/// Virtual Desktops (`WS_EX_TOOLWINDOW` set) or only the current Virtual Desktop.
+#[cfg(windows)]
+pub fn set_overlay_all_desktops(on_all_desktops: bool) {
+    use windows_sys::Win32::UI::WindowsAndMessaging::{
+        FindWindowW, GetWindowLongPtrW, SetWindowLongPtrW, SetWindowPos, GWL_EXSTYLE,
+        SWP_FRAMECHANGED, SWP_NOACTIVATE, SWP_NOMOVE, SWP_NOSIZE, SWP_NOZORDER,
+        WS_EX_TOOLWINDOW,
+    };
+    let title = wide("LibreLinkUp Overlay");
+    let hwnd = unsafe { FindWindowW(std::ptr::null(), title.as_ptr()) };
+    if hwnd.is_null() {
+        return;
+    }
+    unsafe {
+        let cur = GetWindowLongPtrW(hwnd, GWL_EXSTYLE);
+        let want = if on_all_desktops {
+            cur | (WS_EX_TOOLWINDOW as isize)
+        } else {
+            cur & !(WS_EX_TOOLWINDOW as isize)
+        };
+        if want != cur {
+            SetWindowLongPtrW(hwnd, GWL_EXSTYLE, want);
+            SetWindowPos(
+                hwnd,
+                std::ptr::null_mut(),
+                0,
+                0,
+                0,
+                0,
+                SWP_NOMOVE | SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE | SWP_FRAMECHANGED,
+            );
+        }
+    }
+}
+
+#[cfg(not(windows))]
+pub fn set_overlay_all_desktops(_on_all_desktops: bool) {}
+
 // ----------------------------------------------------------------------------------------
 // Console output for --version / --help (GUI-subsystem exe has no console by default)
 // ----------------------------------------------------------------------------------------

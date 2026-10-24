@@ -1,8 +1,8 @@
 # LibreLinkUp Rust Desktop
 
-[![Version v0.4.3](https://img.shields.io/badge/Version-v0.4.3-0284c7?style=for-the-badge&logo=github)](https://github.com/russellmilliner/librelinkup-rust-desktop/releases/tag/v0.4.3)
-[![Windows Installer](https://img.shields.io/badge/Windows-Installer_v0.4.3-0078d4?style=for-the-badge&logo=windows&logoColor=white)](https://github.com/russellmilliner/librelinkup-rust-desktop/releases/download/v0.4.3/LibreLinkUp-Setup-0.4.3-x64.exe)
-[![Flatpak Bundle](https://img.shields.io/badge/Flatpak-Download_v0.4.3-4a90d9?style=for-the-badge&logo=flatpak&logoColor=white)](https://github.com/russellmilliner/librelinkup-rust-desktop/releases/download/v0.4.3/librelinkup-rust-desktop-v0.4.3-x86_64.flatpak)
+[![Version v0.4.4](https://img.shields.io/badge/Version-v0.4.4-0284c7?style=for-the-badge&logo=github)](https://github.com/russellmilliner/librelinkup-rust-desktop/releases/tag/v0.4.4)
+[![Windows Installer](https://img.shields.io/badge/Windows-Installer_v0.4.4-0078d4?style=for-the-badge&logo=windows&logoColor=white)](https://github.com/russellmilliner/librelinkup-rust-desktop/releases/download/v0.4.4/LibreLinkUp-Setup-0.4.4-x64.exe)
+[![Flatpak Bundle](https://img.shields.io/badge/Flatpak-Download_v0.4.4-4a90d9?style=for-the-badge&logo=flatpak&logoColor=white)](https://github.com/russellmilliner/librelinkup-rust-desktop/releases/download/v0.4.4/librelinkup-rust-desktop-v0.4.4-x86_64.flatpak)
 [![Platform: Linux x86_64](https://img.shields.io/badge/Platform-Linux%20x86__64-fcc624?style=for-the-badge&logo=linux&logoColor=black)](https://www.kernel.org/)
 [![Platform: Windows 10/11 x64](https://img.shields.io/badge/Platform-Windows%2010%2F11%20x64-0078d4?style=for-the-badge&logo=windows&logoColor=white)](windows/README.md)
 [![Desktop: KDE Plasma 6](https://img.shields.io/badge/KDE-Plasma%206%20%2F%20Kirigami-1d99f3?style=for-the-badge&logo=kde&logoColor=white)](https://kde.org/plasma-desktop/)
@@ -18,11 +18,11 @@ Native **Rust** desktop applications for monitoring continuous blood glucose rea
 
 | Item | Link / Details |
 | :--- | :--- |
-| **Current Version** | [**v0.4.3** (GitHub Release)](https://github.com/russellmilliner/librelinkup-rust-desktop/releases/tag/v0.4.3) • [All Releases](https://github.com/russellmilliner/librelinkup-rust-desktop/releases) |
-| **Windows Installer (`x64`)** | [**`LibreLinkUp-Setup-0.4.3-x64.exe`**](https://github.com/russellmilliner/librelinkup-rust-desktop/releases/download/v0.4.3/LibreLinkUp-Setup-0.4.3-x64.exe) ([SHA-256](https://github.com/russellmilliner/librelinkup-rust-desktop/releases/download/v0.4.3/LibreLinkUp-Setup-0.4.3-x64.exe.sha256)) |
-| **Windows Portable (`x64`)** | [**`LibreLinkUp-0.4.3-windows-x64-portable.zip`**](https://github.com/russellmilliner/librelinkup-rust-desktop/releases/download/v0.4.3/LibreLinkUp-0.4.3-windows-x64-portable.zip) ([SHA-256](https://github.com/russellmilliner/librelinkup-rust-desktop/releases/download/v0.4.3/LibreLinkUp-0.4.3-windows-x64-portable.zip.sha256)) |
+| **Current Version** | [**v0.4.4** (GitHub Release)](https://github.com/russellmilliner/librelinkup-rust-desktop/releases/tag/v0.4.4) • [All Releases](https://github.com/russellmilliner/librelinkup-rust-desktop/releases) |
+| **Windows Installer (`x64`)** | [**`LibreLinkUp-Setup-0.4.4-x64.exe`**](https://github.com/russellmilliner/librelinkup-rust-desktop/releases/download/v0.4.4/LibreLinkUp-Setup-0.4.4-x64.exe) ([SHA-256](https://github.com/russellmilliner/librelinkup-rust-desktop/releases/download/v0.4.4/LibreLinkUp-Setup-0.4.4-x64.exe.sha256)) |
+| **Windows Portable (`x64`)** | [**`LibreLinkUp-0.4.4-windows-x64-portable.zip`**](https://github.com/russellmilliner/librelinkup-rust-desktop/releases/download/v0.4.4/LibreLinkUp-0.4.4-windows-x64-portable.zip) ([SHA-256](https://github.com/russellmilliner/librelinkup-rust-desktop/releases/download/v0.4.4/LibreLinkUp-0.4.4-windows-x64-portable.zip.sha256)) |
 | **Windows Documentation** | [**`windows/README.md`**](windows/README.md) — Full Windows installation, overlay controls, DPAPI security & build guide |
-| **Linux Flatpak Bundle (`x86_64`)** | [**`librelinkup-rust-desktop-v0.4.3-x86_64.flatpak`**](https://github.com/russellmilliner/librelinkup-rust-desktop/releases/download/v0.4.3/librelinkup-rust-desktop-v0.4.3-x86_64.flatpak) ([SHA-256](https://github.com/russellmilliner/librelinkup-rust-desktop/releases/download/v0.4.3/librelinkup-rust-desktop-v0.4.3-x86_64.flatpak.sha256)) |
+| **Linux Flatpak Bundle (`x86_64`)** | [**`librelinkup-rust-desktop-v0.4.4-x86_64.flatpak`**](https://github.com/russellmilliner/librelinkup-rust-desktop/releases/download/v0.4.4/librelinkup-rust-desktop-v0.4.4-x86_64.flatpak) ([SHA-256](https://github.com/russellmilliner/librelinkup-rust-desktop/releases/download/v0.4.4/librelinkup-rust-desktop-v0.4.4-x86_64.flatpak.sha256)) |
 | **Flatpak Runtime** | [`org.kde.Platform//6.11`](https://flathub.org/) via [Flatpak](https://flatpak.org/) |
 | **Supported Platforms** | [Linux (`x86_64`)](https://www.kernel.org/) ([KDE Plasma 6](https://kde.org/plasma-desktop/) / [Kirigami](https://develop.kde.org/frameworks/kirigami/) / [Qt 6](https://www.qt.io/)) • [**Windows 10/11 (`x64`)**](windows/README.md) ([egui](https://github.com/emilk/egui) / [eframe](https://github.com/emilk/egui/tree/master/crates/eframe)) |
 | **Core Stack** | [Rust](https://www.rust-lang.org/) (`librelinkup-core`) + [KDAB CXX-Qt](https://github.com/KDAB/cxx-qt) (Linux) + [eframe/egui](https://github.com/emilk/egui) (Windows) + [Ring (AES-256-GCM)](https://github.com/briansmith/ring) |
@@ -30,23 +30,23 @@ Native **Rust** desktop applications for monitoring continuous blood glucose rea
 ### Quick Flatpak Install (Linux)
 
 ```bash
-curl -LO https://github.com/russellmilliner/librelinkup-rust-desktop/releases/download/v0.4.3/librelinkup-rust-desktop-v0.4.3-x86_64.flatpak
-flatpak install --user -y librelinkup-rust-desktop-v0.4.3-x86_64.flatpak
+curl -LO https://github.com/russellmilliner/librelinkup-rust-desktop/releases/download/v0.4.4/librelinkup-rust-desktop-v0.4.4-x86_64.flatpak
+flatpak install --user -y librelinkup-rust-desktop-v0.4.4-x86_64.flatpak
 flatpak run io.github.russellmilliner.LibreLinkUpDesktop
 ```
 
 ### Quick Windows 10 / 11 Install
 
-Download and run [**`LibreLinkUp-Setup-0.4.3-x64.exe`**](https://github.com/russellmilliner/librelinkup-rust-desktop/releases/download/v0.4.3/LibreLinkUp-Setup-0.4.3-x64.exe) (or extract the [**portable zip**](https://github.com/russellmilliner/librelinkup-rust-desktop/releases/download/v0.4.3/LibreLinkUp-0.4.3-windows-x64-portable.zip)):
+Download and run [**`LibreLinkUp-Setup-0.4.4-x64.exe`**](https://github.com/russellmilliner/librelinkup-rust-desktop/releases/download/v0.4.4/LibreLinkUp-Setup-0.4.4-x64.exe) (or extract the [**portable zip**](https://github.com/russellmilliner/librelinkup-rust-desktop/releases/download/v0.4.4/LibreLinkUp-0.4.4-windows-x64-portable.zip)):
 
 ```powershell
-Invoke-WebRequest -Uri "https://github.com/russellmilliner/librelinkup-rust-desktop/releases/download/v0.4.3/LibreLinkUp-Setup-0.4.3-x64.exe" -OutFile "$env:TEMP\LibreLinkUp-Setup-0.4.3-x64.exe"
-Start-Process -FilePath "$env:TEMP\LibreLinkUp-Setup-0.4.3-x64.exe"
+Invoke-WebRequest -Uri "https://github.com/russellmilliner/librelinkup-rust-desktop/releases/download/v0.4.4/LibreLinkUp-Setup-0.4.4-x64.exe" -OutFile "$env:TEMP\LibreLinkUp-Setup-0.4.4-x64.exe"
+Start-Process -FilePath "$env:TEMP\LibreLinkUp-Setup-0.4.4-x64.exe"
 ```
 
 - **Per-user install**: No administrator prompt is required. Creates a Start Menu shortcut (with Toast notification `AppUserModelID`) and an optional task to launch at Windows sign-in (`--minimized` to the system tray).
 - **SmartScreen note**: The installer is not signed with a commercial EV certificate yet. If Windows SmartScreen displays *"Windows protected your PC"*, click **More info → Run anyway**.
-- **Feature parity with KDE**: Live dashboard and 12-hour interactive graph, dynamic 32×32 glucose badge in the Windows notification area, floating always-on-top desktop overlay with **scroll-wheel transparency (`20%`–`100%`)** and **4 on-overlay action buttons (`🌙`/`🎨`, `↗`, `☰`, `✕`)**, stale-reading detection, urgent-low/repeat/snooze alerts with built-in alarm audio (`rodio`) and Windows Toast notifications.
+- **Feature parity with KDE**: Live dashboard and 12-hour interactive graph, dynamic 32×32 glucose badge in the Windows notification area, floating always-on-top desktop overlay with **scroll-wheel transparency (`20%`–`100%`)** and **5 on-overlay action buttons (`🌙`/`🎨`, `⊞` On All Desktops, `↗`, `☰`, `✕`)**, stale-reading detection, urgent-low/repeat/snooze alerts with built-in alarm audio (`rodio`) and Windows Toast notifications.
 - **Windows DPAPI security**: Credentials are encrypted with **AES-256-GCM** (`%APPDATA%\LibreLinkUpDesktop\credentials.enc.json`), and the 256-bit master key (`master.dpapi`) is protected by **Windows DPAPI (`CryptProtectData`)** bound to your Windows user login. Diagnostic logs are written to `%LOCALAPPDATA%\LibreLinkUpDesktop\events.log`.
 - See [**`windows/README.md`**](windows/README.md) for the complete Windows user and developer guide.
 
@@ -87,13 +87,14 @@ Start-Process -FilePath "$env:TEMP\LibreLinkUp-Setup-0.4.3-x64.exe"
   - Interactive chart with target range bands and point hover inspection (displaying exact reading, status badge, and timestamp when hovering over any graph point).
 - **Floating Desktop Overlay Widget (Control Buttons, Scroll-Wheel Opacity & Persistent Placement)**:
   - Borderless always-on-top desktop utility widget showing live blood sugar, vector trend arrow, and range status without cluttering the taskbar.
-  - **On-Overlay Action Buttons (2×2 Grid)**:
+  - **On-Overlay Action Buttons (2-Row Cluster)**:
     - **`🌙` / `🎨` Theme Toggle**: Switch between the Dark Slate card (`#0f172a` with status-color accent bar) and full Status Color fill directly on the overlay.
+    - **`⊞` On All Desktops Toggle (`onAllDesktops`)**: Toggle whether the floating overlay is shown across all virtual desktops (highlighted in green when active) or pinned only to the current virtual desktop (also configurable via Settings, the overlay `☰` menu, and the System Tray menu).
     - **`↗` Open Main Window**: Restore and focus the main desktop window.
-    - **`☰` Context Menu**: Open the quick actions menu (`Show main window`, `Refresh now`, `Switch theme`, `Hide overlay`) even when running in overlay-only mode.
+    - **`☰` Context Menu**: Open the quick actions menu (`Show main window`, `Refresh now`, `Switch theme`, `Show on all virtual desktops`, `Hide overlay`) even when running in overlay-only mode.
     - **`✕` Hide Overlay**: Hide the floating overlay with one click.
   - **Scroll-Wheel Transparency Control**: Adjust opacity from **`20%`** to **`100%`** in **`5%`** steps by scrolling the mouse wheel directly over the floating overlay (or via the slider in Settings).
-  - **Persistent Placement & State**: Automatically saves and restores the overlay's screen coordinates, dimensions, theme, opacity, and visibility across restarts.
+  - **Persistent Placement & State**: Automatically saves and restores the overlay's screen coordinates, dimensions, theme, opacity, virtual-desktop visibility (`overlay_on_all_desktops`), and visibility across restarts.
 - **Stale-Reading Detection & Multi-Tier Alert Engine**:
   - **Stale-Reading Detection**: Readings display their age (`"3 min ago"`) and turn gray (`STALE`) when older than a configurable threshold (`5`–`60` min, default `15` min), with an optional signal-loss alert.
   - **Urgent-Low, Low, High & Stale Alerts**: Urgent-Low alerts (default `55 mg/dL`) **cannot be snoozed** and repeat every 5 minutes; Low, High, and Stale alerts follow a configurable repeat interval (`5`–`120` min) and fire immediately if the condition worsens.

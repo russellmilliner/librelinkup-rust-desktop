@@ -37,6 +37,7 @@
 #include <QDBusMessage>
 #include <QDBusPendingCallWatcher>
 #include <QDBusPendingReply>
+#include <QDBusReply>
 #include <QDBusObjectPath>
 #include <QRandomGenerator>
 #include <QQmlApplicationEngine>
@@ -249,6 +250,7 @@ struct OverlayPlacementState {
     int width = 276;
     int height = 88;
     bool hasPlacement = false;
+    bool onAllDesktops = true;
     bool dragging = false;
     QPoint dragStartCursor;
     QPoint dragStartWinPos;
@@ -380,6 +382,98 @@ inline void restore_overlay_placement(
 
     if (QWindow* ovWin = find_overlay_window()) {
         st.applyToWindow(ovWin);
+    }
+}
+
+inline void apply_overlay_all_desktops(bool onAllDesktops) {
+    auto& st = OverlayPlacementState::instance();
+    st.onAllDesktops = onAllDesktops;
+
+    if (QWindow* ovWin = find_overlay_window()) {
+        const Qt::WindowFlags desiredFlags = Qt::Tool
+            | Qt::FramelessWindowHint
+            | Qt::WindowStaysOnTopHint
+            | (onAllDesktops ? Qt::BypassWindowManagerHint : Qt::WindowFlags());
+        if (ovWin->flags() != desiredFlags) {
+            const bool wasVis = ovWin->isVisible();
+            ovWin->setFlags(desiredFlags);
+            if (wasVis) {
+                ovWin->show();
+                st.applyToWindow(ovWin);
+            }
+        }
+    }
+
+    if (qEnvironmentVariable("QT_QPA_PLATFORM") == QStringLiteral("offscreen")) {
+        return;
+    }
+
+    QDBusConnection bus = QDBusConnection::sessionBus();
+    if (!bus.isConnected()) {
+        return;
+    }
+    const QString runtimeDir = QStandardPaths::writableLocation(QStandardPaths::RuntimeLocation).isEmpty()
+        ? QDir::tempPath()
+        : QStandardPaths::writableLocation(QStandardPaths::RuntimeLocation);
+    const QString scriptPath = runtimeDir + QStringLiteral("/librelinkup-kwin-desktop-mode.js");
+    QFile f(scriptPath);
+    if (f.open(QIODevice::WriteOnly | QIODevice::Truncate | QIODevice::Text)) {
+        const QString js = QStringLiteral(
+            "var list = workspace.stackingOrder || workspace.windowList();\n"
+            "if (list) {\n"
+            "  for (var i = 0; i < list.length; ++i) {\n"
+            "    var w = list[i];\n"
+            "    var cap = w && w.caption ? w.caption.toString() : '';\n"
+            "    if (cap.indexOf('LibreLinkUp Rust Desktop Overlay') === 0) {\n"
+            "      w.onAllDesktops = %1;\n"
+            "      w.keepAbove = true;\n"
+            "      w.skipTaskbar = true;\n"
+            "      w.skipPager = true;\n"
+            "    }\n"
+            "  }\n"
+            "}\n"
+        ).arg(onAllDesktops ? QStringLiteral("true") : QStringLiteral("false"));
+        f.write(js.toUtf8());
+        f.close();
+
+        const QString pluginName = QStringLiteral("librelinkup_overlay_desktop_oneshot");
+        QDBusMessage unloadMsg = QDBusMessage::createMethodCall(
+            QStringLiteral("org.kde.KWin"),
+            QStringLiteral("/Scripting"),
+            QStringLiteral("org.kde.kwin.Scripting"),
+            QStringLiteral("unloadScript")
+        );
+        unloadMsg << pluginName;
+        bus.call(unloadMsg, QDBus::NoBlock);
+
+        QDBusMessage loadMsg = QDBusMessage::createMethodCall(
+            QStringLiteral("org.kde.KWin"),
+            QStringLiteral("/Scripting"),
+            QStringLiteral("org.kde.kwin.Scripting"),
+            QStringLiteral("loadScript")
+        );
+        loadMsg << scriptPath << pluginName;
+        QDBusReply<int> loadReply = bus.call(loadMsg);
+        if (loadReply.isValid() && loadReply.value() >= 0) {
+            const QString scriptObj = QStringLiteral("/Scripting/Script%1").arg(loadReply.value());
+            QDBusMessage runMsg = QDBusMessage::createMethodCall(
+                QStringLiteral("org.kde.KWin"),
+                scriptObj,
+                QStringLiteral("org.kde.kwin.Script"),
+                QStringLiteral("run")
+            );
+            bus.call(runMsg, QDBus::NoBlock);
+            QTimer::singleShot(80, [pluginName]() {
+                QDBusMessage cleanupMsg = QDBusMessage::createMethodCall(
+                    QStringLiteral("org.kde.KWin"),
+                    QStringLiteral("/Scripting"),
+                    QStringLiteral("org.kde.kwin.Scripting"),
+                    QStringLiteral("unloadScript")
+                );
+                cleanupMsg << pluginName;
+                QDBusConnection::sessionBus().call(cleanupMsg, QDBus::NoBlock);
+            });
+        }
     }
 }
 
@@ -622,6 +716,7 @@ public:
         bool showGlucoseInTooltip,
         bool autostartEnabled,
         bool overlayVisible,
+        bool overlayOnAllDesktops,
         const QString& appThemeMode,
         const QString& badgeText,
         const QString& trendSymbol,
@@ -688,6 +783,11 @@ public:
             const bool old = m_overlayAction->blockSignals(true);
             m_overlayAction->setChecked(overlayVisible);
             m_overlayAction->blockSignals(old);
+        }
+        if (m_overlayAllDesktopsAction) {
+            const bool old = m_overlayAllDesktopsAction->blockSignals(true);
+            m_overlayAllDesktopsAction->setChecked(overlayOnAllDesktops);
+            m_overlayAllDesktopsAction->blockSignals(old);
         }
         if (m_themeSystemAction && m_themeDarkAction && m_themeLightAction) {
             m_themeSystemAction->blockSignals(true);
@@ -803,6 +903,19 @@ private:
                 QMetaObject::invokeMethod(
                     m_controller,
                     "updateOverlayVisible",
+                    Qt::QueuedConnection,
+                    Q_ARG(bool, checked)
+                );
+            }
+        });
+
+        m_overlayAllDesktopsAction = m_menu->addAction(QStringLiteral("Show Overlay on All Desktops"));
+        m_overlayAllDesktopsAction->setCheckable(true);
+        QObject::connect(m_overlayAllDesktopsAction, &QAction::triggered, [this](bool checked) {
+            if (m_controller) {
+                QMetaObject::invokeMethod(
+                    m_controller,
+                    "updateOverlayOnAllDesktops",
                     Qt::QueuedConnection,
                     Q_ARG(bool, checked)
                 );
@@ -955,6 +1068,7 @@ private:
     QAction* m_showInIconAction = nullptr;
     QAction* m_showInTooltipAction = nullptr;
     QAction* m_overlayAction = nullptr;
+    QAction* m_overlayAllDesktopsAction = nullptr;
     QAction* m_autostartAction = nullptr;
     QAction* m_themeSystemAction = nullptr;
     QAction* m_themeDarkAction = nullptr;
@@ -987,6 +1101,7 @@ inline void librelinkup_sync_tray(
     const bool showGlucoseInTooltip = (flags & 0x04u) != 0u;
     const bool autostartEnabled = (flags & 0x08u) != 0u;
     const bool overlayVisible = (flags & 0x10u) != 0u;
+    const bool overlayOnAllDesktops = (flags & 0x20u) != 0u;
 
     librelinkup::TrayManager::instance().sync(
         &controller,
@@ -995,6 +1110,7 @@ inline void librelinkup_sync_tray(
         showGlucoseInTooltip,
         autostartEnabled,
         overlayVisible,
+        overlayOnAllDesktops,
         app_theme_mode,
         badge_text,
         trend_symbol,
@@ -1078,6 +1194,10 @@ inline void librelinkup_restore_overlay_placement(
             librelinkup::update_tray_window_actions();
         });
     }
+}
+
+inline void librelinkup_apply_overlay_all_desktops(bool on_all_desktops) {
+    librelinkup::apply_overlay_all_desktops(on_all_desktops);
 }
 
 inline void librelinkup_begin_overlay_drag() {
@@ -1711,6 +1831,22 @@ inline QString librelinkup_run_ui_overflow_tests() {
         }
         if (ovWin->transientParent() != nullptr) {
             violations.append(QStringLiteral("OverlayWidget must have null transientParent so it stays independent of MainWindow"));
+        }
+
+        // Verify On All Desktops toggle updates window flags and title
+        QMetaObject::invokeMethod(ctrl, "updateOverlayOnAllDesktops", Qt::DirectConnection, Q_ARG(bool, false));
+        librelinkup_uitest::pump_events(30);
+        if (ctrl->property("overlayOnAllDesktops").toBool()) {
+            violations.append(QStringLiteral("overlayOnAllDesktops should be false after updateOverlayOnAllDesktops(false)"));
+        }
+        if ((ovWin->flags() & Qt::BypassWindowManagerHint) != 0) {
+            violations.append(QStringLiteral("OverlayWidget should clear Qt::BypassWindowManagerHint when overlayOnAllDesktops is false"));
+        }
+        QMetaObject::invokeMethod(ctrl, "updateOverlayOnAllDesktops", Qt::DirectConnection, Q_ARG(bool, true));
+        librelinkup_uitest::pump_events(30);
+        if (!ctrl->property("overlayOnAllDesktops").toBool() ||
+            (ovWin->flags() & Qt::BypassWindowManagerHint) != Qt::BypassWindowManagerHint) {
+            violations.append(QStringLiteral("OverlayWidget should restore Qt::BypassWindowManagerHint when overlayOnAllDesktops is true"));
         }
 
         // Verify when ONLY the overlay is showing (main window hidden + overlay visible):

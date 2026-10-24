@@ -8,14 +8,14 @@ A native, lightweight **Rust (`eframe` / `egui`)** desktop application for **Win
 
 | Package | Download Link | Description |
 | :--- | :--- | :--- |
-| **Windows Installer (`x64`)** | [**`LibreLinkUp-Setup-0.4.3-x64.exe`**](https://github.com/russellmilliner/librelinkup-rust-desktop/releases/download/v0.4.3/LibreLinkUp-Setup-0.4.3-x64.exe) ([SHA-256](https://github.com/russellmilliner/librelinkup-rust-desktop/releases/download/v0.4.3/LibreLinkUp-Setup-0.4.3-x64.exe.sha256)) | Per-user Inno Setup installer (no admin prompt required), Start Menu shortcut with Toast `AppUserModelID`, optional start at Windows sign-in |
-| **Portable Zip (`x64`)** | [**`LibreLinkUp-0.4.3-windows-x64-portable.zip`**](https://github.com/russellmilliner/librelinkup-rust-desktop/releases/download/v0.4.3/LibreLinkUp-0.4.3-windows-x64-portable.zip) ([SHA-256](https://github.com/russellmilliner/librelinkup-rust-desktop/releases/download/v0.4.3/LibreLinkUp-0.4.3-windows-x64-portable.zip.sha256)) | Standalone `LibreLinkUp.exe` executable — extract anywhere and run |
+| **Windows Installer (`x64`)** | [**`LibreLinkUp-Setup-0.4.4-x64.exe`**](https://github.com/russellmilliner/librelinkup-rust-desktop/releases/download/v0.4.4/LibreLinkUp-Setup-0.4.4-x64.exe) ([SHA-256](https://github.com/russellmilliner/librelinkup-rust-desktop/releases/download/v0.4.4/LibreLinkUp-Setup-0.4.4-x64.exe.sha256)) | Per-user Inno Setup installer (no admin prompt required), Start Menu shortcut with Toast `AppUserModelID`, optional start at Windows sign-in |
+| **Portable Zip (`x64`)** | [**`LibreLinkUp-0.4.4-windows-x64-portable.zip`**](https://github.com/russellmilliner/librelinkup-rust-desktop/releases/download/v0.4.4/LibreLinkUp-0.4.4-windows-x64-portable.zip) ([SHA-256](https://github.com/russellmilliner/librelinkup-rust-desktop/releases/download/v0.4.4/LibreLinkUp-0.4.4-windows-x64-portable.zip.sha256)) | Standalone `LibreLinkUp.exe` executable — extract anywhere and run |
 
 ### PowerShell Quick Install
 
 ```powershell
-Invoke-WebRequest -Uri "https://github.com/russellmilliner/librelinkup-rust-desktop/releases/download/v0.4.3/LibreLinkUp-Setup-0.4.3-x64.exe" -OutFile "$env:TEMP\LibreLinkUp-Setup-0.4.3-x64.exe"
-Start-Process -FilePath "$env:TEMP\LibreLinkUp-Setup-0.4.3-x64.exe"
+Invoke-WebRequest -Uri "https://github.com/russellmilliner/librelinkup-rust-desktop/releases/download/v0.4.4/LibreLinkUp-Setup-0.4.4-x64.exe" -OutFile "$env:TEMP\LibreLinkUp-Setup-0.4.4-x64.exe"
+Start-Process -FilePath "$env:TEMP\LibreLinkUp-Setup-0.4.4-x64.exe"
 ```
 
 > **Windows SmartScreen Note**: Because the binary is not code-signed with a commercial EV certificate, Windows SmartScreen may display *"Windows protected your PC"* on first launch. Click **More info → Run anyway**.
@@ -35,10 +35,11 @@ Start-Process -FilePath "$env:TEMP\LibreLinkUp-Setup-0.4.3-x64.exe"
 ### 2. Floating Always-on-Top Desktop Overlay
 A borderless, translucent, always-on-top desktop widget (`276×88` default, configurable from `200×70` to `600×260`) that stays visible over other windows without cluttering the Windows Taskbar:
 - **Scroll Wheel Transparency Control**: Hover anywhere over the overlay and scroll the mouse wheel up or down to adjust opacity between **`20%`** and **`100%`** in **`5%`** increments. Changes take effect immediately and persist automatically.
-- **On-Overlay Control Buttons (2×2 Grid)**:
+- **On-Overlay Control Buttons (2-Row Cluster)**:
   - **`🌙` / `🎨` Theme Toggle**: Switch between the **Dark Slate** card (`#0f172a` with a left status-color accent bar) and **Status Color Fill** (card background colored by your glucose range status). The hover tooltip displays the current opacity percentage.
+  - **`⊞` On All Desktops Toggle (`overlay_on_all_desktops`)**: Toggle whether the floating overlay appears across all Windows 10/11 Virtual Desktops (`WS_EX_TOOLWINDOW` active, highlighted in green) or stays on the current virtual desktop only (also toggleable from the **Settings** tab and the overlay `☰` / right-click context menu).
   - **`↗` Open Main Window**: Restores and focuses the main LibreLinkUp Rust Desktop window.
-  - **`☰` Context Menu**: Opens a popup menu directly anchored to the button with **Show main window**, **Refresh now**, **Switch to color/dark theme**, and **Hide overlay**.
+  - **`☰` Context Menu**: Opens a popup menu directly anchored to the button with **Show main window**, **Refresh now**, **Switch to color/dark theme**, **Show on all virtual desktops**, and **Hide overlay**.
   - **`✕` Hide Overlay**: Hides the floating overlay and saves visibility state (highlights in soft red on hover).
 - **Drag & Mouse Interactions**:
   - **Left-click + drag** anywhere on the card background to reposition; the exact screen coordinates (`overlay_x`, `overlay_y`) are saved automatically when dropped.
@@ -128,9 +129,9 @@ cargo build --release --manifest-path windows/Cargo.toml
 # Run headless self-test
 .\windows\target\release\LibreLinkUp.exe --self-test
 
-# Build the Inno Setup installer (produces windows\dist\LibreLinkUp-Setup-0.4.3-x64.exe)
+# Build the Inno Setup installer (produces windows\dist\LibreLinkUp-Setup-0.4.4-x64.exe)
 & "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe" `
-    /DAppVersion=0.4.3 `
+    /DAppVersion=0.4.4 `
     /DSourceExe=..\target\release\LibreLinkUp.exe `
     /DOutputDir=..\dist `
     windows\installer\LibreLinkUp.iss
@@ -149,8 +150,8 @@ Prerequisites:
 ```
 
 Generated artifacts are placed in `windows/dist/`:
-- `windows/dist/LibreLinkUp-Setup-0.4.3-x64.exe` (+ `.sha256`)
-- `windows/dist/LibreLinkUp-0.4.3-windows-x64-portable.zip` (+ `.sha256`)
+- `windows/dist/LibreLinkUp-Setup-0.4.4-x64.exe` (+ `.sha256`)
+- `windows/dist/LibreLinkUp-0.4.4-windows-x64-portable.zip` (+ `.sha256`)
 
 ---
 

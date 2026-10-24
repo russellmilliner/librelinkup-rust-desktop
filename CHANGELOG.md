@@ -2,6 +2,8 @@
 
 All notable changes and bumped dependencies for `russellmilliner/librelinkup-rust-desktop` are documented in this file.
 
+## [v0.4.4](https://github.com/russellmilliner/librelinkup-rust-desktop/releases/tag/v0.4.4) — 2026-10-23
+
 ## [v0.4.3](https://github.com/russellmilliner/librelinkup-rust-desktop/releases/tag/v0.4.3) — 2026-10-22
 
 ### Changes

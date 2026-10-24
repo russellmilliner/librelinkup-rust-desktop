@@ -1471,6 +1471,14 @@ Kirigami.ApplicationWindow {
                             Layout.fillWidth: true
                         }
 
+                        QQC2.Switch {
+                            objectName: "overlayAllDesktopsSwitch"
+                            text: qsTr("Show Desktop Overlay on All Virtual Desktops")
+                            checked: appController.overlayOnAllDesktops
+                            onToggled: appController.updateOverlayOnAllDesktops(checked)
+                            Layout.fillWidth: true
+                        }
+
                         RowLayout {
                             Layout.fillWidth: true
                             spacing: 12

@@ -544,6 +544,7 @@ impl LibreLinkUpApp {
         egui::Frame::group(ui.style()).inner_margin(12).show(ui, |ui| {
             ui.label(RichText::new("Floating overlay").strong());
             ui.checkbox(&mut s.overlay_visible, "Show floating desktop overlay (always on top)");
+            ui.checkbox(&mut s.overlay_on_all_desktops, "Show overlay on all virtual desktops");
             ui.checkbox(&mut s.overlay_dark_theme, "Dark overlay theme");
             ui.horizontal(|ui| {
                 ui.label("Opacity");
@@ -976,6 +977,7 @@ impl LibreLinkUpApp {
 fn overlay_ui(ui: &mut egui::Ui, shared: &SharedState, tx: &UnboundedSender<Command>, ui_handle: &Arc<UiHandle>) {
     let state = shared.lock().unwrap_or_else(|p| p.into_inner()).clone();
     let s = &state.settings;
+    crate::platform::set_overlay_all_desktops(s.overlay_on_all_desktops);
     let snap = &state.snapshot;
     let (label, color_hex, stale, age_text) = reading_status(&state);
 
@@ -1068,20 +1070,34 @@ fn overlay_ui(ui: &mut egui::Ui, shared: &SharedState, tx: &UnboundedSender<Comm
     };
     painter.text(rect.left_center() + Vec2::new(18.0, 22.0), Align2::LEFT_CENTER, sub, FontId::proportional(12.0), Color32::from_white_alpha(230));
 
-    // 2x2 grid of action buttons on the right side
-    let btn_size = Vec2::splat(22.0);
+    // 2-row action button cluster on the right side (3 top buttons: 20x22, 2 bottom buttons: 32x22)
+    let top_btn_size = Vec2::new(20.0, 22.0);
+    let bot_btn_size = Vec2::new(32.0, 22.0);
     let btn_spacing = 4.0;
-    let grid_w = btn_size.x * 2.0 + btn_spacing;
-    let grid_h = btn_size.y * 2.0 + btn_spacing;
+    let grid_w = top_btn_size.x * 3.0 + btn_spacing * 2.0; // 68.0
+    let grid_h = top_btn_size.y * 2.0 + btn_spacing;       // 48.0
     let buttons_rect = Rect::from_min_size(
         Pos2::new(rect.max.x - 10.0 - grid_w, rect.min.y + (rect.height() - grid_h) * 0.5),
         Vec2::new(grid_w, grid_h),
     );
 
-    let btn_theme_rect = Rect::from_min_size(buttons_rect.min, btn_size);
-    let btn_restore_rect = Rect::from_min_size(buttons_rect.min + Vec2::new(btn_size.x + btn_spacing, 0.0), btn_size);
-    let btn_menu_rect = Rect::from_min_size(buttons_rect.min + Vec2::new(0.0, btn_size.y + btn_spacing), btn_size);
-    let btn_close_rect = Rect::from_min_size(buttons_rect.min + Vec2::new(btn_size.x + btn_spacing, btn_size.y + btn_spacing), btn_size);
+    let btn_theme_rect = Rect::from_min_size(buttons_rect.min, top_btn_size);
+    let btn_all_desk_rect = Rect::from_min_size(
+        buttons_rect.min + Vec2::new(top_btn_size.x + btn_spacing, 0.0),
+        top_btn_size,
+    );
+    let btn_restore_rect = Rect::from_min_size(
+        buttons_rect.min + Vec2::new((top_btn_size.x + btn_spacing) * 2.0, 0.0),
+        top_btn_size,
+    );
+    let btn_menu_rect = Rect::from_min_size(
+        buttons_rect.min + Vec2::new(0.0, top_btn_size.y + btn_spacing),
+        bot_btn_size,
+    );
+    let btn_close_rect = Rect::from_min_size(
+        buttons_rect.min + Vec2::new(bot_btn_size.x + btn_spacing, top_btn_size.y + btn_spacing),
+        bot_btn_size,
+    );
 
     let theme_icon = if s.overlay_dark_theme { "🌙" } else { "🎨" };
     let theme_tooltip = if s.overlay_dark_theme {
@@ -1093,6 +1109,28 @@ fn overlay_ui(ui: &mut egui::Ui, shared: &SharedState, tx: &UnboundedSender<Comm
     if btn_theme_resp.clicked() {
         let mut ns = s.clone();
         ns.overlay_dark_theme = !ns.overlay_dark_theme;
+        if let Ok(mut guard) = shared.lock() {
+            guard.settings = ns.clone();
+        }
+        let _ = tx.send(Command::SaveSettings(Box::new(ns)));
+        ui_handle.repaint_all();
+    }
+
+    let all_desk_tooltip = if s.overlay_on_all_desktops {
+        "On All Desktops: ON (Visible across all virtual desktops • Click for current desktop only)"
+    } else {
+        "On All Desktops: OFF (Current virtual desktop only • Click to show on all desktops)"
+    };
+    let btn_all_desk_resp = draw_overlay_all_desktops_button(
+        ui,
+        btn_all_desk_rect,
+        s.overlay_on_all_desktops,
+        all_desk_tooltip,
+    );
+    if btn_all_desk_resp.clicked() {
+        let mut ns = s.clone();
+        ns.overlay_on_all_desktops = !ns.overlay_on_all_desktops;
+        crate::platform::set_overlay_all_desktops(ns.overlay_on_all_desktops);
         if let Ok(mut guard) = shared.lock() {
             guard.settings = ns.clone();
         }
@@ -1193,6 +1231,84 @@ fn draw_overlay_button(
     resp.on_hover_text(tooltip)
 }
 
+fn draw_overlay_all_desktops_button(
+    ui: &mut egui::Ui,
+    rect: Rect,
+    on_all_desktops: bool,
+    tooltip: &str,
+) -> egui::Response {
+    let id = ui.make_persistent_id("btn_all_desktops");
+    let resp = ui.interact(rect, id, Sense::click());
+    let painter = ui.painter();
+    let hovered = resp.hovered();
+    let bg = if on_all_desktops {
+        if hovered {
+            Color32::from_rgba_unmultiplied(56, 189, 248, 95)
+        } else {
+            Color32::from_rgba_unmultiplied(56, 189, 248, 60)
+        }
+    } else if hovered {
+        Color32::from_white_alpha(70)
+    } else {
+        Color32::from_white_alpha(35)
+    };
+    let border = if on_all_desktops {
+        Color32::from_rgb(56, 189, 248)
+    } else if hovered {
+        Color32::from_white_alpha(120)
+    } else {
+        Color32::from_white_alpha(65)
+    };
+    painter.rect_filled(rect, CornerRadius::same(6), bg);
+    painter.rect_stroke(
+        rect,
+        CornerRadius::same(6),
+        Stroke::new(1.0, border),
+        egui::StrokeKind::Inside,
+    );
+
+    let center = rect.center();
+    let cell = 4.2;
+    let gap = 1.8;
+    let total = cell * 2.0 + gap;
+    let origin = center - Vec2::splat(total * 0.5);
+    let active_stroke = if on_all_desktops {
+        Color32::from_rgb(56, 189, 248)
+    } else {
+        Color32::WHITE
+    };
+    let active_fill = if on_all_desktops {
+        Color32::from_rgba_unmultiplied(56, 189, 248, 120)
+    } else {
+        Color32::WHITE
+    };
+    let dim_stroke = Color32::from_white_alpha(105);
+    for (idx, (col, row)) in [(0, 0), (1, 0), (0, 1), (1, 1)].into_iter().enumerate() {
+        let cell_rect = Rect::from_min_size(
+            origin + Vec2::new(col as f32 * (cell + gap), row as f32 * (cell + gap)),
+            Vec2::splat(cell),
+        );
+        let is_active = idx == 0 || on_all_desktops;
+        if is_active {
+            painter.rect_filled(cell_rect, CornerRadius::same(1), active_fill);
+            painter.rect_stroke(
+                cell_rect,
+                CornerRadius::same(1),
+                Stroke::new(1.0, active_stroke),
+                egui::StrokeKind::Inside,
+            );
+        } else {
+            painter.rect_stroke(
+                cell_rect,
+                CornerRadius::same(1),
+                Stroke::new(1.0, dim_stroke),
+                egui::StrokeKind::Inside,
+            );
+        }
+    }
+    resp.on_hover_text(tooltip)
+}
+
 fn show_overlay_menu(
     ui: &mut egui::Ui,
     s: &AppSettings,
@@ -1206,6 +1322,22 @@ fn show_overlay_menu(
     }
     if ui.button("Refresh now").clicked() {
         let _ = tx.send(Command::RefreshNow);
+        ui.close();
+    }
+    let all_desk_label = if s.overlay_on_all_desktops {
+        "✓ Show on all virtual desktops"
+    } else {
+        "Show on all virtual desktops"
+    };
+    if ui.button(all_desk_label).clicked() {
+        let mut ns = s.clone();
+        ns.overlay_on_all_desktops = !ns.overlay_on_all_desktops;
+        crate::platform::set_overlay_all_desktops(ns.overlay_on_all_desktops);
+        if let Ok(mut guard) = shared.lock() {
+            guard.settings = ns.clone();
+        }
+        let _ = tx.send(Command::SaveSettings(Box::new(ns)));
+        ui_handle.repaint_all();
         ui.close();
     }
     let theme_label = if s.overlay_dark_theme {

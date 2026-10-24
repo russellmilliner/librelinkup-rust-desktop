@@ -43,6 +43,11 @@
   <url type="donation">https://ko-fi.com/russellmilliner</url>
   <content_rating type="oars-1.1" />
   <releases>
+    <release version="0.4.4" date="2026-10-23">
+      <description>
+        <p>Add On All Desktops toggle button and setting for floating desktop overlay</p>
+      </description>
+    </release>
     <release version="0.4.3" date="2026-10-22">
       <description>
         <p>Add periodic background auto-update version checking (every 6h) and one-click in-app update installer for Linux Flatpak &amp; Windows</p>

@@ -2,17 +2,21 @@
 
 All notable changes and bumped dependencies for `russellmilliner/librelinkup-rust-desktop` are documented in this file.
 
-## [v0.4.4-deps](https://github.com/russellmilliner/librelinkup-rust-desktop/releases/tag/v0.4.4-deps) — 2026-10-24
+## [v0.4.4-deps](https://github.com/russellmilliner/librelinkup-rust-desktop/releases/tag/v0.4.4-deps) — 2026-10-26
 
-### 📦 Bumped Dependencies (5 packages)
+### 📦 Bumped Dependencies (9 packages)
 
 | Package | Previous | Updated | Scope |
 | :--- | :--- | :--- | :--- |
-| `cc` | `1.9.0` | **`1.10.0`** | Lockfile (`windows/Cargo.lock`) |
-| `clipboard-win` | `5.4.1` | **`5.4.3`** | Lockfile (`windows/Cargo.lock`) |
-| `smallvec` | `1.16.3` | **`1.16.4`** | Lockfile (`windows/Cargo.lock`) |
-| `uuid` | `1.28.0` | **`1.29.0`** | Lockfile (`windows/Cargo.lock`) |
-| `webpki-roots` | `1.0.10` | **`1.0.11`** | Lockfile (`windows/Cargo.lock`) |
+| `accesskit` | `0.25.1` | **`0.25.2`** | Lockfile (`windows/Cargo.lock`) |
+| `accesskit_atspi_common` | `0.21.0` | **`0.21.1`** | Lockfile (`windows/Cargo.lock`) |
+| `accesskit_consumer` | `0.39.1` | **`0.39.2`** | Lockfile (`windows/Cargo.lock`) |
+| `accesskit_ios` | `0.2.1` | **`0.2.2`** | Lockfile (`windows/Cargo.lock`) |
+| `accesskit_macos` | `0.27.1` | **`0.27.2`** | Lockfile (`windows/Cargo.lock`) |
+| `accesskit_unix` | `0.24.0` | **`0.24.1`** | Lockfile (`windows/Cargo.lock`) |
+| `accesskit_windows` | `0.35.1` | **`0.35.2`** | Lockfile (`windows/Cargo.lock`) |
+| `accesskit_winit` | `0.34.1` | **`0.34.2`** | Lockfile (`windows/Cargo.lock`) |
+| `ordered-float` | `5.5.0` | **`5.5.1`** | Lockfile (`windows/Cargo.lock`) |
 
 ## [v0.4.4](https://github.com/russellmilliner/librelinkup-rust-desktop/releases/tag/v0.4.4) — 2026-10-23
 

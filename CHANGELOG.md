@@ -2,6 +2,32 @@
 
 All notable changes and bumped dependencies for `russellmilliner/librelinkup-rust-desktop` are documented in this file.
 
+## [v0.4.5](https://github.com/russellmilliner/librelinkup-rust-desktop/releases/tag/v0.4.5) — 2026-10-28
+
+### Changes
+- feat(security): notification snooze actions, SHA-256 updater verification, keyring/opt-in vault, region allowlist, PII redaction, and modular core/bridge/cpp split (e0f8b4e)
+- chore(deps): update dependencies (accesskit 0.25.2, accesskit_atspi_common 0.21.1, accesskit_consumer 0.39.2, accesskit_ios 0.2.2, accesskit_macos 0.27.2, accesskit_unix 0.24.1 (+3 more)) (3de3d00)
+- chore(deps): update dependencies (cc 1.10.0, clipboard-win 5.4.3, smallvec 1.16.4, uuid 1.29.0, webpki-roots 1.0.11) (e06d46e)
+
+### 📦 Bumped Dependencies (14 packages)
+
+| Package | Previous | Updated | Scope |
+| :--- | :--- | :--- | :--- |
+| `accesskit` | `0.25.1` | **`0.25.2`** | Lockfile (`windows/Cargo.lock`) |
+| `accesskit_atspi_common` | `0.21.0` | **`0.21.1`** | Lockfile (`windows/Cargo.lock`) |
+| `accesskit_consumer` | `0.39.1` | **`0.39.2`** | Lockfile (`windows/Cargo.lock`) |
+| `accesskit_ios` | `0.2.1` | **`0.2.2`** | Lockfile (`windows/Cargo.lock`) |
+| `accesskit_macos` | `0.27.1` | **`0.27.2`** | Lockfile (`windows/Cargo.lock`) |
+| `accesskit_unix` | `0.24.0` | **`0.24.1`** | Lockfile (`windows/Cargo.lock`) |
+| `accesskit_windows` | `0.35.1` | **`0.35.2`** | Lockfile (`windows/Cargo.lock`) |
+| `accesskit_winit` | `0.34.1` | **`0.34.2`** | Lockfile (`windows/Cargo.lock`) |
+| `cc` | `1.9.0` | **`1.10.0`** | Lockfile (`windows/Cargo.lock`) |
+| `clipboard-win` | `5.4.1` | **`5.4.3`** | Lockfile (`windows/Cargo.lock`) |
+| `ordered-float` | `5.5.0` | **`5.5.1`** | Lockfile (`windows/Cargo.lock`) |
+| `smallvec` | `1.16.3` | **`1.16.4`** | Lockfile (`windows/Cargo.lock`) |
+| `uuid` | `1.28.0` | **`1.29.0`** | Lockfile (`windows/Cargo.lock`) |
+| `webpki-roots` | `1.0.10` | **`1.0.11`** | Lockfile (`windows/Cargo.lock`) |
+
 ## [v0.4.4-deps](https://github.com/russellmilliner/librelinkup-rust-desktop/releases/tag/v0.4.4-deps) — 2026-10-26
 
 ### 📦 Bumped Dependencies (9 packages)

@@ -43,6 +43,11 @@
   <url type="donation">https://ko-fi.com/russellmilliner</url>
   <content_rating type="oars-1.1" />
   <releases>
+    <release version="0.4.5" date="2026-10-28">
+      <description>
+        <p>Alert notification snooze actions, SHA-256 verified updater, desktop keyring &amp; opt-in password vault, LibreView region allowlist, PII redaction, and modular core/bridge/C++ architecture</p>
+      </description>
+    </release>
     <release version="0.4.4" date="2026-10-23">
       <description>
         <p>Add On All Desktops toggle button and setting for floating desktop overlay</p>

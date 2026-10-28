@@ -2388,7 +2388,7 @@ dependencies = [
 
 [[package]]
 name = "librelinkup-core"
-version = "0.4.4"
+version = "0.4.5"
 dependencies = [
  "chrono",
  "reqwest",
@@ -2401,7 +2401,7 @@ dependencies = [
 
 [[package]]
 name = "librelinkup-windows"
-version = "0.4.4"
+version = "0.4.5"
 dependencies = [
  "ab_glyph",
  "chrono",

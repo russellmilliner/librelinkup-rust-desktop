@@ -331,7 +331,7 @@ fn self_test() -> i32 {
             .and_then(|res| if res.update_available { Ok(res.message) } else { Err("expected update_available=true".into()) })
     });
 
-    check("region-normalization", (|| {
+    check("region-normalization", {
         use librelinkup_core::api::{normalize_country_code, resolve_base_url};
         let fi = normalize_country_code("FI");
         let gb = normalize_country_code("GB");
@@ -341,7 +341,7 @@ fn self_test() -> i32 {
         } else {
             Err(format!("unexpected mapping: FI->{fi} ({eu_url}), GB->{gb}"))
         }
-    })());
+    });
 
     check("network", (|| {
         let rt = tokio::runtime::Builder::new_current_thread().enable_all().build().map_err(|e| e.to_string())?;

@@ -1,9 +1,10 @@
+use std::fmt;
 use std::fs;
 use std::path::Path;
 
 use serde::{Deserialize, Serialize};
 
-use crate::paths::settings_file_path;
+use crate::paths::{settings_file_path, write_file_atomic_0600};
 
 pub const LOW_CRITICAL_MG_DL: f64 = 70.0;
 pub const HIGH_CRITICAL_MG_DL: f64 = 240.0;
@@ -14,8 +15,16 @@ pub const DEFAULT_ALERT_REPEAT_MINUTES: u32 = 15;
 pub const DEFAULT_STALE_AFTER_MINUTES: u32 = 15;
 /// Urgent-low alerts repeat at least this often regardless of the configured repeat interval.
 pub const URGENT_LOW_REPEAT_MINUTES: u32 = 5;
+/// Minimum allowed polling interval in seconds (LibreView rate-limit floor).
+pub const MIN_POLL_INTERVAL_SECONDS: u32 = 60;
+/// Maximum allowed polling interval in seconds.
+pub const MAX_POLL_INTERVAL_SECONDS: u32 = 3600;
 /// Gray used for stale readings in the UI, tray badge and overlay.
 pub const STALE_COLOR_HEX: &str = "#6b7280";
+
+pub fn clamp_poll_interval(seconds: u32) -> u32 {
+    seconds.clamp(MIN_POLL_INTERVAL_SECONDS, MAX_POLL_INTERVAL_SECONDS)
+}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum GlucoseRangeStatus {
@@ -121,7 +130,7 @@ pub struct GraphPoint {
     pub value_mg_dl: f64,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[derive(Clone, Serialize, Deserialize, PartialEq)]
 pub struct GlucoseSnapshot {
     pub value_mg_dl: f64,
     pub trend_arrow: i32,
@@ -136,6 +145,23 @@ pub struct GlucoseSnapshot {
     /// `FactoryTimestamp`, which is UTC). `None` when unknown (e.g. sample data).
     #[serde(default)]
     pub measured_at_epoch: Option<i64>,
+}
+
+impl fmt::Debug for GlucoseSnapshot {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("GlucoseSnapshot")
+            .field("value_mg_dl", &self.value_mg_dl)
+            .field("trend_arrow", &self.trend_arrow)
+            .field("timestamp", &self.timestamp)
+            .field("target_low_mg_dl", &self.target_low_mg_dl)
+            .field("target_high_mg_dl", &self.target_high_mg_dl)
+            .field("patient_id", &"[REDACTED]")
+            .field("first_name", &"[REDACTED]")
+            .field("last_name", &"[REDACTED]")
+            .field("graph_points_len", &self.graph_points.len())
+            .field("measured_at_epoch", &self.measured_at_epoch)
+            .finish()
+    }
 }
 
 impl Default for GlucoseSnapshot {
@@ -200,6 +226,9 @@ pub struct AppSettings {
     pub snooze_until_epoch: i64,
     /// Check GitHub Releases for a newer version automatically at startup.
     pub check_updates_on_startup: bool,
+    /// Opt-in: also persist the account password inside the encrypted vault so expired
+    /// bearer tokens can be silently refreshed without re-prompting. Defaults to `false`.
+    pub remember_password: bool,
 }
 
 impl Default for AppSettings {
@@ -225,7 +254,7 @@ impl Default for AppSettings {
             tray_icon_theme: "auto".to_string(),
             autostart_enabled: true,
             start_minimized: true,
-            poll_interval_seconds: 60,
+            poll_interval_seconds: MIN_POLL_INTERVAL_SECONDS,
             bring_to_front_enabled: false,
             flash_window_enabled: true,
             audio_alert_enabled: true,
@@ -241,6 +270,7 @@ impl Default for AppSettings {
             alert_on_stale: true,
             snooze_until_epoch: 0,
             check_updates_on_startup: true,
+            remember_password: false,
         }
     }
 }
@@ -323,7 +353,8 @@ impl AppSettings {
 
 pub fn load_settings_from_path(path: &Path) -> AppSettings {
     if let Ok(raw) = fs::read_to_string(path) {
-        if let Ok(parsed) = serde_json::from_str::<AppSettings>(&raw) {
+        if let Ok(mut parsed) = serde_json::from_str::<AppSettings>(&raw) {
+            parsed.poll_interval_seconds = clamp_poll_interval(parsed.poll_interval_seconds);
             return parsed;
         }
     }
@@ -331,12 +362,12 @@ pub fn load_settings_from_path(path: &Path) -> AppSettings {
 }
 
 pub fn save_settings_to_path(settings: &AppSettings, path: &Path) -> Result<(), String> {
-    if let Some(parent) = path.parent() {
-        let _ = fs::create_dir_all(parent);
-    }
-    let json = serde_json::to_string_pretty(settings)
+    let mut normalized = settings.clone();
+    normalized.poll_interval_seconds = clamp_poll_interval(normalized.poll_interval_seconds);
+    let json = serde_json::to_string_pretty(&normalized)
         .map_err(|e| format!("Failed to serialize settings: {e}"))?;
-    fs::write(path, json).map_err(|e| format!("Failed to write settings file: {e}"))
+    write_file_atomic_0600(path, json.as_bytes())
+        .map_err(|e| format!("Failed to write settings file: {e}"))
 }
 
 pub fn load_default_settings() -> AppSettings {
@@ -417,6 +448,23 @@ impl AlertKind {
     pub fn bypasses_snooze(&self) -> bool {
         matches!(self, Self::UrgentLow)
     }
+}
+
+/// Interactive snooze action definitions `(action_id, button_label, minutes)` attached to
+/// desktop alert notifications on Linux (org.freedesktop.Notifications) and Windows (WinRT Toast).
+pub const ALERT_NOTIFICATION_SNOOZE_ACTIONS: &[(&str, &str, i32)] = &[
+    ("snooze_30", "Snooze 30 min", 30),
+    ("snooze_60", "Snooze 1 hr", 60),
+    ("snooze_120", "Snooze 2 hr", 120),
+];
+
+/// Parses a desktop notification action identifier (e.g. `"snooze_30"`) into its snooze
+/// duration in minutes (`Some(30)`), or returns `None` for non-snooze actions.
+pub fn parse_notification_snooze_action(action_id: &str) -> Option<i32> {
+    let clean = action_id.trim();
+    ALERT_NOTIFICATION_SNOOZE_ACTIONS
+        .iter()
+        .find_map(|&(id, _, minutes)| (id == clean).then_some(minutes))
 }
 
 impl AppSettings {
@@ -573,5 +621,45 @@ mod alert_tests {
         assert!(!s.should_fire_alert(AlertKind::Stale, None, t0));
         assert!(s.should_fire_alert(AlertKind::UrgentLow, None, t0));
         assert!(s.should_fire_alert(AlertKind::High, None, t0 + 1800), "snooze expired");
+    }
+
+    #[test]
+    fn notification_snooze_actions_parse_correctly() {
+        assert_eq!(ALERT_NOTIFICATION_SNOOZE_ACTIONS.len(), 3);
+        assert_eq!(parse_notification_snooze_action("snooze_30"), Some(30));
+        assert_eq!(parse_notification_snooze_action("snooze_60"), Some(60));
+        assert_eq!(parse_notification_snooze_action("snooze_120"), Some(120));
+        assert_eq!(parse_notification_snooze_action(" snooze_30 "), Some(30));
+        assert_eq!(parse_notification_snooze_action("default"), None);
+        assert_eq!(parse_notification_snooze_action("__closed"), None);
+        assert_eq!(parse_notification_snooze_action(""), None);
+    }
+
+    #[test]
+    fn poll_floor_60s_and_snapshot_debug_redacts_pii() {
+        let def = AppSettings::default();
+        assert_eq!(def.poll_interval_seconds, 60);
+        assert!(!def.remember_password);
+        assert_eq!(clamp_poll_interval(15), 60);
+        assert_eq!(clamp_poll_interval(60), 60);
+        assert_eq!(clamp_poll_interval(99999), 3600);
+
+        let snap = GlucoseSnapshot {
+            value_mg_dl: 112.0,
+            trend_arrow: 3,
+            timestamp: "10/19/2026 7:05:09 PM".into(),
+            target_low_mg_dl: 70.0,
+            target_high_mg_dl: 180.0,
+            patient_id: "pat-secret-uuid".into(),
+            first_name: "Alice".into(),
+            last_name: "Patient".into(),
+            graph_points: vec![],
+            measured_at_epoch: Some(1792436709),
+        };
+        let dbg = format!("{snap:?}");
+        assert!(!dbg.contains("pat-secret-uuid"));
+        assert!(!dbg.contains("Alice"));
+        assert!(!dbg.contains("Patient"));
+        assert!(dbg.contains("[REDACTED]"));
     }
 }

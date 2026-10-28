@@ -7,19 +7,20 @@
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
-use librelinkup_core::api::{
-    authenticate_async, fetch_cgm_snapshot_async, normalize_country_code, ApiError,
-};
+use librelinkup_core::api::{authenticate_async, normalize_country_code};
 use librelinkup_core::crypto::{
     clear_credentials_at_path, load_credentials_with_secret, save_credentials_with_secret,
     StoredCredentials,
 };
 use librelinkup_core::event_log::{log_error, log_info, log_warn};
 use librelinkup_core::models::{
-    format_glucose_value, format_reading_age, load_default_settings, reading_age_minutes,
-    save_default_settings, trend_arrow_symbol, AlertKind, AppSettings, GlucoseSnapshot, GraphPoint,
+    clamp_poll_interval, format_glucose_value, load_default_settings, save_default_settings,
+    trend_arrow_symbol, AlertKind, AppSettings, GlucoseSnapshot,
 };
 use librelinkup_core::paths::credentials_file_path;
+use librelinkup_core::session::{
+    build_demo_snapshot, evaluate_alert_decision, fetch_snapshot_with_reauth_async,
+};
 use librelinkup_core::updater::{
     check_for_updates_async, download_and_install_update_async, UpdateCheckResult,
 };
@@ -93,6 +94,7 @@ pub fn start(notifier: Arc<dyn UiNotifier>) -> (SharedState, UnboundedSender<Com
     }));
     let (tx, rx) = unbounded_channel();
     let thread_shared = shared.clone();
+    let thread_tx = tx.clone();
     std::thread::Builder::new()
         .name("llu-service".into())
         .spawn(move || {
@@ -107,7 +109,15 @@ pub fn start(notifier: Arc<dyn UiNotifier>) -> (SharedState, UnboundedSender<Com
                     return;
                 }
             };
-            runtime.block_on(Service { shared: thread_shared, notifier, creds: None }.run(rx));
+            runtime.block_on(
+                Service {
+                    shared: thread_shared,
+                    notifier,
+                    tx: thread_tx,
+                    creds: None,
+                }
+                .run(rx),
+            );
         })
         .expect("spawn service thread");
     (shared, tx)
@@ -116,6 +126,7 @@ pub fn start(notifier: Arc<dyn UiNotifier>) -> (SharedState, UnboundedSender<Com
 struct Service {
     shared: SharedState,
     notifier: Arc<dyn UiNotifier>,
+    tx: UnboundedSender<Command>,
     creds: Option<StoredCredentials>,
 }
 
@@ -162,7 +173,7 @@ impl Service {
     }
 
     fn poll_interval(&self) -> Duration {
-        let secs = lock(&self.shared).settings.poll_interval_seconds.clamp(15, 3600);
+        let secs = clamp_poll_interval(lock(&self.shared).settings.poll_interval_seconds);
         Duration::from_secs(secs as u64)
     }
 
@@ -223,10 +234,16 @@ impl Service {
     }
 
     fn save_vault(&self, creds: &StoredCredentials) {
-        let result = platform::load_or_create_master_secret()
-            .and_then(|secret| save_credentials_with_secret(creds, &credentials_file_path(), &secret));
+        let remember_pw = lock(&self.shared).settings.remember_password;
+        let sanitized = creds.sanitized_for_storage(remember_pw);
+        let result = platform::load_or_create_master_secret().and_then(|secret| {
+            save_credentials_with_secret(&sanitized, &credentials_file_path(), &secret)
+        });
         match result {
-            Ok(()) => log_info("CRYPTO", "Saved credentials (AES-256-GCM, key protected by Windows DPAPI)."),
+            Ok(()) => log_info(
+                "CRYPTO",
+                "Saved credentials (AES-256-GCM, key protected by Windows DPAPI).",
+            ),
             Err(e) => log_error("CRYPTO", format!("Failed to save credentials: {e}")),
         }
     }
@@ -257,6 +274,7 @@ impl Service {
             Command::SaveSettings(settings) => {
                 let mut settings = *settings;
                 settings.country = normalize_country_code(&settings.country);
+                settings.poll_interval_seconds = clamp_poll_interval(settings.poll_interval_seconds);
                 let previous = lock(&self.shared).settings.clone();
                 if previous.autostart_enabled != settings.autostart_enabled
                     || previous.start_minimized != settings.start_minimized
@@ -268,6 +286,7 @@ impl Service {
                     }
                 }
                 let mut country_changed = false;
+                let remember_changed = previous.remember_password != settings.remember_password;
                 if let Some(ref mut creds) = self.creds {
                     if creds.country != settings.country {
                         log_info(
@@ -280,16 +299,19 @@ impl Service {
                         creds.country = settings.country.clone();
                         country_changed = true;
                     }
-                }
-                if country_changed {
-                    if let Some(ref creds) = self.creds {
-                        self.save_vault(creds);
+                    if !settings.remember_password && !creds.password.is_empty() {
+                        *creds = creds.sanitized_for_storage(false);
                     }
                 }
                 if let Err(e) = save_default_settings(&settings) {
                     log_error("SYSTEM", format!("Failed to save settings: {e}"));
                 }
                 self.update(|s| s.settings = settings);
+                if country_changed || remember_changed {
+                    if let Some(ref creds) = self.creds {
+                        self.save_vault(creds);
+                    }
+                }
                 self.evaluate_alerts();
                 country_changed
             }
@@ -320,35 +342,17 @@ impl Service {
                     &settings,
                     "LibreLinkUp alert test",
                     "This is how out-of-range glucose alerts will look and sound.",
+                    true,
                 );
                 false
             }
             Command::LoadDemo => {
-                let now = chrono::Local::now();
-                let points = (0..24)
-                    .map(|i| GraphPoint {
-                        timestamp: (now - chrono::Duration::minutes(15 * (24 - i)))
-                            .format("%m/%d/%Y %-I:%M:%S %p")
-                            .to_string(),
-                        value_mg_dl: 110.0 + 40.0 * ((i as f64) / 3.0).sin(),
-                    })
-                    .collect();
+                let snap = build_demo_snapshot(now_epoch());
                 self.update(|s| {
                     s.demo = true;
                     s.logged_in = true;
                     s.status = "Sample CGM telemetry loaded".into();
-                    s.snapshot = GlucoseSnapshot {
-                        value_mg_dl: 112.0,
-                        trend_arrow: 3,
-                        timestamp: now.format("%m/%d/%Y %-I:%M:%S %p").to_string(),
-                        target_low_mg_dl: 70.0,
-                        target_high_mg_dl: 180.0,
-                        patient_id: "demo-patient-001".into(),
-                        first_name: "Sample".into(),
-                        last_name: "Sensor".into(),
-                        graph_points: points,
-                        measured_at_epoch: Some(now_epoch()),
-                    };
+                    s.snapshot = snap;
                 });
                 false
             }
@@ -484,6 +488,7 @@ impl Service {
                             latest_version: String::new(),
                             release_url: librelinkup_core::updater::GITHUB_RELEASES_PAGE_URL.to_string(),
                             download_url: librelinkup_core::updater::GITHUB_RELEASES_PAGE_URL.to_string(),
+                            sha256_url: String::new(),
                             release_notes: String::new(),
                             message: err.clone(),
                         });
@@ -517,6 +522,7 @@ impl Service {
         let result = authenticate_async(&country, &username, &password).await;
         match result {
             Ok(auth) => {
+                let remember_pw = lock(&self.shared).settings.remember_password;
                 let creds = StoredCredentials {
                     username: username.clone(),
                     password,
@@ -527,7 +533,8 @@ impl Service {
                     patient_id: String::new(),
                     first_name: auth.first_name,
                     last_name: auth.last_name,
-                };
+                }
+                .sanitized_for_storage(remember_pw);
                 self.save_vault(&creds);
                 self.creds = Some(creds);
                 log_info("AUTH", format!("Login succeeded (region '{}').", auth.country));
@@ -559,30 +566,19 @@ impl Service {
     }
 
     async fn refresh(&mut self) {
-        let Some(mut creds) = self.creds.clone() else { return };
+        let Some(creds) = self.creds.clone() else { return };
         if !creds.has_valid_session() {
             return;
         }
         self.update(|s| s.busy = true);
 
-        let mut result = fetch_cgm_snapshot_async(&creds.country, &creds.token, &creds.account_id).await;
-        if matches!(result, Err(ApiError::Unauthorized))
-            && !creds.username.is_empty()
-            && !creds.password.is_empty()
-        {
-            log_info("AUTH", "Token expired; re-authenticating with stored credentials...");
-            if let Ok(auth) = authenticate_async(&creds.country, &creds.username, &creds.password).await {
-                creds.token = auth.token;
-                creds.account_id = auth.account_id;
-                creds.country = auth.country;
-                self.save_vault(&creds);
-                self.creds = Some(creds.clone());
-                result = fetch_cgm_snapshot_async(&creds.country, &creds.token, &creds.account_id).await;
-            }
-        }
-
-        match result {
-            Ok(snap) => {
+        match fetch_snapshot_with_reauth_async(&creds).await {
+            Ok(outcome) => {
+                if let Some(updated_creds) = outcome.updated_credentials {
+                    self.save_vault(&updated_creds);
+                    self.creds = Some(updated_creds);
+                }
+                let snap = outcome.snapshot;
                 let unit = lock(&self.shared).settings.result_unit.clone();
                 log_info(
                     "GLUCOSE",
@@ -614,7 +610,7 @@ impl Service {
         self.evaluate_alerts();
     }
 
-    /// Same decision logic as the KDE build (see `AppSettings::should_fire_alert`).
+    /// Evaluates alert thresholds using `librelinkup_core::session::evaluate_alert_decision`.
     fn evaluate_alerts(&self) {
         let (settings, snap, last, logged_in) = {
             let s = lock(&self.shared);
@@ -624,43 +620,22 @@ impl Service {
             return;
         }
         let now = now_epoch();
-        let age = reading_age_minutes(snap.measured_at_epoch, now);
-        let stale = snap.value_mg_dl > 0.0 && settings.is_reading_stale(age);
-        let Some(kind) =
-            settings.classify_alert(snap.value_mg_dl, snap.target_low_mg_dl, snap.target_high_mg_dl, stale)
-        else {
-            if last.is_some() {
-                log_info("ALERT", "Glucose back within alert thresholds.");
-                lock(&self.shared).last_alert = None;
-            }
-            return;
-        };
-        if !settings.should_fire_alert(kind, last, now) {
+        let (decision, clear_last) = evaluate_alert_decision(&settings, &snap, last, now);
+        if clear_last {
+            log_info("ALERT", "Glucose back within alert thresholds.");
+            lock(&self.shared).last_alert = None;
             return;
         }
-        let unit = settings.result_unit.clone();
-        let value = format_glucose_value(snap.value_mg_dl, &unit);
-        let arrow = trend_arrow_symbol(snap.trend_arrow);
-        let body = match kind {
-            AlertKind::Stale => format!(
-                "Last reading was {} ({value} {unit}). Check the sensor and phone connection.",
-                format_reading_age(age)
-            ),
-            AlertKind::UrgentLow => format!(
-                "{value} {unit} {arrow} — below urgent low ({}).",
-                format_glucose_value(settings.effective_urgent_low(), &unit)
-            ),
-            AlertKind::Low | AlertKind::High => {
-                format!("{value} {unit} {arrow} — outside your target range.")
-            }
+        let Some(d) = decision else {
+            return;
         };
-        log_warn("ALERT", format!("{}: {body}", kind.title()));
-        self.fire(&settings, kind.title(), &body);
-        lock(&self.shared).last_alert = Some((kind, now));
+        log_warn("ALERT", format!("{}: {}", d.title, d.body));
+        self.fire(&settings, d.title, &d.body, d.critical);
+        lock(&self.shared).last_alert = Some((d.kind, now));
         self.notifier.state_changed();
     }
 
-    fn fire(&self, settings: &AppSettings, title: &str, body: &str) {
+    fn fire(&self, settings: &AppSettings, title: &str, body: &str, critical: bool) {
         if settings.flash_window_enabled || settings.bring_to_front_enabled {
             self.notifier.attention(settings.flash_window_enabled, settings.bring_to_front_enabled);
         }
@@ -671,6 +646,9 @@ impl Service {
                 .filter(|p| p.is_file());
             alerts::play_alert_sound(custom);
         }
-        alerts::show_notification(title, body);
+        let tx = self.tx.clone();
+        alerts::show_alert_notification(title, body, critical, move |minutes| {
+            let _ = tx.send(Command::Snooze(minutes));
+        });
     }
 }

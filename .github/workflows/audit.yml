@@ -1,0 +1,54 @@
+name: Security audit
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "**/Cargo.toml"
+      - "**/Cargo.lock"
+      - ".github/workflows/audit.yml"
+  pull_request:
+    paths:
+      - "**/Cargo.toml"
+      - "**/Cargo.lock"
+      - ".github/workflows/audit.yml"
+  schedule:
+    # New RustSec advisories land independently of commits: re-check weekly (Mon 06:00 UTC).
+    - cron: "0 6 * * 1"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  cargo-audit:
+    name: cargo audit (${{ matrix.lockfile }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        lockfile:
+          - Cargo.lock                          # KDE Plasma app
+          - crates/librelinkup-core/Cargo.lock  # shared core (used by core tests in CI)
+          - windows/Cargo.lock                  # Windows egui app
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - name: Cache cargo-audit binary and advisory DB
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/bin/cargo-audit
+            ~/.cargo/advisory-db
+          key: cargo-audit-${{ runner.os }}-v0.22-${{ github.run_id }}
+          restore-keys: cargo-audit-${{ runner.os }}-v0.22-
+
+      - name: Install cargo-audit
+        run: command -v cargo-audit || cargo install cargo-audit --locked --version ^0.22
+
+      # Fails only on vulnerabilities; unmaintained/unsound/yanked notices are reported as warnings.
+      # Use `--deny warnings` to make those fatal too.
+      - name: Audit ${{ matrix.lockfile }}
+        run: cargo audit --file "${{ matrix.lockfile }}"

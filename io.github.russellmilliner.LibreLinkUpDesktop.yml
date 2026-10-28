@@ -15,6 +15,7 @@ finish-args:
   - --device=dri
   - --talk-name=org.kde.StatusNotifierWatcher
   - --talk-name=org.freedesktop.Notifications
+  - --talk-name=org.freedesktop.Flatpak
   - --filesystem=xdg-config/kdeglobals:ro
   # Local builds share the host vault/settings: Flatpak also exposes these at the app's
   # XDG_CONFIG_HOME/XDG_DATA_HOME paths, so they must stay writable. Flathub omits them

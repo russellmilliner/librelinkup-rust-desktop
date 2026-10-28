@@ -12,9 +12,11 @@ use librelinkup_core::event_log::{clear_events, export_events_to_path, get_all_e
 use librelinkup_core::models::{
     convert_mg_dl_to_unit, format_glucose_value, format_reading_age, format_target_range,
     parse_libreview_timestamp, reading_age_minutes, trend_arrow_description, trend_arrow_symbol,
-    AppSettings, GlucoseRangeStatus, STALE_COLOR_HEX,
+    AppSettings, GlucoseRangeStatus, MAX_POLL_INTERVAL_SECONDS, MIN_POLL_INTERVAL_SECONDS,
+    STALE_COLOR_HEX,
 };
 use librelinkup_core::paths::credentials_file_path;
+use librelinkup_core::session::format_snooze_until;
 use tokio::sync::mpsc::UnboundedSender;
 
 use crate::service::{now_epoch, Command, Shared, SharedState};
@@ -168,15 +170,7 @@ pub fn reading_status(state: &Shared) -> (&'static str, &'static str, bool, Stri
 }
 
 pub fn snooze_text(settings: &AppSettings) -> String {
-    use chrono::TimeZone;
-    if !settings.is_snoozed(now_epoch()) {
-        return String::new();
-    }
-    chrono::Local
-        .timestamp_opt(settings.snooze_until_epoch, 0)
-        .single()
-        .map(|t| format!("Alerts snoozed until {}", t.format("%-I:%M %p")))
-        .unwrap_or_default()
+    format_snooze_until(settings.snooze_until_epoch, now_epoch())
 }
 
 pub fn build_tray_view(state: &Shared) -> TrayView {
@@ -385,6 +379,19 @@ impl LibreLinkUpApp {
                         self.submit_login();
                     }
                 });
+                ui.add_space(6.0);
+                let mut remember = state.settings.remember_password;
+                if ui
+                    .checkbox(
+                        &mut remember,
+                        "Remember password in encrypted vault (auto-renew expired tokens)",
+                    )
+                    .changed()
+                {
+                    let mut ns = state.settings.clone();
+                    ns.remember_password = remember;
+                    self.save_settings(ns);
+                }
                 ui.add_space(10.0);
                 ui.horizontal(|ui| {
                     let label = if state.busy { "Signing in..." } else { "Sign In" };
@@ -525,7 +532,11 @@ impl LibreLinkUpApp {
                 });
                 ui.end_row();
                 ui.label("Refresh every");
-                ui.add(egui::DragValue::new(&mut s.poll_interval_seconds).range(15..=3600).suffix(" s"));
+                ui.add(
+                    egui::DragValue::new(&mut s.poll_interval_seconds)
+                        .range(MIN_POLL_INTERVAL_SECONDS..=MAX_POLL_INTERVAL_SECONDS)
+                        .suffix(" s"),
+                );
                 ui.end_row();
                 ui.label("Regional endpoint");
                 region_combo(ui, &mut s.country);
@@ -700,6 +711,19 @@ impl LibreLinkUpApp {
                 ui.label(credentials_file_path().display().to_string());
                 ui.end_row();
             });
+            ui.add_space(8.0);
+            let mut remember = state.settings.remember_password;
+            if ui
+                .checkbox(
+                    &mut remember,
+                    "Remember password in encrypted vault (auto-renew expired tokens)",
+                )
+                .changed()
+            {
+                let mut ns = state.settings.clone();
+                ns.remember_password = remember;
+                self.save_settings(ns);
+            }
             ui.add_space(10.0);
             if ui.add_enabled(state.logged_in, egui::Button::new("Sign Out & Wipe Encrypted Vault")).clicked() {
                 self.send(Command::Logout);
@@ -985,7 +1009,7 @@ fn overlay_ui(ui: &mut egui::Ui, shared: &SharedState, tx: &UnboundedSender<Comm
     let rect = ui.max_rect();
 
     // Adjust transparency with mouse scroll wheel when hovering the overlay.
-    let is_hovered = ctx.input(|i| i.pointer.hover_pos().map_or(false, |p| rect.contains(p)));
+    let is_hovered = ctx.input(|i| i.pointer.hover_pos().is_some_and(|p| rect.contains(p)));
     let scroll_y = if is_hovered {
         ctx.input(|i| {
             let mut wheel_y = 0.0;
@@ -1160,7 +1184,7 @@ fn overlay_ui(ui: &mut egui::Ui, shared: &SharedState, tx: &UnboundedSender<Comm
     }
 
     let pointer_pos = ctx.input(|i| i.pointer.hover_pos().or_else(|| i.pointer.interact_pos()));
-    let on_buttons = pointer_pos.map_or(false, |p| buttons_rect.contains(p));
+    let on_buttons = pointer_pos.is_some_and(|p| buttons_rect.contains(p));
 
     if response.drag_started() && !on_buttons {
         ctx.send_viewport_cmd(ViewportCommand::StartDrag);

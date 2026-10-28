@@ -6,7 +6,10 @@ use std::num::NonZero;
 use std::path::PathBuf;
 
 use librelinkup_core::alert_sound::{generate_alert_samples, SAMPLE_RATE};
-use librelinkup_core::event_log::log_warn;
+use librelinkup_core::event_log::{log_info, log_warn};
+use librelinkup_core::models::{
+    parse_notification_snooze_action, ALERT_NOTIFICATION_SNOOZE_ACTIONS,
+};
 
 use crate::platform::APP_USER_MODEL_ID;
 
@@ -61,13 +64,64 @@ pub fn show_notification(title: &str, body: &str) {
     std::thread::Builder::new()
         .name("llu-notify".into())
         .spawn(move || {
-            let result = notify_rust::Notification::new()
+            let mut notif = notify_rust::Notification::new();
+            notif.summary(&title).body(&body);
+            #[cfg(target_os = "windows")]
+            notif.app_id(APP_USER_MODEL_ID);
+            if let Err(e) = notif.show() {
+                log_warn("ALERT", format!("Desktop notification failed: {e}"));
+            }
+        })
+        .ok();
+}
+
+/// Shows an alert toast notification with interactive snooze buttons
+/// ("Snooze 30 min", "Snooze 1 hr", "Snooze 2 hr") and invokes `on_snooze(minutes)`
+/// if the user clicks one of the snooze buttons.
+pub fn show_alert_notification(
+    title: &str,
+    body: &str,
+    critical: bool,
+    on_snooze: impl FnOnce(i32) + Send + 'static,
+) {
+    let title = title.to_string();
+    let body = body.to_string();
+    // WinRT toast APIs and action waits block on the notification lifecycle; run on a
+    // dedicated background thread so the service and UI threads never block.
+    std::thread::Builder::new()
+        .name("llu-notify".into())
+        .spawn(move || {
+            let mut notif = notify_rust::Notification::new();
+            notif
                 .summary(&title)
                 .body(&body)
-                .app_id(APP_USER_MODEL_ID)
-                .show();
-            if let Err(e) = result {
-                log_warn("ALERT", format!("Desktop notification failed: {e}"));
+                .urgency(if critical {
+                    notify_rust::Urgency::Critical
+                } else {
+                    notify_rust::Urgency::Normal
+                });
+            #[cfg(target_os = "windows")]
+            notif.app_id(APP_USER_MODEL_ID);
+            for &(action_id, label, _) in ALERT_NOTIFICATION_SNOOZE_ACTIONS {
+                notif.action(action_id, label);
+            }
+            match notif.show() {
+                Ok(handle) => {
+                    handle.wait_for_action(|action| {
+                        if let Some(minutes) = parse_notification_snooze_action(action) {
+                            log_info(
+                                "ALERT",
+                                format!(
+                                    "Desktop notification action '{action}' clicked -> snoozing alerts for {minutes} min."
+                                ),
+                            );
+                            on_snooze(minutes);
+                        }
+                    });
+                }
+                Err(e) => {
+                    log_warn("ALERT", format!("Desktop notification failed: {e}"));
+                }
             }
         })
         .ok();

@@ -1,3 +1,4 @@
+use std::fmt;
 use std::fs;
 use std::num::NonZeroU32;
 use std::path::Path;
@@ -8,7 +9,9 @@ use ring::rand::{SecureRandom, SystemRandom};
 use serde::{Deserialize, Serialize};
 use zeroize::Zeroize;
 
-use crate::paths::{credentials_file_path, legacy_flatpak_leveldb_dir, master_key_file_path};
+use crate::paths::{
+    credentials_file_path, legacy_flatpak_leveldb_dir, master_key_file_path, write_file_atomic_0600,
+};
 
 const ENVELOPE_VERSION: u32 = 1;
 const PBKDF2_ITERATIONS: u32 = 100_000;
@@ -17,7 +20,7 @@ const NONCE_LEN: usize = 12;
 const KEY_LEN: usize = 32;
 const AAD_CONTEXT: &[u8] = b"librelinkup-kde-credentials-v1";
 
-#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Clone, Default, Serialize, Deserialize, PartialEq, Eq)]
 pub struct StoredCredentials {
     pub username: String,
     pub password: String,
@@ -31,6 +34,22 @@ pub struct StoredCredentials {
     pub first_name: String,
     #[serde(default)]
     pub last_name: String,
+}
+
+impl fmt::Debug for StoredCredentials {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("StoredCredentials")
+            .field("username", &"[REDACTED]")
+            .field("password", &"[REDACTED]")
+            .field("token", &"[REDACTED]")
+            .field("account_id", &"[REDACTED]")
+            .field("country", &self.country)
+            .field("language", &self.language)
+            .field("patient_id", &"[REDACTED]")
+            .field("first_name", &"[REDACTED]")
+            .field("last_name", &"[REDACTED]")
+            .finish()
+    }
 }
 
 impl Drop for StoredCredentials {
@@ -47,9 +66,19 @@ impl StoredCredentials {
     pub fn has_valid_session(&self) -> bool {
         !self.token.trim().is_empty() && !self.account_id.trim().is_empty()
     }
+
+    /// Returns a copy prepared for vault storage, stripping `password` unless `remember_password` is `true`.
+    pub fn sanitized_for_storage(&self, remember_password: bool) -> Self {
+        let mut out = self.clone();
+        if !remember_password {
+            out.password.zeroize();
+            out.password.clear();
+        }
+        out
+    }
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Clone, Serialize, Deserialize)]
 pub struct EncryptedEnvelope {
     pub version: u32,
     pub algorithm: String,
@@ -58,6 +87,20 @@ pub struct EncryptedEnvelope {
     pub salt_hex: String,
     pub nonce_hex: String,
     pub ciphertext_hex: String,
+}
+
+impl fmt::Debug for EncryptedEnvelope {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("EncryptedEnvelope")
+            .field("version", &self.version)
+            .field("algorithm", &self.algorithm)
+            .field("kdf", &self.kdf)
+            .field("iterations", &self.iterations)
+            .field("salt_hex", &"[REDACTED]")
+            .field("nonce_hex", &"[REDACTED]")
+            .field("ciphertext_hex", &"[REDACTED]")
+            .finish()
+    }
 }
 
 pub fn bytes_to_hex(bytes: &[u8]) -> String {
@@ -195,43 +238,167 @@ pub fn decrypt_credentials_with_secret(
     Ok(creds)
 }
 
-fn set_owner_only_permissions(path: &Path) {
-    // Windows: %APPDATA% is already restricted to the user by its ACL.
-    #[cfg(not(unix))]
-    let _ = path;
-    #[cfg(unix)]
+#[cfg(unix)]
+fn should_use_desktop_keyring(key_path: &Path) -> bool {
+    if key_path != master_key_file_path() {
+        return false;
+    }
+    if std::env::var("LIBRELINKUP_CONFIG_DIR").is_ok() {
+        return false;
+    }
+    if std::env::var("LIBRELINKUP_DISABLE_KEYRING")
+        .map(|v| v == "1" || v.eq_ignore_ascii_case("true"))
+        .unwrap_or(false)
     {
-        use std::os::unix::fs::PermissionsExt;
-        if let Ok(meta) = fs::metadata(path) {
-            let mut perms = meta.permissions();
-            perms.set_mode(0o600);
-            let _ = fs::set_permissions(path, perms);
+        return false;
+    }
+    if std::env::var("QT_QPA_PLATFORM")
+        .map(|v| v.eq_ignore_ascii_case("offscreen"))
+        .unwrap_or(false)
+    {
+        return false;
+    }
+    std::env::var("DBUS_SESSION_BUS_ADDRESS")
+        .map(|v| !v.trim().is_empty())
+        .unwrap_or(false)
+}
+
+/// Attempts to retrieve the 256-bit vault master secret hex string from the desktop
+/// keyring on Linux (freedesktop Secret Service via `secret-tool` or KDE KWallet via `kwallet-query`).
+#[cfg(unix)]
+fn try_keyring_lookup() -> Option<String> {
+    use std::process::Command;
+
+    // 1. Freedesktop Secret Service (KWallet6/GNOME Keyring/KeePassXC Secret Service)
+    if let Ok(out) = Command::new("secret-tool")
+        .args([
+            "lookup",
+            "application",
+            crate::paths::APP_ID,
+            "key",
+            "vault-master-secret",
+        ])
+        .output()
+    {
+        if out.status.success() {
+            let s = String::from_utf8_lossy(&out.stdout).trim().to_string();
+            if s.len() == KEY_LEN * 2 && s.bytes().all(|b| b.is_ascii_hexdigit()) {
+                return Some(s);
+            }
         }
     }
+
+    // 2. KDE KWallet CLI (`kwallet-query`)
+    if let Ok(out) = Command::new("kwallet-query")
+        .args(["-r", "vault-master-secret", "-f", "LibreLinkUp", "kdewallet"])
+        .output()
+    {
+        if out.status.success() {
+            let s = String::from_utf8_lossy(&out.stdout).trim().to_string();
+            if s.len() == KEY_LEN * 2 && s.bytes().all(|b| b.is_ascii_hexdigit()) {
+                return Some(s);
+            }
+        }
+    }
+
+    None
+}
+
+/// Attempts to store the 256-bit vault master secret hex string in the desktop keyring
+/// on Linux (Secret Service `secret-tool` or KDE KWallet `kwallet-query`), piping the
+/// secret over stdin so it never appears in process command-line arguments.
+#[cfg(unix)]
+fn try_keyring_store(hex_secret: &str) -> bool {
+    use std::io::Write;
+    use std::process::{Command, Stdio};
+
+    let try_pipe = |mut cmd: Command| -> bool {
+        let Ok(mut child) = cmd
+            .stdin(Stdio::piped())
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .spawn()
+        else {
+            return false;
+        };
+        if let Some(mut stdin) = child.stdin.take() {
+            if stdin.write_all(hex_secret.as_bytes()).is_err() {
+                let _ = child.kill();
+                let _ = child.wait();
+                return false;
+            }
+        }
+        child.wait().map(|s| s.success()).unwrap_or(false)
+    };
+
+    let mut secret_tool = Command::new("secret-tool");
+    secret_tool.args([
+        "store",
+        "--label=LibreLinkUp Rust Desktop Vault Key",
+        "application",
+        crate::paths::APP_ID,
+        "key",
+        "vault-master-secret",
+    ]);
+    if try_pipe(secret_tool) {
+        return true;
+    }
+
+    let mut kwallet = Command::new("kwallet-query");
+    kwallet.args(["-w", "vault-master-secret", "-f", "LibreLinkUp", "kdewallet"]);
+    try_pipe(kwallet)
 }
 
 pub fn load_or_create_master_secret(key_path: &Path) -> Result<Vec<u8>, String> {
     let machine_id = fs::read_to_string("/etc/machine-id")
         .unwrap_or_else(|_| "librelinkup-kde-fallback-machine-id".to_string());
 
+    #[cfg(unix)]
+    let use_keyring = should_use_desktop_keyring(key_path);
+
     let file_secret = if key_path.exists() {
-        let raw_hex = fs::read_to_string(key_path)
+        let mut raw_hex = fs::read_to_string(key_path)
             .map_err(|e| format!("Failed to read master key file: {e}"))?;
-        hex_to_bytes(raw_hex.trim())?
-    } else {
-        if let Some(parent) = key_path.parent() {
-            let _ = fs::create_dir_all(parent);
+        let trimmed = raw_hex.trim().to_string();
+        let bytes = hex_to_bytes(&trimmed)?;
+        #[cfg(unix)]
+        if use_keyring && try_keyring_store(&trimmed) {
+            // Migrated on-disk master.key into Secret Service / KWallet; remove plaintext file.
+            let _ = write_file_atomic_0600(key_path, &[0u8; KEY_LEN * 2]);
+            let _ = fs::remove_file(key_path);
         }
-        let rng = SystemRandom::new();
-        let mut random_key = [0u8; KEY_LEN];
-        rng.fill(&mut random_key)
-            .map_err(|_| "CSPRNG failure generating master key".to_string())?;
-        let hex_str = bytes_to_hex(&random_key);
-        random_key.zeroize();
-        fs::write(key_path, &hex_str)
-            .map_err(|e| format!("Failed to write master key file: {e}"))?;
-        set_owner_only_permissions(key_path);
-        hex_to_bytes(&hex_str)?
+        raw_hex.zeroize();
+        bytes
+    } else {
+        #[cfg(unix)]
+        let keyring_secret = if use_keyring {
+            try_keyring_lookup().and_then(|hex| hex_to_bytes(&hex).ok())
+        } else {
+            None
+        };
+        #[cfg(not(unix))]
+        let keyring_secret: Option<Vec<u8>> = None;
+
+        if let Some(secret) = keyring_secret {
+            secret
+        } else {
+            let mut random_key = generate_random_key()?;
+            let mut hex_str = bytes_to_hex(&random_key);
+            random_key.zeroize();
+
+            #[cfg(unix)]
+            let stored_in_keyring = use_keyring && try_keyring_store(&hex_str);
+            #[cfg(not(unix))]
+            let stored_in_keyring = false;
+
+            if !stored_in_keyring {
+                write_file_atomic_0600(key_path, hex_str.as_bytes())
+                    .map_err(|e| format!("Failed to write master key file: {e}"))?;
+            }
+            let res = hex_to_bytes(&hex_str);
+            hex_str.zeroize();
+            res?
+        }
     };
 
     let mut combined = Vec::with_capacity(file_secret.len() + machine_id.len() + 32);
@@ -250,14 +417,10 @@ pub fn save_credentials_to_path(
     let envelope = encrypt_credentials_with_secret(creds, &secret)?;
     secret.zeroize();
 
-    if let Some(parent) = creds_path.parent() {
-        let _ = fs::create_dir_all(parent);
-    }
     let serialized = serde_json::to_string_pretty(&envelope)
         .map_err(|e| format!("Failed to serialize encrypted envelope: {e}"))?;
-    fs::write(creds_path, serialized)
+    write_file_atomic_0600(creds_path, serialized.as_bytes())
         .map_err(|e| format!("Failed to write encrypted credentials file: {e}"))?;
-    set_owner_only_permissions(creds_path);
     Ok(())
 }
 
@@ -269,14 +432,10 @@ pub fn save_credentials_with_secret(
     master_secret: &[u8],
 ) -> Result<(), String> {
     let envelope = encrypt_credentials_with_secret(creds, master_secret)?;
-    if let Some(parent) = creds_path.parent() {
-        let _ = fs::create_dir_all(parent);
-    }
     let serialized = serde_json::to_string_pretty(&envelope)
         .map_err(|e| format!("Failed to serialize encrypted envelope: {e}"))?;
-    fs::write(creds_path, serialized)
+    write_file_atomic_0600(creds_path, serialized.as_bytes())
         .map_err(|e| format!("Failed to write encrypted credentials file: {e}"))?;
-    set_owner_only_permissions(creds_path);
     Ok(())
 }
 
@@ -349,7 +508,7 @@ pub fn try_migrate_legacy_leveldb_credentials(leveldb_dir: &Path) -> Option<Stor
         return None;
     }
     let entries = fs::read_dir(leveldb_dir).ok()?;
-    let mut paths: Vec< std::path::PathBuf > = entries
+    let mut paths: Vec<std::path::PathBuf> = entries
         .flatten()
         .map(|e| e.path())
         .filter(|p| {
@@ -364,7 +523,10 @@ pub fn try_migrate_legacy_leveldb_credentials(leveldb_dir: &Path) -> Option<Stor
     let mut best: Option<StoredCredentials> = None;
 
     for path in paths {
-        let bytes = fs::read(&path).ok()?;
+        // Skip unreadable files instead of aborting the entire LevelDB scan early.
+        let Ok(bytes) = fs::read(&path) else {
+            continue;
+        };
         let lossy = String::from_utf8_lossy(&bytes);
         for chunk in lossy.split("{\"state\":{") {
             if let Some(end_idx) = chunk.find("},\"version\"") {
@@ -380,11 +542,16 @@ pub fn try_migrate_legacy_leveldb_credentials(leveldb_dir: &Path) -> Option<Stor
                         .and_then(|v| v.as_str())
                         .unwrap_or("")
                         .trim();
-                    let country = val
+                    let raw_country = val
                         .get("country")
                         .and_then(|v| v.as_str())
                         .unwrap_or("us")
                         .trim();
+                    let country = if raw_country.is_empty() {
+                        "us".to_string()
+                    } else {
+                        crate::api::normalize_country_code(raw_country)
+                    };
                     let language = val
                         .get("language")
                         .and_then(|v| v.as_str())
@@ -396,11 +563,7 @@ pub fn try_migrate_legacy_leveldb_credentials(leveldb_dir: &Path) -> Option<Stor
                             password: String::new(),
                             token: token.to_string(),
                             account_id: account_id.to_string(),
-                            country: if country.is_empty() {
-                                "us".to_string()
-                            } else {
-                                country.to_string()
-                            },
+                            country,
                             language: if language.is_empty() {
                                 "en".to_string()
                             } else {
@@ -416,4 +579,73 @@ pub fn try_migrate_legacy_leveldb_credentials(leveldb_dir: &Path) -> Option<Stor
         }
     }
     best
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn stored_credentials_and_envelope_debug_redact_secrets() {
+        let creds = StoredCredentials {
+            username: "secret.user@example.com".into(),
+            password: "MySuperSecretPassword!".into(),
+            token: "eyJhbGciOiJIUzI1NiJ9.secret".into(),
+            account_id: "acc-uuid-9999".into(),
+            country: "us".into(),
+            language: "en".into(),
+            patient_id: "pat-uuid-8888".into(),
+            first_name: "SecretFirst".into(),
+            last_name: "SecretLast".into(),
+        };
+        let dbg = format!("{creds:?}");
+        assert!(!dbg.contains("secret.user@example.com"));
+        assert!(!dbg.contains("MySuperSecretPassword!"));
+        assert!(!dbg.contains("eyJhbGciOiJIUzI1NiJ9.secret"));
+        assert!(!dbg.contains("acc-uuid-9999"));
+        assert!(!dbg.contains("pat-uuid-8888"));
+        assert!(!dbg.contains("SecretFirst"));
+        assert!(!dbg.contains("SecretLast"));
+        assert!(dbg.contains("[REDACTED]"));
+
+        // Opt-in password storage: sanitized_for_storage(false) strips password
+        let stripped = creds.sanitized_for_storage(false);
+        assert!(stripped.password.is_empty());
+        assert_eq!(stripped.token, creds.token);
+        let kept = creds.sanitized_for_storage(true);
+        assert_eq!(kept.password, "MySuperSecretPassword!");
+
+        let env = encrypt_credentials_with_secret(&creds, b"unit-test-secret").unwrap();
+        let env_dbg = format!("{env:?}");
+        assert!(!env_dbg.contains(&env.ciphertext_hex));
+        assert!(!env_dbg.contains(&env.salt_hex));
+        assert!(!env_dbg.contains(&env.nonce_hex));
+        assert!(env_dbg.contains("[REDACTED]"));
+    }
+
+    #[test]
+    #[cfg(unix)]
+    fn legacy_leveldb_migration_continues_past_unreadable_file() {
+        use std::os::unix::fs::PermissionsExt;
+        let dir = std::env::temp_dir().join(format!("llu-leveldb-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&dir);
+        fs::create_dir_all(&dir).unwrap();
+
+        // 000001.ldb is a directory (or unreadable), so fs::read(&path) fails on it!
+        // Previously `fs::read(&path).ok()?` aborted the entire function before reading 000002.log.
+        let bad_entry = dir.join("000001.ldb");
+        fs::create_dir_all(&bad_entry).unwrap();
+
+        let good_entry = dir.join("000002.log");
+        let payload = r#"junk{"state":{"token":"legacy-tok-42","accountId":"legacy-acc-42","country":"de","language":"de"},"version":0}tail"#;
+        fs::write(&good_entry, payload).unwrap();
+        let _ = fs::set_permissions(&good_entry, fs::Permissions::from_mode(0o600));
+
+        let migrated = try_migrate_legacy_leveldb_credentials(&dir).expect("should migrate from 000002.log");
+        assert_eq!(migrated.token, "legacy-tok-42");
+        assert_eq!(migrated.account_id, "legacy-acc-42");
+        assert_eq!(migrated.country, "de");
+
+        let _ = fs::remove_dir_all(&dir);
+    }
 }

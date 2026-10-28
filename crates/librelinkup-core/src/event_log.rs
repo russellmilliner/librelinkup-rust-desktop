@@ -1,5 +1,4 @@
 use std::collections::VecDeque;
-use std::fs;
 use std::path::Path;
 use std::sync::{Mutex, OnceLock};
 
@@ -127,13 +126,38 @@ pub fn export_events_to_path(dest_path: &Path) -> Result<usize, String> {
         .trim_start_matches("file://")
         .to_string();
     let target = Path::new(&clean_str);
-    if let Some(parent) = target.parent() {
-        if !parent.as_os_str().is_empty() {
-            let _ = fs::create_dir_all(parent);
-        }
-    }
     let entries = get_all_events();
     let text = format_events_as_text(&entries);
-    fs::write(target, text).map_err(|e| format!("Failed to write log file: {e}"))?;
+    crate::paths::write_file_atomic_0600(target, text.as_bytes())
+        .map_err(|e| format!("Failed to write log file: {e}"))?;
     Ok(entries.len())
+}
+
+/// Masks an email address or username for safe diagnostic logging (e.g., `"alice@example.com"` -> `"a***@example.com"`).
+pub fn mask_email(input: &str) -> String {
+    let trimmed = input.trim();
+    if trimmed.is_empty() {
+        return "[empty]".to_string();
+    }
+    if let Some((local, domain)) = trimmed.split_once('@') {
+        let first = local.chars().next().unwrap_or('*');
+        let dom_clean = if domain.is_empty() { "***" } else { domain };
+        format!("{first}***@{dom_clean}")
+    } else {
+        let first = trimmed.chars().next().unwrap_or('*');
+        format!("{first}***")
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn masks_emails_and_usernames_without_leaking_pii() {
+        assert_eq!(mask_email("patient.name@example.com"), "p***@example.com");
+        assert_eq!(mask_email("a@b.org"), "a***@b.org");
+        assert_eq!(mask_email(" plainuser "), "p***");
+        assert_eq!(mask_email(""), "[empty]");
+    }
 }

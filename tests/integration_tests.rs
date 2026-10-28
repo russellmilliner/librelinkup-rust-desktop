@@ -533,3 +533,58 @@ fn test_qml_ui_layout_no_box_or_window_overflow() {
         "Detected QML UI box or window width/height overflow violations:\n{report}"
     );
 }
+
+#[test]
+fn test_security_hardening_regions_opt_in_password_autostart_and_redaction() {
+    use librelinkup_kde::bridge::autostart::format_autostart_desktop_entry;
+    use librelinkup_kde::event_log::mask_email;
+    use librelinkup_kde::models::clamp_poll_interval;
+
+    // 1. Region allowlist rejects unknown regions and external URLs
+    assert_eq!(
+        resolve_base_url("evil.attacker.tld/exfil#"),
+        "https://api.libreview.io/llu"
+    );
+    assert_eq!(
+        resolve_base_url("https://evil.attacker.tld/llu"),
+        "https://api.libreview.io/llu"
+    );
+
+    // 2. Opt-in password storage defaults to false and strips password when disabled
+    let default_settings = AppSettings::default();
+    assert!(!default_settings.remember_password);
+    assert_eq!(clamp_poll_interval(15), 60);
+
+    let full_creds = StoredCredentials {
+        username: "patient@example.org".to_string(),
+        password: "SuperSecretPassword!123".to_string(),
+        token: "jwt-token-abc".to_string(),
+        account_id: "acc-123".to_string(),
+        country: "us".to_string(),
+        language: "en".to_string(),
+        patient_id: "pat-123".to_string(),
+        first_name: "Jane".to_string(),
+        last_name: "Doe".to_string(),
+    };
+    let sanitized = full_creds.sanitized_for_storage(false);
+    assert!(sanitized.password.is_empty());
+    assert_eq!(sanitized.token, "jwt-token-abc");
+    assert_eq!(
+        full_creds.sanitized_for_storage(true).password,
+        "SuperSecretPassword!123"
+    );
+
+    // 3. Redacting Debug never leaks secrets or PII
+    let creds_dbg = format!("{full_creds:?}");
+    assert!(!creds_dbg.contains("SuperSecretPassword!123"));
+    assert!(!creds_dbg.contains("jwt-token-abc"));
+    assert!(!creds_dbg.contains("patient@example.org"));
+    assert!(creds_dbg.contains("[REDACTED]"));
+
+    // 4. Email masking for logs
+    assert_eq!(mask_email("patient@example.org"), "p***@example.org");
+
+    // 5. XDG autostart Exec= quoting
+    let desktop_entry = format_autostart_desktop_entry("/opt/My App/librelinkup-kde", true);
+    assert!(desktop_entry.contains("Exec=\"/opt/My App/librelinkup-kde\" --minimized\n"));
+}

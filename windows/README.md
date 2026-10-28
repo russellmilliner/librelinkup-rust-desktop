@@ -65,10 +65,10 @@ A borderless, translucent, always-on-top desktop widget (`276×88` default, conf
   - **Urgent Low** (default `55 mg/dL`): **Cannot be snoozed** and repeats at least every 5 minutes.
   - **Low** (default `70 mg/dL`), **High** (default `180 mg/dL`), and **Stale Data**: Follow your configurable repeat interval (`5`–`120` min, default `15` min).
   - Escalating to a more severe state (e.g., Low → Urgent Low) triggers an alert immediately regardless of the repeat timer or active snooze.
-- **Snooze**: Snooze non-urgent alerts for **30 minutes**, **1 hour**, or **2 hours** from the Dashboard, Alerts tab, or System Tray menu. Snooze expiration timestamps persist across app restarts.
+- **Snooze**: Snooze non-urgent alerts for **30 minutes**, **1 hour**, or **2 hours** directly from the desktop alert toast notification buttons (`Snooze 30 min`, `Snooze 1 hr`, `Snooze 2 hr`), the Dashboard, the Alerts tab, or the System Tray menu. Snooze expiration timestamps persist across app restarts.
 - **Audible Alarm & Windows Toast Notifications**:
   - Plays a built-in two-tone (`880 Hz` / `660 Hz`) urgent alarm synthesized in memory via `rodio`, or a custom `.wav`, `.mp3`, or `.ogg` audio file chosen in the **Alerts** tab.
-  - Sends native Windows Toast notifications registered under `AppUserModelID` `io.github.russellmilliner.LibreLinkUpDesktop`.
+  - Sends native Windows Toast notifications registered under `AppUserModelID` `io.github.russellmilliner.LibreLinkUpDesktop` with interactive **Snooze 30 min**, **Snooze 1 hr**, and **Snooze 2 hr** action buttons.
   - Includes a **Test Alert Sound** button in the **Alerts** tab.
 
 ---
@@ -85,7 +85,9 @@ A borderless, translucent, always-on-top desktop widget (`276×88` default, conf
 | **Toast Notification Identity** | `HKCU\Software\Classes\AppUserModelId\io.github.russellmilliner.LibreLinkUpDesktop` |
 | **Single-Instance Mutex** | `Local\LibreLinkUpRustDesktop_SingleInstance` (launching a second instance brings the existing window to the foreground) |
 
-- Sensitive credential strings and session tokens are wiped from memory on drop using `zeroize`.
+- **Opt-In Password Storage**: By default (`remember_password = false`), only the encrypted LibreView session JWT and account metadata are stored in `credentials.enc.json`. Enable **Remember password in encrypted vault (auto re-login)** on the sign-in screen if you want automatic re-authentication when a session token expires.
+- **SHA-256 Verified In-App Updater**: When installing an update from the Settings tab, About window, or update banner, `LibreLinkUp.exe` validates that the asset and `.sha256` URLs belong to `https://github.com/russellmilliner/librelinkup-rust-desktop/releases/download/...`, downloads the installer into a private folder under `%LOCALAPPDATA%\LibreLinkUpDesktop\updates\`, and verifies its cryptographic **SHA-256 digest** before launching the installer.
+- **Memory & Log Redaction**: Sensitive credential strings and session tokens are wiped from memory on drop using `zeroize`, custom `Debug` implementations redact secrets and glucose readings, and email addresses are masked in `%LOCALAPPDATA%\LibreLinkUpDesktop\events.log`.
 - During uninstallation, Inno Setup stops any running instance, removes the autostart registry entry, and optionally offers to remove `%APPDATA%\LibreLinkUpDesktop` and `%LOCALAPPDATA%\LibreLinkUpDesktop`.
 
 ---

@@ -6,4 +6,5 @@ pub mod crypto;
 pub mod event_log;
 pub mod models;
 pub mod paths;
+pub mod session;
 pub mod updater;

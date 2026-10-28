@@ -86,12 +86,7 @@ pub fn ensure_alert_sound_at(path: &Path) -> io::Result<()> {
             return Ok(());
         }
     }
-    if let Some(parent) = path.parent() {
-        fs::create_dir_all(parent)?;
-    }
-    let tmp = path.with_extension("wav.tmp");
-    fs::write(&tmp, &wav)?;
-    fs::rename(&tmp, path)
+    crate::paths::write_file_atomic_0600(path, &wav).map_err(io::Error::other)
 }
 
 /// Returns the path of the built-in alarm sound, generating it on first use.

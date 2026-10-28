@@ -73,7 +73,7 @@ Start-Process -FilePath "$env:TEMP\LibreLinkUp-Setup-0.4.4-x64.exe"
 - **Cross-Platform Native Desktop UIs on a Shared Rust Core**:
   - **Linux (KDE Plasma 6)**: Built with `cxx-qt`, Qt 6 Quick Controls (`org.kde.desktop`), `org.kde.kirigami`, and `KColorScheme` (`KF6ColorScheme`).
   - **Windows 10 / 11 (`x64`)**: Built in pure Rust with `eframe` / `egui` (`wgpu` hardware acceleration with automatic `glow` OpenGL fallback), `tray-icon`, `rodio`, and `windows-sys`.
-  - **Shared Core (`crates/librelinkup-core`)**: Unified LibreView API client (11 regional endpoints + automatic regional redirect), AES-256-GCM credential vault envelope, settings model, stale-reading evaluator,alert state machine, and synthesized alarm generator.
+  - **Shared Core (`crates/librelinkup-core`)**: Unified LibreView API client (12 allowlisted regional endpoints + automatic validated regional redirect), shared session/polling state machine (`session.rs`), AES-256-GCM credential vault envelope (`crypto.rs`), settings model (`settings.rs`), staleness evaluator (`staleness.rs`), alert state machine (`alerts.rs`), and synthesized alarm generator (`audio.rs`).
 - **Light, Dark & System Theme Support**:
   - Dynamically switches between Light, Dark, or your system's color scheme at runtime (`KColorSchemeManager` on KDE Plasma; `egui::Visuals` + dark/light Windows registry detection on Windows).
 - **Single System Tray Icon & Task-Manager-Free Minimized Mode**:
@@ -98,17 +98,18 @@ Start-Process -FilePath "$env:TEMP\LibreLinkUp-Setup-0.4.4-x64.exe"
 - **Stale-Reading Detection & Multi-Tier Alert Engine**:
   - **Stale-Reading Detection**: Readings display their age (`"3 min ago"`) and turn gray (`STALE`) when older than a configurable threshold (`5`–`60` min, default `15` min), with an optional signal-loss alert.
   - **Urgent-Low, Low, High & Stale Alerts**: Urgent-Low alerts (default `55 mg/dL`) **cannot be snoozed** and repeat every 5 minutes; Low, High, and Stale alerts follow a configurable repeat interval (`5`–`120` min) and fire immediately if the condition worsens.
-  - **Alert Snooze**: Snooze non-urgent alerts for `30 min`, `1 hour`, or `2 hours` from the Dashboard, Alerts page, or Tray menu.
-  - **Audible Alarm & Desktop Notifications**: Built-in synthesized two-tone alarm sound (plus custom `.wav`/`.mp3`/`.ogg` file support) paired with native desktop notifications.
-- **AES-256-GCM Encrypted Credential Vault**:
-  - **Linux**: Stored in `$XDG_CONFIG_HOME/librelinkup-kde/credentials.enc.json` using **AES-256-GCM** with a 100,000-iteration **PBKDF2-HMAC-SHA256** key derived from machine identity (`ring`) and strict `0600` permissions. Automatically migrates active tokens from the legacy Electron Flatpak (`rocks.poopjournal.librelinkupdesktop`) on first launch.
+  - **Alert Snooze**: Snooze non-urgent alerts for `30 min`, `1 hour`, or `2 hours` directly from interactive buttons on desktop alert notifications (`Snooze 30 min`, `Snooze 1 hr`, `Snooze 2 hr`), the Dashboard, the Alerts page, or the System Tray menu.
+  - **Audible Alarm & Desktop Notifications**: Built-in synthesized two-tone alarm sound (plus custom `.wav`/`.mp3`/`.ogg` file support) paired with native desktop notifications (`org.freedesktop.Notifications` on Linux and WinRT Toast notifications on Windows) featuring interactive snooze actions.
+- **AES-256-GCM Encrypted Credential Vault & Desktop Keyring Integration**:
+  - **Linux**: Stored in `$XDG_CONFIG_HOME/librelinkup-kde/credentials.enc.json` using **AES-256-GCM** (`ring`) with atomic `0600` file writes (`write_file_atomic_0600`). The 256-bit vault master secret is stored in the desktop keyring (**`org.freedesktop.secrets` / Secret Service** via `secret-tool` or **KDE KWallet** via `kwallet-query`) with automatic fallback to a random `0600` keyfile (`$XDG_DATA_HOME/librelinkup-kde/vault.key`). Automatically migrates active tokens from the legacy Electron Flatpak (`rocks.poopjournal.librelinkupdesktop`) on first launch.
   - **Windows**: Stored in `%APPDATA%\LibreLinkUpDesktop\credentials.enc.json` using **AES-256-GCM**, with the 256-bit master key (`master.dpapi`) protected by **Windows DPAPI (`CryptProtectData`)** bound to the current Windows user account.
-  - Sensitive strings are wiped from memory on drop via `zeroize`.
+  - **Opt-In Password Storage**: By default (`remember_password = false`), only the encrypted LibreView session JWT and account metadata are persisted on disk; users can optionally opt in to **Remember password for automatic re-authentication** on the Login page.
+  - **Memory & Log Redaction**: Sensitive strings are wiped from memory on drop via `zeroize`, custom `Debug` implementations redact secrets and health data, and email addresses are masked (`mask_email`) in diagnostic logs.
 - **Diagnostic Log Viewer**:
   - Built-in Log Viewer with category filtering (`AUTH`, `API`, `CRYPTO`, `TRAY`, `ALERT`, `APP`), minimum severity filtering (`DEBUG`, `INFO`, `WARN`, `ERROR`), real-time search, clipboard copy, and `.log` file export.
-- **Built-in Update Checker**:
-  - Automatically checks GitHub Releases on startup (configurable via the **Check for updates on startup** toggle in Settings) and provides a one-click **Check for Updates** button in the Settings page, About dialog, System Tray menu (Windows), and CLI (`--check-update` / `-u`).
-  - Displays a prominent top update banner with a direct download link whenever a newer release is available.
+- **SHA-256 Verified Built-in Update Checker & Installer**:
+  - Automatically checks GitHub Releases on startup (configurable via the **Check for updates on startup** toggle in Settings) and provides a one-click **Check for Updates** / **Install Update** workflow in the Settings page, About dialog, System Tray menu (Windows), and CLI (`--check-update` / `-u`).
+  - Enforces strict HTTPS host and repository owner allowlisting (`russellmilliner/librelinkup-rust-desktop`), downloads the companion `.sha256` checksum asset, and verifies the cryptographic **SHA-256 digest** in a private application data staging directory before launching the Windows Inno Setup installer or running sandbox-safe `flatpak-spawn --host flatpak install --user -y --reinstall` on Linux.
 
 ---
 
@@ -136,9 +137,10 @@ If you find **LibreLinkUp Rust Desktop** helpful, consider buying me a coffee on
 
 | Path | Contents |
 | :--- | :--- |
-| [`crates/librelinkup-core/`](crates/librelinkup-core) | Platform-independent core shared by both apps: LibreView API client, AES-256-GCM encrypted credential envelope, settings, staleness evaluator, alert state machine, and alarm WAV generator |
-| `src/`, `build.rs` | Linux KDE Plasma 6 app (Qt 6 / Kirigami via CXX-Qt) |
-| [`windows/`](windows/README.md) | Windows 10/11 app (`eframe` / `egui`), DPAPI integration, Inno Setup installer script (`windows/installer/LibreLinkUp.iss`), and build tooling (`windows/scripts/build-windows.sh`). Standalone Cargo workspace so the Linux/Flathub build never vendors Windows-only crates |
+| [`crates/librelinkup-core/`](crates/librelinkup-core) | Platform-independent core shared by both apps: LibreView API client (`api.rs`), shared session/polling & alert orchestrator (`session.rs`), AES-256-GCM encrypted credential envelope & atomic `0600` file I/O (`crypto.rs`), settings (`settings.rs`), staleness evaluator (`staleness.rs`), alert state machine (`alerts.rs`), and alarm WAV generator (`audio.rs`) |
+| `src/bridge/` | Modular Linux CXX-Qt bridge: core lifecycle & polling (`app_controller.rs`), settings & alert handlers (`settings_handlers.rs`), and XDG autostart portal/desktop entry management (`autostart.rs`) |
+| `src/cpp/` | Modular Qt 6 / KDE Plasma C++ helpers: façade (`app_helper.h`), QPainter tray badge renderer (`icon_renderer.h`), KWin/X11/Wayland overlay manager (`window_manager.h`), StatusNotifierItem & `org.freedesktop.Notifications` snooze action handler (`tray_manager.h`), audio playback (`audio_portal.h`), and headless QML test runner (`ui_tests.h`) |
+| [`windows/`](windows/README.md) | Windows 10/11 app (`eframe` / `egui`), DPAPI integration, WinRT Toast snooze activator, SHA-256 verified self-updater, Inno Setup installer script (`windows/installer/LibreLinkUp.iss`), and build tooling (`windows/scripts/build-windows.sh`). Standalone Cargo workspace so the Linux/Flathub build never vendors Windows-only crates |
 
 ---
 

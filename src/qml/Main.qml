@@ -108,7 +108,7 @@ Kirigami.ApplicationWindow {
 
     Timer {
         id: pollTimer
-        interval: Math.max(15, appController.pollIntervalSeconds) * 1000
+        interval: Math.max(60, appController.pollIntervalSeconds) * 1000
         repeat: true
         running: appController.loggedIn
         onTriggered: {
@@ -537,6 +537,14 @@ Kirigami.ApplicationWindow {
                                         }
                                     }
                                 }
+                            }
+
+                            QQC2.CheckBox {
+                                objectName: "loginRememberPasswordCheck"
+                                text: qsTr("Remember password in encrypted vault (auto-renew expired tokens)")
+                                checked: appController.rememberPassword
+                                onToggled: appController.updateRememberPassword(checked)
+                                Layout.fillWidth: true
                             }
 
                             RowLayout {
@@ -1518,8 +1526,8 @@ Kirigami.ApplicationWindow {
                                 color: Kirigami.Theme.textColor
                             }
                             QQC2.SpinBox {
-                                from: 15
-                                to: 600
+                                from: 60
+                                to: 3600
                                 stepSize: 15
                                 value: appController.pollIntervalSeconds
                                 onValueModified: appController.updatePollIntervalSeconds(value)
@@ -1786,6 +1794,10 @@ Kirigami.ApplicationWindow {
                                 onClicked: appController.snoozeAlerts(60)
                             }
                             QQC2.Button {
+                                text: qsTr("2 hours")
+                                onClicked: appController.snoozeAlerts(120)
+                            }
+                            QQC2.Button {
                                 visible: appController.alertsSnoozed
                                 text: qsTr("Cancel")
                                 icon.name: "notifications"
@@ -1921,11 +1933,19 @@ Kirigami.ApplicationWindow {
                         }
 
                         QQC2.Label {
-                            text: qsTr("Encryption Cipher: AES-256-GCM (PBKDF2-HMAC-SHA256, 100,000 iterations, 0600 permissions)")
+                            text: qsTr("Encryption Cipher: AES-256-GCM (PBKDF2-HMAC-SHA256, Secret Service / KWallet keyring + 0600 permissions)")
                             color: Kirigami.Theme.textColor
                             Layout.fillWidth: true
                             Layout.preferredWidth: 0
                             wrapMode: Text.WordWrap
+                        }
+
+                        QQC2.Switch {
+                            objectName: "accountRememberPasswordSwitch"
+                            text: qsTr("Remember password in encrypted vault for automatic token renewal")
+                            checked: appController.rememberPassword
+                            onToggled: appController.updateRememberPassword(checked)
+                            Layout.fillWidth: true
                         }
 
                         QQC2.Label {

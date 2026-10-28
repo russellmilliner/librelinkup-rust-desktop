@@ -59,6 +59,7 @@ flatpak build-finish "$WORK_DIR/build-dir" \
   --device=dri \
   --talk-name=org.kde.StatusNotifierWatcher \
   --talk-name=org.freedesktop.Notifications \
+  --talk-name=org.freedesktop.Flatpak \
   --filesystem=xdg-config/kdeglobals:ro \
   --filesystem=xdg-config/librelinkup-kde:create \
   --filesystem=xdg-data/librelinkup-kde:create \

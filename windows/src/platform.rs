@@ -34,10 +34,8 @@ pub fn load_or_create_master_secret() -> Result<Vec<u8>, String> {
     }
     let key = librelinkup_core::crypto::generate_random_key()?;
     let blob = dpapi_protect(&key)?;
-    if let Some(parent) = path.parent() {
-        let _ = std::fs::create_dir_all(parent);
-    }
-    std::fs::write(&path, blob).map_err(|e| format!("Failed to write master key: {e}"))?;
+    librelinkup_core::paths::write_file_atomic_0600(&path, &blob)
+        .map_err(|e| format!("Failed to write master key: {e}"))?;
     Ok(key.to_vec())
 }
 

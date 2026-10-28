@@ -1,4 +1,6 @@
+use std::fmt;
 use std::process::Command;
+use std::sync::OnceLock;
 use std::time::Duration;
 
 use reqwest::header::{
@@ -19,13 +21,30 @@ pub const LLU_VERSION: &str = "4.16.0";
 pub const LLU_USER_AGENT: &str =
     "Dalvik/2.1.0 (Linux; U; Android 14; Pixel 8 Build/UQ1A.240205.004)";
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+/// Explicit allowlist of canonical LibreView regional endpoint identifiers.
+pub const ALLOWED_LIBREVIEW_REGIONS: &[&str] = &[
+    "global", "us", "eu", "eu2", "de", "fr", "ca", "au", "ap", "jp", "ae", "la",
+];
+
+#[derive(Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct AuthSuccess {
     pub token: String,
     pub account_id: String,
     pub country: String,
     pub first_name: String,
     pub last_name: String,
+}
+
+impl fmt::Debug for AuthSuccess {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("AuthSuccess")
+            .field("token", &"[REDACTED]")
+            .field("account_id", &"[REDACTED]")
+            .field("country", &self.country)
+            .field("first_name", &"[REDACTED]")
+            .field("last_name", &"[REDACTED]")
+            .finish()
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -70,48 +89,107 @@ impl std::fmt::Display for ApiError {
     }
 }
 
-pub fn normalize_country_code(country: &str) -> String {
-    let lower = country.trim().to_lowercase();
-    if lower.is_empty() {
-        return "global".to_string();
+/// Returns `true` if `region` is one of the 12 canonical LibreView regional endpoint codes.
+pub fn is_allowed_region(region: &str) -> bool {
+    let lower = region.trim().to_ascii_lowercase();
+    ALLOWED_LIBREVIEW_REGIONS.contains(&lower.as_str())
+}
+
+/// Validates that `url` is a local loopback `http://127.0.0.1:<port>/llu` or `http://localhost:<port>/llu`
+/// endpoint used by integration mock tests. External or non-loopback URLs are rejected.
+fn is_loopback_test_url(url: &str) -> bool {
+    let trimmed = url.trim();
+    if !trimmed.starts_with("http://") {
+        return false;
     }
-    if lower.starts_with("http://") || lower.starts_with("https://") {
-        return lower.trim_end_matches('/').to_string();
-    }
-    match lower.as_str() {
+    let Ok(parsed) = reqwest::Url::parse(trimmed) else {
+        return false;
+    };
+    parsed.scheme() == "http"
+        && matches!(parsed.host_str(), Some("127.0.0.1") | Some("localhost"))
+        && parsed.username().is_empty()
+        && parsed.password().is_none()
+        && parsed.query().is_none()
+        && parsed.fragment().is_none()
+}
+
+/// Maps a known LibreView region identifier or ISO-3166 country code to its canonical
+/// LibreView region in [`ALLOWED_LIBREVIEW_REGIONS`]. Returns `None` for unknown or untrusted strings.
+pub fn try_normalize_region_code(country: &str) -> Option<String> {
+    let lower = country.trim().to_ascii_lowercase();
+    let region = match lower.as_str() {
         // Direct LibreView API regional identifiers
         "global" | "us" | "eu" | "eu2" | "de" | "fr" | "ca" | "au" | "ap" | "jp" | "ae" | "la" => {
-            lower
+            lower.as_str()
         }
         // UK & Ireland route to eu2 (https://api-eu2.libreview.io/llu)
-        "gb" | "uk" | "ie" => "eu2".to_string(),
+        "gb" | "uk" | "ie" => "eu2",
         // European / EEA / EMEA countries routed to eu (https://api-eu.libreview.io/llu)
         // per Abbott's official /llu/config/country regionalMap
         "at" | "be" | "bg" | "bh" | "ch" | "cy" | "cz" | "dk" | "ee" | "eg" | "es" | "fi"
         | "gr" | "hr" | "hu" | "il" | "is" | "it" | "jo" | "kw" | "lb" | "li" | "lt" | "lu"
         | "lv" | "mt" | "nl" | "no" | "om" | "pl" | "pt" | "qa" | "ro" | "sa" | "se" | "si"
-        | "sk" | "tr" | "za" => "eu".to_string(),
+        | "sk" | "tr" | "za" => "eu",
         // Asia-Pacific countries routed to ap (https://api-ap.libreview.io/llu)
-        "hk" | "id" | "in" | "kr" | "my" | "ph" | "sg" | "th" | "tw" | "vn" => "ap".to_string(),
+        "hk" | "id" | "in" | "kr" | "my" | "ph" | "sg" | "th" | "tw" | "vn" => "ap",
         // Oceania routed to au (https://api-au.libreview.io/llu)
-        "nz" => "au".to_string(),
+        "nz" => "au",
         // Latin America routed to la (https://api-la.libreview.io/llu)
         "latam" | "ar" | "bo" | "br" | "cl" | "co" | "cr" | "do" | "ec" | "gt" | "mx" | "pa"
-        | "pe" | "py" | "uy" => "la".to_string(),
-        _ => lower,
+        | "pe" | "py" | "uy" => "la",
+        _ => return None,
+    };
+    Some(region.to_string())
+}
+
+pub fn normalize_country_code(country: &str) -> String {
+    let trimmed = country.trim();
+    if trimmed.is_empty() {
+        return "global".to_string();
     }
+    if is_loopback_test_url(trimmed) {
+        return trimmed.trim_end_matches('/').to_string();
+    }
+    try_normalize_region_code(trimmed).unwrap_or_else(|| "global".to_string())
 }
 
 pub fn resolve_base_url(country_code: &str) -> String {
     let norm = normalize_country_code(country_code);
-    if norm.starts_with("http://") || norm.starts_with("https://") {
-        return norm.trim_end_matches('/').to_string();
+    if is_loopback_test_url(&norm) {
+        return norm;
     }
-    if norm == "global" {
+    if norm == "global" || !is_allowed_region(&norm) {
         "https://api.libreview.io/llu".to_string()
     } else {
         format!("https://api-{norm}.libreview.io/llu")
     }
+}
+
+/// Validates that a `patient_id` contains only safe path characters (`[A-Za-z0-9_-]`).
+pub fn is_valid_patient_id(patient_id: &str) -> bool {
+    !patient_id.is_empty()
+        && patient_id.len() <= 128
+        && patient_id
+            .bytes()
+            .all(|b| b.is_ascii_alphanumeric() || b == b'-' || b == b'_')
+}
+
+static SHARED_API_CLIENT: OnceLock<reqwest::Client> = OnceLock::new();
+
+/// Returns the process-wide reusable `reqwest::Client` for LibreView API calls.
+pub fn shared_api_client() -> Result<&'static reqwest::Client, ApiError> {
+    if let Some(client) = SHARED_API_CLIENT.get() {
+        return Ok(client);
+    }
+    let built = reqwest::Client::builder()
+        .user_agent(LLU_USER_AGENT)
+        .timeout(Duration::from_secs(15))
+        .build()
+        .map_err(|e| ApiError::NetworkError(e.to_string()))?;
+    let _ = SHARED_API_CLIENT.set(built);
+    SHARED_API_CLIENT
+        .get()
+        .ok_or_else(|| ApiError::NetworkError("Failed to initialize HTTP client".into()))
 }
 
 pub fn sha256_account_id(account_id: &str) -> String {
@@ -404,17 +482,28 @@ pub fn parse_login_response(
         .get("redirect")
         .and_then(|v| v.as_bool())
         .unwrap_or(false);
-    let region_redirect = data
+    let raw_region_redirect = data
         .get("region")
         .and_then(|v| v.as_str())
-        .filter(|s| !s.trim().is_empty())
-        .map(normalize_country_code);
+        .map(str::trim)
+        .filter(|s| !s.is_empty());
+    let region_redirect = match raw_region_redirect {
+        Some(raw) => match try_normalize_region_code(raw) {
+            Some(valid) => Some(valid),
+            None => {
+                return Err(ApiError::ParseError(format!(
+                    "Refusing redirect to untrusted LibreView region: '{raw}'"
+                )));
+            }
+        },
+        None => None,
+    };
     let user_country = data
         .get("user")
         .and_then(|u| u.get("country"))
         .and_then(|c| c.as_str())
         .filter(|s| !s.trim().is_empty())
-        .map(normalize_country_code);
+        .and_then(try_normalize_region_code);
 
     let token = data
         .get("authTicket")
@@ -490,6 +579,11 @@ pub fn parse_connections_response(
         .to_string();
     if patient_id.is_empty() {
         return Err(ApiError::NoConnectionsFound);
+    }
+    if !is_valid_patient_id(&patient_id) {
+        return Err(ApiError::ParseError(
+            "Invalid patientId in /connections response".to_string(),
+        ));
     }
     let first_name = first
         .get("firstName")
@@ -640,11 +734,7 @@ pub async fn authenticate_async(
     username: &str,
     password: &str,
 ) -> Result<AuthSuccess, ApiError> {
-    let client = reqwest::Client::builder()
-        .user_agent(LLU_USER_AGENT)
-        .timeout(Duration::from_secs(15))
-        .build()
-        .map_err(|e| ApiError::NetworkError(e.to_string()))?;
+    let client = shared_api_client()?;
 
     let initial_base = resolve_base_url(country);
     let login_url = format!("{initial_base}/auth/login");
@@ -655,7 +745,7 @@ pub async fn authenticate_async(
     });
 
     let body = send_json_request(
-        &client,
+        client,
         reqwest::Method::POST,
         &login_url,
         None,
@@ -673,7 +763,7 @@ pub async fn authenticate_async(
         let region_base = resolve_base_url(&region);
         let region_url = format!("{region_base}/auth/login");
         let body2 = send_json_request(
-            &client,
+            client,
             reqwest::Method::POST,
             &region_url,
             None,
@@ -697,17 +787,13 @@ pub async fn fetch_cgm_snapshot_async(
     token: &str,
     account_id: &str,
 ) -> Result<GlucoseSnapshot, ApiError> {
-    let client = reqwest::Client::builder()
-        .user_agent(LLU_USER_AGENT)
-        .timeout(Duration::from_secs(15))
-        .build()
-        .map_err(|e| ApiError::NetworkError(e.to_string()))?;
+    let client = shared_api_client()?;
 
     let base = resolve_base_url(country);
 
     let conn_url = format!("{base}/connections");
     let conn_body = send_json_request(
-        &client,
+        client,
         reqwest::Method::GET,
         &conn_url,
         Some(token),
@@ -720,7 +806,7 @@ pub async fn fetch_cgm_snapshot_async(
 
     let graph_url = format!("{base}/connections/{patient_id}/graph");
     let graph_body = send_json_request(
-        &client,
+        client,
         reqwest::Method::GET,
         &graph_url,
         Some(token),
@@ -810,5 +896,65 @@ mod tests {
         assert_eq!(normalize_country_code("NZ"), "au");
         assert_eq!(normalize_country_code("BR"), "la");
         assert_eq!(normalize_country_code("SG"), "ap");
+    }
+
+    #[test]
+    fn rejects_untrusted_regions_external_urls_and_path_traversal() {
+        // Unknown region or external URL falls back safely to "global" -> https://api.libreview.io/llu
+        for untrusted in [
+            "https://evil.example.com/llu",
+            "http://evil.example.com/llu",
+            "evil.example.com#",
+            "us.evil.com/",
+            "unknown-region",
+        ] {
+            assert_eq!(normalize_country_code(untrusted), "global");
+            assert_eq!(resolve_base_url(untrusted), "https://api.libreview.io/llu");
+        }
+
+        // Loopback mock server URL remains allowed for integration tests
+        assert_eq!(
+            resolve_base_url("http://127.0.0.1:18080/llu"),
+            "http://127.0.0.1:18080/llu"
+        );
+
+        // Spoofed login redirect to an untrusted region or URL is rejected with an error
+        let spoofed_redirect = serde_json::json!({
+            "status": 0,
+            "data": {
+                "redirect": true,
+                "region": "https://evil.example.com"
+            }
+        });
+        assert!(parse_login_response(&spoofed_redirect, "us").is_err());
+
+        // Path traversal in patientId is rejected
+        let bad_conn = serde_json::json!({
+            "status": 0,
+            "data": [{
+                "patientId": "../../admin/secret",
+                "firstName": "Test",
+                "lastName": "User"
+            }]
+        });
+        assert!(parse_connections_response(&bad_conn).is_err());
+    }
+
+    #[test]
+    fn auth_success_debug_redacts_secrets_and_pii() {
+        let auth = AuthSuccess {
+            token: "super-secret-jwt-token".into(),
+            account_id: "acc-secret-999".into(),
+            country: "eu".into(),
+            first_name: "Alice".into(),
+            last_name: "Patient".into(),
+        };
+        let dbg = format!("{auth:?}");
+        assert!(!dbg.contains("super-secret-jwt-token"));
+        assert!(!dbg.contains("acc-secret-999"));
+        assert!(!dbg.contains("Alice"));
+        assert!(!dbg.contains("Patient"));
+        assert!(dbg.contains("[REDACTED]"));
+        assert!(dbg.contains("eu"));
     }
 }

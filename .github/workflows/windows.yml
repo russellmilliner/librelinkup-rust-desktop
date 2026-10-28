@@ -1,32 +1,81 @@
-name: Windows build
+name: CI & Release
 
 on:
   push:
     branches: [main]
     tags: ["v*"]
-    paths:
-      - "windows/**"
-      - "crates/**"
-      - ".github/workflows/windows.yml"
   pull_request:
-    paths:
-      - "windows/**"
-      - "crates/**"
-      - ".github/workflows/windows.yml"
   workflow_dispatch:
 
 permissions:
-  contents: write
+  contents: read
 
 jobs:
+  security-audit:
+    name: Cargo Security Audit (RustSec)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - name: Install Rust (stable)
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Install cargo-audit
+        run: cargo install cargo-audit --locked
+
+      - name: Audit workspace Cargo.lock
+        run: cargo audit
+
+  linux-test:
+    name: Linux KDE Build, Clippy & Headless Tests
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - name: Install Qt 6 & KDE Frameworks 6 dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            build-essential pkg-config \
+            qt6-base-dev qt6-declarative-dev qt6-declarative-dev-tools libqt6svg6-dev \
+            libkf6colorscheme-dev libkf6config-dev libkf6iconthemes-dev \
+            qml6-module-org-kde-kirigami qml6-module-org-kde-breeze \
+            qml6-module-qtquick qml6-module-qtquick-controls \
+            qml6-module-qtquick-layouts qml6-module-qtquick-window \
+            qml6-module-qtquick-dialogs qml6-module-qtqml-workerscript
+
+      - name: Install Rust (stable, clippy)
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy
+
+      - name: Cache Cargo
+        uses: Swatinem/rust-cache@v2
+
+      - name: Run Clippy (--workspace --all-targets)
+        run: cargo clippy --workspace --all-targets -- -D warnings
+
+      - name: Run unit & headless Qt/QML integration tests
+        env:
+          QT_QPA_PLATFORM: offscreen
+        run: cargo test --workspace -- --test-threads=1
+
   build:
-    name: Build, test and package (x64)
+    name: Windows Build, Test & Package (x64)
     runs-on: windows-latest
     steps:
       - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
 
-      - name: Install Rust (stable, MSVC)
+      - name: Install Rust (stable, MSVC, clippy)
         uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy
 
       - name: Cache Cargo
         uses: Swatinem/rust-cache@v2
@@ -34,6 +83,11 @@ jobs:
           workspaces: |
             windows -> target
             crates/librelinkup-core -> target
+
+      - name: Clippy shared core & Windows app
+        run: |
+          cargo clippy --manifest-path crates/librelinkup-core/Cargo.toml --all-targets -- -D warnings
+          cargo clippy --manifest-path windows/Cargo.toml --all-targets -- -D warnings
 
       - name: Test shared core on Windows
         run: cargo test --release --manifest-path crates/librelinkup-core/Cargo.toml
@@ -100,8 +154,20 @@ jobs:
             windows/dist/*.zip
             windows/dist/*.sha256
 
+  release:
+    name: Publish Windows Release Assets
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs: [security-audit, linux-test, build]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: LibreLinkUp-windows-x64
+          path: windows/dist
+
       - name: Attach to GitHub release
-        if: startsWith(github.ref, 'refs/tags/v')
         uses: softprops/action-gh-release@v2
         with:
           files: |

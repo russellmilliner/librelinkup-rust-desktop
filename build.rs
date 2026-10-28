@@ -8,6 +8,7 @@ fn main() {
         .qt_module("Widgets")
         .qt_module("Svg")
         .qt_module("DBus")
+        .qobject_header("src/cpp/app_helper.h")
         .cc_builder(|cc| {
             cc.include("src/cpp");
             cc.include("/usr/include/KF6/KColorScheme");
@@ -34,7 +35,14 @@ fn main() {
         .build();
 
     println!("cargo:rerun-if-changed=src/cpp/app_helper.h");
+    println!("cargo:rerun-if-changed=src/cpp/icon_renderer.h");
+    println!("cargo:rerun-if-changed=src/cpp/window_manager.h");
+    println!("cargo:rerun-if-changed=src/cpp/tray_manager.h");
+    println!("cargo:rerun-if-changed=src/cpp/audio_portal.h");
+    println!("cargo:rerun-if-changed=src/cpp/ui_tests.h");
     println!("cargo:rerun-if-changed=src/bridge/app_controller.rs");
+    println!("cargo:rerun-if-changed=src/bridge/autostart.rs");
+    println!("cargo:rerun-if-changed=src/bridge/settings_handlers.rs");
     println!("cargo:rerun-if-changed=src/qml/Main.qml");
     println!("cargo:rerun-if-changed=src/qml/LogViewerDialog.qml");
     println!("cargo:rerun-if-changed=src/qml/OverlayWidget.qml");

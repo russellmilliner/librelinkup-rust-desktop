@@ -758,6 +758,9 @@ Kirigami.ApplicationWindow {
                                 QQC2.ToolButton {
                                     icon.name: appController.overlayDarkTheme ? "weather-clear-night" : "color-picker"
                                     text: qsTr("Overlay Dark")
+                                    font.pointSize: 9.5
+                                    leftPadding: 6
+                                    rightPadding: 6
                                     checkable: true
                                     checked: appController.overlayDarkTheme
                                     QQC2.ToolTip.visible: hovered
@@ -769,6 +772,9 @@ Kirigami.ApplicationWindow {
                                     text: appController.overlayVisible
                                         ? qsTr("Hide Overlay")
                                         : qsTr("Overlay")
+                                    font.pointSize: 9.5
+                                    leftPadding: 6
+                                    rightPadding: 6
                                     onClicked: appController.updateOverlayVisible(!appController.overlayVisible)
                                 }
                             }
@@ -814,26 +820,39 @@ Kirigami.ApplicationWindow {
 
                             RowLayout {
                                 Layout.fillWidth: true
-                                spacing: 4
+                                spacing: 2
 
                                 QQC2.Label {
                                     text: qsTr("Theme:")
+                                    font.pointSize: 9.5
                                     color: Kirigami.Theme.textColor
                                 }
                                 QQC2.ToolButton {
                                     text: qsTr("System")
+                                    display: QQC2.AbstractButton.TextOnly
+                                    font.pointSize: 9.5
+                                    leftPadding: 6
+                                    rightPadding: 6
                                     checkable: true
                                     checked: appController.themeMode === "system"
                                     onClicked: appController.updateThemeMode("system")
                                 }
                                 QQC2.ToolButton {
                                     text: qsTr("Dark")
+                                    display: QQC2.AbstractButton.TextOnly
+                                    font.pointSize: 9.5
+                                    leftPadding: 6
+                                    rightPadding: 6
                                     checkable: true
                                     checked: appController.themeMode === "dark"
                                     onClicked: appController.updateThemeMode("dark")
                                 }
                                 QQC2.ToolButton {
                                     text: qsTr("Light")
+                                    display: QQC2.AbstractButton.TextOnly
+                                    font.pointSize: 9.5
+                                    leftPadding: 6
+                                    rightPadding: 6
                                     checkable: true
                                     checked: appController.themeMode === "light"
                                     onClicked: appController.updateThemeMode("light")
@@ -843,16 +862,25 @@ Kirigami.ApplicationWindow {
 
                                 QQC2.Label {
                                     text: qsTr("Unit:")
+                                    font.pointSize: 9.5
                                     color: Kirigami.Theme.textColor
                                 }
                                 QQC2.ToolButton {
                                     text: "mg/dL"
+                                    display: QQC2.AbstractButton.TextOnly
+                                    font.pointSize: 9.5
+                                    leftPadding: 6
+                                    rightPadding: 6
                                     checkable: true
                                     checked: appController.resultUnit === "mg/dL"
                                     onClicked: appController.updateResultUnit("mg/dL")
                                 }
                                 QQC2.ToolButton {
                                     text: "mmol/L"
+                                    display: QQC2.AbstractButton.TextOnly
+                                    font.pointSize: 9.5
+                                    leftPadding: 6
+                                    rightPadding: 6
                                     checkable: true
                                     checked: appController.resultUnit === "mmol/L"
                                     onClicked: appController.updateResultUnit("mmol/L")

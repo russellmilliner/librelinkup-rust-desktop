@@ -13,26 +13,35 @@ permissions:
 jobs:
   security-audit:
     name: Cargo Security Audit (RustSec)
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-26.04
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
         with:
           persist-credentials: false
 
       - name: Install Rust (stable)
         uses: dtolnay/rust-toolchain@stable
 
+      - name: Cache cargo-audit binary and advisory DB
+        uses: actions/cache@v5
+        with:
+          path: |
+            ~/.cargo/bin/cargo-audit
+            ~/.cargo/advisory-db
+          key: cargo-audit-${{ runner.os }}-v0.22-${{ github.run_id }}
+          restore-keys: cargo-audit-${{ runner.os }}-v0.22-
+
       - name: Install cargo-audit
-        run: cargo install cargo-audit --locked
+        run: command -v cargo-audit || cargo install cargo-audit --locked --version ^0.22
 
       - name: Audit workspace Cargo.lock
         run: cargo audit
 
   linux-test:
     name: Linux KDE Build, Clippy & Headless Tests
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-26.04
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
         with:
           persist-credentials: false
 
@@ -41,12 +50,13 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends \
             build-essential pkg-config \
-            qt6-base-dev qt6-declarative-dev qt6-declarative-dev-tools libqt6svg6-dev \
+            qt6-base-dev qt6-declarative-dev qt6-declarative-dev-tools qt6-svg-dev \
             libkf6colorscheme-dev libkf6config-dev libkf6iconthemes-dev \
-            qml6-module-org-kde-kirigami qml6-module-org-kde-breeze \
-            qml6-module-qtquick qml6-module-qtquick-controls \
+            qml6-module-org-kde-kirigami qml6-module-org-kde-desktop qml6-module-org-kde-breeze \
+            qml6-module-qtquick qml6-module-qtquick-controls qml6-module-qtquick-templates \
             qml6-module-qtquick-layouts qml6-module-qtquick-window \
-            qml6-module-qtquick-dialogs qml6-module-qtqml-workerscript
+            qml6-module-qtquick-dialogs qml6-module-qtqml-workerscript \
+            breeze-icon-theme fonts-noto-core
 
       - name: Install Rust (stable, clippy)
         uses: dtolnay/rust-toolchain@stable
@@ -68,7 +78,7 @@ jobs:
     name: Windows Build, Test & Package (x64)
     runs-on: windows-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
         with:
           persist-credentials: false
 
@@ -146,7 +156,7 @@ jobs:
           }
           Get-ChildItem windows/dist -File
 
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v6
         with:
           name: LibreLinkUp-windows-x64
           path: |
@@ -158,17 +168,17 @@ jobs:
     name: Publish Windows Release Assets
     if: startsWith(github.ref, 'refs/tags/v')
     needs: [security-audit, linux-test, build]
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-26.04
     permissions:
       contents: write
     steps:
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@v7
         with:
           name: LibreLinkUp-windows-x64
           path: windows/dist
 
       - name: Attach to GitHub release
-        uses: softprops/action-gh-release@v2
+        uses: softprops/action-gh-release@v3
         with:
           files: |
             windows/dist/*.exe

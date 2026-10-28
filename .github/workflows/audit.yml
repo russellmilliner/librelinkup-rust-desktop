@@ -23,7 +23,7 @@ permissions:
 jobs:
   cargo-audit:
     name: cargo audit (${{ matrix.lockfile }})
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-26.04
     strategy:
       fail-fast: false
       matrix:
@@ -32,12 +32,12 @@ jobs:
           - crates/librelinkup-core/Cargo.lock  # shared core (used by core tests in CI)
           - windows/Cargo.lock                  # Windows egui app
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
         with:
           persist-credentials: false
 
       - name: Cache cargo-audit binary and advisory DB
-        uses: actions/cache@v4
+        uses: actions/cache@v5
         with:
           path: |
             ~/.cargo/bin/cargo-audit

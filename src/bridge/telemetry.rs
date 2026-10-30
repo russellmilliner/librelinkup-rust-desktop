@@ -664,9 +664,7 @@ impl qobject::TelemetryController {
         let snap = build_demo_snapshot(now);
         with_state(|s| {
             s.glucose_history.ingest_snapshot(&snap, now);
-            if s.medication_store.medications.is_empty() {
-                s.medication_store = crate::medications::build_demo_medication_store(now);
-            }
+            s.medication_store = crate::medications::build_demo_medication_store(now);
             s.snapshot = snap;
             s.last_successful_fetch_epoch = Some(now);
             s.logged_in = true;

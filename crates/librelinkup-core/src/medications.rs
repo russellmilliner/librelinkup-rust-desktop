@@ -765,7 +765,18 @@ pub fn build_demo_medication_store(now_epoch: i64) -> MedicationStore {
         true,
         "Evening long-acting dose",
     );
-    let _ = store.log_dose(&id1, Some("500 mg"), now_epoch - 2 * 3600, Some(148.0), "Morning dose");
+    let _ = store.upsert_medication(
+        "demo-med-3",
+        "Semaglutide",
+        "1.0 mg",
+        MedicationSchedule::Weekly,
+        "08:00",
+        4,
+        true,
+        "Weekly Friday morning dose",
+    );
+    let _ = store.log_dose(&id1, Some("500 mg"), now_epoch - 7 * 3600, Some(124.0), "Morning dose");
+    let _ = store.log_dose(&id1, Some("500 mg"), now_epoch - 2 * 3600, Some(148.0), "Evening dose");
     store
 }
 

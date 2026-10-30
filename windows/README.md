@@ -2,19 +2,21 @@
 
 A native, lightweight **Rust (`eframe` / `egui`)** desktop application for **Windows 10 and Windows 11 (x64)** that monitors continuous blood glucose readings from **LibreLinkUp**. It shares the platform-independent `librelinkup-core` crate with the Linux KDE Plasma 6 edition.
 
+> **🛡️ Zero Tracking & Zero Advertisements — Forever:** LibreLinkUp Rust Desktop contains **no advertisements, no analytics, no telemetry beacons, no crash-reporting SDKs, and no third-party tracking — and never will.** Network communication is strictly limited to your allowlisted regional LibreView API endpoint and GitHub Releases (when checking for signed updates). All credentials, 90-day glucose history, and medication logs remain on your PC inside DPAPI-backed AES-256-GCM encrypted vaults.
+
 ---
 
 ## Downloads & Installation
 
 | Package | Download Link | Description |
 | :--- | :--- | :--- |
-| **Windows Installer (`x64`)** | [**`LibreLinkUp-Setup-0.5.0-x64.exe`**](https://github.com/russellmilliner/librelinkup-rust-desktop/releases/download/v0.4.5/LibreLinkUp-Setup-0.5.0-x64.exe) ([SHA-256](https://github.com/russellmilliner/librelinkup-rust-desktop/releases/download/v0.4.5/LibreLinkUp-Setup-0.5.0-x64.exe.sha256)) | Per-user Inno Setup installer (no admin prompt required), Start Menu shortcut with Toast `AppUserModelID`, optional start at Windows sign-in |
-| **Portable Zip (`x64`)** | [**`LibreLinkUp-0.4.5-windows-x64-portable.zip`**](https://github.com/russellmilliner/librelinkup-rust-desktop/releases/download/v0.4.5/LibreLinkUp-0.4.5-windows-x64-portable.zip) ([SHA-256](https://github.com/russellmilliner/librelinkup-rust-desktop/releases/download/v0.4.5/LibreLinkUp-0.4.5-windows-x64-portable.zip.sha256)) | Standalone `LibreLinkUp.exe` executable — extract anywhere and run |
+| **Windows Installer (`x64`)** | [**`LibreLinkUp-Setup-0.5.0-x64.exe`**](https://github.com/russellmilliner/librelinkup-rust-desktop/releases/download/v0.5.0/LibreLinkUp-Setup-0.5.0-x64.exe) ([SHA-256](https://github.com/russellmilliner/librelinkup-rust-desktop/releases/download/v0.5.0/LibreLinkUp-Setup-0.5.0-x64.exe.sha256) • [Minisign](https://github.com/russellmilliner/librelinkup-rust-desktop/releases/download/v0.5.0/LibreLinkUp-Setup-0.5.0-x64.exe.minisig)) | Per-user Inno Setup installer (no admin prompt required), Start Menu shortcut with Toast `AppUserModelID`, optional start at Windows sign-in |
+| **Portable Zip (`x64`)** | [**`LibreLinkUp-0.5.0-windows-x64-portable.zip`**](https://github.com/russellmilliner/librelinkup-rust-desktop/releases/download/v0.5.0/LibreLinkUp-0.5.0-windows-x64-portable.zip) ([SHA-256](https://github.com/russellmilliner/librelinkup-rust-desktop/releases/download/v0.5.0/LibreLinkUp-0.5.0-windows-x64-portable.zip.sha256) • [Minisign](https://github.com/russellmilliner/librelinkup-rust-desktop/releases/download/v0.5.0/LibreLinkUp-0.5.0-windows-x64-portable.zip.minisig)) | Standalone `LibreLinkUp.exe` executable — extract anywhere and run |
 
 ### PowerShell Quick Install
 
 ```powershell
-Invoke-WebRequest -Uri "https://github.com/russellmilliner/librelinkup-rust-desktop/releases/download/v0.4.5/LibreLinkUp-Setup-0.5.0-x64.exe" -OutFile "$env:TEMP\LibreLinkUp-Setup-0.5.0-x64.exe"
+Invoke-WebRequest -Uri "https://github.com/russellmilliner/librelinkup-rust-desktop/releases/download/v0.5.0/LibreLinkUp-Setup-0.5.0-x64.exe" -OutFile "$env:TEMP\LibreLinkUp-Setup-0.5.0-x64.exe"
 Start-Process -FilePath "$env:TEMP\LibreLinkUp-Setup-0.5.0-x64.exe"
 ```
 
@@ -71,9 +73,22 @@ A borderless, translucent, always-on-top desktop widget (`276×88` default, conf
   - Sends native Windows Toast notifications registered under `AppUserModelID` `io.github.russellmilliner.LibreLinkUpDesktop` with interactive **Snooze 30 min**, **Snooze 1 hr**, and **Snooze 2 hr** action buttons.
   - Includes a **Test Alert Sound** button in the **Alerts** tab.
 
+### 5. Medications Tab & Glycemic Analytics (`eA1C` / `GMI` / `TIR%`)
+- **Estimated A1C (`eA1C`), `GMI` & Time in Range (`TIR %`)**:
+  - Switch between `12h`, `7d`, `14d`, `30d`, and `90d` analytics windows on either the **Dashboard** or the **Medications** tab (saved automatically in `settings.json`).
+  - Computes **ADAG `eA1C`** (`%` and IFCC `mmol/mol`), **Bergenstal `GMI`** (`%` and `mmol/mol`), **Time in Range (`TIR %`)**, `% Below`, `% Above`, Mean Glucose, `Min–Max`, and `CV %` from your encrypted local 90-day history vault (`%LOCALAPPDATA%\LibreLinkUpDesktop\glucose_history.enc.json`).
+- **Scheduled & As-Needed (`PRN`) Medication Tracking**:
+  - Add medications with **Name**, **Dosage**, **Schedule** (`Daily`, `Twice Daily`, `Weekly` with a **Day of Week** `Monday`–`Sunday` selector, or `As Needed`), **24-hour Time(s)** (`HH:MM`), and optional desktop due-dose reminders.
+  - **In-Place Editing (`✏`) & Removal (`🗑`)**: Click **`✏`** on any scheduled medication row to edit its schedule, dosage, or times in place, or **`🗑`** to delete it.
+  - **One-Click Dose Logging (`✓ Taken` / `⏭ Skipped` / `Log Dose`)**: Log taken or skipped doses with one click; taken doses automatically record your concurrent blood glucose reading (`mg/dL` or `mmol/L`) into `%APPDATA%\LibreLinkUpDesktop\medications.enc.json`.
+  - **12-Hour Glucose Graph Markers (`💊`)**: Doses logged within the last 12 hours are plotted directly on the 12-hour glucose trend graph as purple diamond markers (`#a855f7`) with vertical guide lines and medication labels.
+  - **Recent Dose History**: View and manage your recent dose logs (with timestamps, dosages, and concurrent glucose values).
+
 ---
 
-## Security & Windows Data Paths
+## Security, Privacy & Windows Data Paths
+
+- **Zero Tracking & Zero Advertisements — Forever**: There are **no advertisements, no analytics, no telemetry beacons, no crash-reporting SDKs, and no third-party tracking** in LibreLinkUp Rust Desktop — and **never will be**.
 
 | Resource | Windows Location / Mechanism |
 | :--- | :--- |

@@ -117,7 +117,7 @@ Item {
                         }
 
                         QQC2.Label {
-                            text: qsTr("Continuous blood glucose monitor for LibreLinkUp featuring AES-256-GCM encrypted credentials, KDE system tray badge & tooltip, interactive 12-hour CGM chart, and a customizable desktop overlay.")
+                            text: qsTr("Continuous blood glucose monitor for LibreLinkUp featuring AES-256-GCM encrypted vaults for credentials, 90-day glucose history (eA1C / GMI / TIR%) and medications, KDE system tray badge & tooltip, interactive 12-hour CGM chart, and a customizable desktop overlay. Contains zero tracking and zero advertisements — forever.")
                             color: Kirigami.Theme.textColor
                             opacity: 0.88
                             Layout.fillWidth: true

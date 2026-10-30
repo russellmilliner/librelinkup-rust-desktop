@@ -437,17 +437,18 @@ inline QString librelinkup_run_ui_overflow_tests() {
     if (QQuickWindow* ovWin = qobject_cast<QQuickWindow*>(librelinkup::find_overlay_window())) {
         for (bool darkOv : {true, false}) {
             QMetaObject::invokeMethod(
-                ctrl,
+                settingsCtrl,
                 "updateOverlayDarkTheme",
                 Qt::DirectConnection,
                 Q_ARG(bool, darkOv)
             );
             QMetaObject::invokeMethod(
-                ctrl,
+                settingsCtrl,
                 "updateOverlayOpacityPercent",
                 Qt::DirectConnection,
                 Q_ARG(int, darkOv ? 65 : 90)
             );
+            sync_all();
             for (const QSize& ovSz : {QSize(276, 88), QSize(240, 80)}) {
                 ovWin->resize(ovSz);
                 librelinkup_uitest::pump_events(40);
@@ -592,11 +593,13 @@ inline QString librelinkup_run_ui_overflow_tests() {
         // 1. Main Window - Dashboard (Dark theme, 980x680, with interactive graph point hover active)
         QMetaObject::invokeMethod(ctrl, "loadDemoSampleData", Qt::DirectConnection);
         QMetaObject::invokeMethod(ctrl, "updateThemeMode", Qt::DirectConnection, Q_ARG(QString, QStringLiteral("dark")));
+        sync_all();
         mainWin->resize(980, 680);
         mainWin->setProperty("activeTab", QStringLiteral("dashboard"));
         mainWin->show();
         librelinkup_uitest::pump_events(80);
         if (QQuickItem* canvas = mainWin->findChild<QQuickItem*>(QStringLiteral("glucoseCanvas"))) {
+            QMetaObject::invokeMethod(canvas, "requestPaint", Qt::DirectConnection);
             QMetaObject::invokeMethod(
                 canvas,
                 "updateHoverAt",
@@ -604,29 +607,42 @@ inline QString librelinkup_run_ui_overflow_tests() {
                 Q_ARG(QVariant, QVariant(canvas->width() * 0.58)),
                 Q_ARG(QVariant, QVariant(canvas->height() * 0.45))
             );
-            librelinkup_uitest::pump_events(50);
+            librelinkup_uitest::pump_events(60);
         }
         QImage dashImg = mainWin->grabWindow();
         dashImg.save(dir.filePath(QStringLiteral("app-dashboard.png")));
 
-        // 2. Main Window - General, Tray & Overlay Settings (Dark theme, 980x680)
+        // 2. Main Window - Medications & Glycemic Analytics (Dark theme, 980x880 to showcase full tab)
+        mainWin->resize(980, 880);
+        mainWin->setProperty("activeTab", QStringLiteral("medications"));
+        sync_all();
+        librelinkup_uitest::pump_events(80);
+        QImage medsImg = mainWin->grabWindow();
+        medsImg.save(dir.filePath(QStringLiteral("app-medications.png")));
+        mainWin->resize(980, 680);
+
+        // 3. Main Window - General, Tray & Overlay Settings (Dark theme, 980x680)
         mainWin->setProperty("activeTab", QStringLiteral("general"));
+        sync_all();
         librelinkup_uitest::pump_events(60);
         QImage settingsImg = mainWin->grabWindow();
         settingsImg.save(dir.filePath(QStringLiteral("app-settings.png")));
 
-        // 3. Desktop Overlay Widget (Dark Slate Theme & Classic Status-Color Theme side-by-side)
+        // 4. Desktop Overlay Widget (Dark Slate Theme & Classic Status-Color Theme side-by-side)
         if (QQuickWindow* ovWin = qobject_cast<QQuickWindow*>(librelinkup::find_overlay_window())) {
             QMetaObject::invokeMethod(ctrl, "updateOverlayVisible", Qt::DirectConnection, Q_ARG(bool, true));
+            QMetaObject::invokeMethod(ctrl, "updateOverlayOnAllDesktops", Qt::DirectConnection, Q_ARG(bool, true));
             ovWin->resize(276, 88);
 
-            QMetaObject::invokeMethod(ctrl, "updateOverlayDarkTheme", Qt::DirectConnection, Q_ARG(bool, true));
-            QMetaObject::invokeMethod(ctrl, "updateOverlayOpacityPercent", Qt::DirectConnection, Q_ARG(int, 92));
+            QMetaObject::invokeMethod(settingsCtrl, "updateOverlayDarkTheme", Qt::DirectConnection, Q_ARG(bool, true));
+            QMetaObject::invokeMethod(settingsCtrl, "updateOverlayOpacityPercent", Qt::DirectConnection, Q_ARG(int, 92));
+            sync_all();
             librelinkup_uitest::pump_events(60);
             QImage ovDarkImg = ovWin->grabWindow();
 
-            QMetaObject::invokeMethod(ctrl, "updateOverlayDarkTheme", Qt::DirectConnection, Q_ARG(bool, false));
-            QMetaObject::invokeMethod(ctrl, "updateOverlayOpacityPercent", Qt::DirectConnection, Q_ARG(int, 95));
+            QMetaObject::invokeMethod(settingsCtrl, "updateOverlayDarkTheme", Qt::DirectConnection, Q_ARG(bool, false));
+            QMetaObject::invokeMethod(settingsCtrl, "updateOverlayOpacityPercent", Qt::DirectConnection, Q_ARG(int, 95));
+            sync_all();
             librelinkup_uitest::pump_events(60);
             QImage ovColorImg = ovWin->grabWindow();
 

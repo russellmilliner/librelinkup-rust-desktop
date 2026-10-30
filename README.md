@@ -12,6 +12,8 @@
 
 Native **Rust** desktop applications for monitoring continuous blood glucose readings from **LibreLinkUp** on **Linux (KDE Plasma 6 / Kirigami / Qt 6)** and **Windows 10/11 (`egui` / `eframe`)**, built on a shared `librelinkup-core` crate and inspired by [LibreLinkUpDesktop](https://github.com/Crazy-Marvin/LibreLinkUpDesktop).
 
+> **🛡️ Zero Tracking & Zero Advertisements — Forever:** LibreLinkUp Rust Desktop contains **no advertisements, no analytics, no telemetry beacons, no crash-reporting SDKs, and no third-party tracking — and never will.** The application only ever connects to your allowlisted regional LibreView API endpoint (to fetch your CGM readings) and GitHub Releases (when checking for signed application updates). All credentials, glucose history, and medication logs stay strictly on your own machine inside AES-256-GCM encrypted vaults.
+
 ---
 
 ## Release, Flatpak & Windows Links
@@ -54,8 +56,11 @@ Start-Process -FilePath "$env:TEMP\LibreLinkUp-Setup-0.5.0-x64.exe"
 
 ## Screenshots
 
-### Main Application — Live Glucose Dashboard & 12-Hour Interactive Graph
+### Main Application — Live Glucose Dashboard, eA1C/GMI Pill & 12-Hour Interactive Graph (with Medication Markers)
 ![Main Application Dashboard](docs/screenshots/app-dashboard.png)
+
+### Medications Tab — Scheduled Checklist, Dose Logging & Estimated A1C (eA1C / GMI / TIR%)
+![Medications, Dose Log & Estimated A1C](docs/screenshots/app-medications.png)
 
 ### General, System Tray & Desktop Overlay Settings
 ![General & Overlay Settings](docs/screenshots/app-settings.png)
@@ -68,8 +73,53 @@ Start-Process -FilePath "$env:TEMP\LibreLinkUp-Setup-0.5.0-x64.exe"
 
 ---
 
+## Medications Tab & Glycemic Analytics (`eA1C` / `GMI` / `TIR%`)
+
+The **Medications** tab (available in the top navigation bar on both Linux KDE Plasma 6 and Windows 10/11) combines **90-day Glycemic Analytics** with **Scheduled & As-Needed Medication Tracking** so you can track doses and see how they line up with your continuous glucose curve:
+
+### 1. Estimated A1C (`eA1C`), `GMI` & Time in Range (`TIR%`)
+- **Multi-Window Selector (`12h`, `7d`, `14d`, `30d`, `90d`)**: Switch the analysis window on either the **Dashboard** or the **Medications** tab; your selected window is saved automatically across restarts.
+- **Clinical Formulas Displayed**:
+  - **ADAG Estimated A1C (`eA1C`)**: `(Mean mg/dL + 46.7) / 28.7` (Nathan et al., 2008), shown in both NGSP **`%`** and IFCC **`mmol/mol`**.
+  - **Glucose Management Indicator (`GMI`)**: `3.31 + 0.02392 × Mean mg/dL` (Bergenstal et al., 2018), shown in both **`%`** and **`mmol/mol`**.
+  - **Time in Range (`TIR %`) & Variability**: Displays `% In Range` (between your configured Low and High thresholds), `% Below`, `% Above`, average glucose, `Min–Max`, and Coefficient of Variation (`CV %`).
+- **Encrypted 90-Day Local Vault**: Samples are deduplicated into 60-second buckets and stored locally in `glucose_history.enc.json` (`AES-256-GCM`).
+
+### 2. Adding & Editing Scheduled or As-Needed Medications
+- **Supported Schedules**:
+  - **`Once Daily`**: Single daily 24-hour time slot (e.g., `08:00` or `21:00`).
+  - **`Twice Daily`**: Two daily 24-hour time slots separated by a comma (e.g., `08:00,20:00`).
+  - **`Weekly`**: Selects a specific **Day of Week** (`Monday`–`Sunday`) plus a 24-hour time slot (e.g., `Thursday` at `08:00`).
+  - **`As Needed (PRN)`**: On-demand medication or fast-acting insulin logged whenever taken without a fixed daily alarm.
+- **In-Place Editing (`✏ Edit`)**: Click the **`✏`** edit button on any medication row to populate its name, dosage, schedule, weekday, time(s), and reminder setting into the form (`Update Medication` mode), then click **Save Changes** (or **Cancel**).
+- **Removing a Medication (`🗑`)**: Click the **`🗑`** delete button on any medication row to remove it from your schedule.
+
+### 3. Quick Dose Checklist, Desktop Reminders & 12-Hour Graph Markers (`💊`)
+- **Live Dose Status Badges**: Each medication displays its real-time status for the current day/week:
+  - **`Due Now`** (amber): Scheduled time has arrived and the dose has not been logged yet today.
+  - **`✓ Taken`** (green): Dose has been logged for the current slot/day (shows timestamp).
+  - **`⏭ Skipped`** (slate): Dose was explicitly marked skipped for the current slot/day.
+  - **`Scheduled`** / **`As Needed`**: Upcoming scheduled time or on-demand PRN entry.
+- **One-Click Dose Logging (`✓ Taken` / `⏭ Skipped` / `Log Dose`)**:
+  - Clicking **`✓ Taken`** (or **`Log Dose`**) records the exact timestamp, medication name, dosage, and your **concurrent blood glucose reading (`mg/dL` or `mmol/L`)** into your encrypted `medications.enc.json` vault.
+  - Clicking **`⏭ Skipped`** records that the scheduled dose was intentionally skipped so due-dose reminders stop repeating for that slot.
+- **Interactive Desktop Due-Dose Notifications**:
+  - When **Desktop notification when dose is due** is enabled on a medication, LibreLinkUp Rust Desktop sends a desktop notification when the scheduled time arrives, complete with interactive **`✓ Taken`** and **`⏭ Skipped`** buttons directly on the notification popup.
+- **12-Hour Glucose Trend Graph Markers (`💊`)**:
+  - Every dose taken within the last 12 hours is plotted directly on the **Dashboard 12-Hour Glucose Trend Graph** as a purple diamond marker (`#a855f7`) with a vertical guide line and medication label, allowing you to visually inspect post-dose glucose response.
+- **Recent Dose History**:
+  - Lists your recent logged and skipped doses with timestamps, dosages, and concurrent glucose readings, with a **`✕`** button to delete any entry logged by mistake.
+
+---
+
 ## Key Features
 
+- **Zero Tracking & Zero Advertisements — Forever**:
+  - Contains **no advertisements, no user tracking, no telemetry beacons, no analytics SDKs, and no third-party data collection — and never will.**
+  - Outbound network connections are strictly limited to the 12 allowlisted LibreView regional endpoints (`https://api[-<region>].libreview.io/llu`) and GitHub Releases (`russellmilliner/librelinkup-rust-desktop`) when checking for signed application updates.
+- **Medications Tab & 90-Day Glycemic Analytics (`eA1C` / `GMI` / `TIR%`)**:
+  - **Estimated A1C (`eA1C`), `GMI` & Time in Range (`TIR %`)**: Computes ADAG `eA1C` (`%` and IFCC `mmol/mol`), Bergenstal `GMI` (`%` and `mmol/mol`), `TIR %`, `% Below`, `% Above`, Mean Glucose, `Min–Max`, and `CV %` across `12h`, `7d`, `14d`, `30d`, and `90d` windows from your encrypted 90-day local history vault (`glucose_history.enc.json`).
+  - **Scheduled & As-Needed (`PRN`) Medication Tracking**: Supports `Once Daily`, `Twice Daily`, `Weekly` (with a **Day of Week** `Monday`–`Sunday` selector), and `As Needed (PRN)` schedules, in-place medication editing (`✏`), 1-click dose logging (`✓ Taken` / `⏭ Skipped` / `Log Dose`) recording concurrent blood glucose, interactive desktop due-dose reminders, and purple `💊` diamond markers on the 12-hour glucose graph.
 - **Cross-Platform Native Desktop UIs on a Shared Rust Core**:
   - **Linux (KDE Plasma 6)**: Built with `cxx-qt`, Qt 6 Quick Controls (`org.kde.desktop`), `org.kde.kirigami`, and `KColorScheme` (`KF6ColorScheme`).
   - **Windows 10 / 11 (`x64`)**: Built in pure Rust with `eframe` / `egui` (`wgpu` hardware acceleration with automatic `glow` OpenGL fallback), `tray-icon`, `rodio`, and `windows-sys`.

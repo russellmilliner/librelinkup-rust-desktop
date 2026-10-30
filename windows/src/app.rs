@@ -1332,9 +1332,10 @@ impl LibreLinkUpApp {
         ui.add_space(8.0);
         ui.label(
             "Continuous blood glucose monitor for LibreLinkUp featuring Windows DPAPI + AES-256-GCM \
-             encrypted credentials, system tray glucose badge & tooltip, interactive 12-hour CGM chart, \
+             encrypted credentials, 90-day glycemic analytics (eA1C / GMI / TIR%), medication tracking, \
+             system tray glucose badge & tooltip, interactive 12-hour CGM chart, \
              stale-reading & urgent-low/snooze alert engine, and an always-on-top desktop overlay \
-             with scroll-wheel transparency and quick action buttons.",
+             with scroll-wheel transparency and quick action buttons. Contains zero tracking and zero advertisements — forever.",
         );
         ui.add_space(8.0);
         egui::Frame::group(ui.style()).inner_margin(12).show(ui, |ui| {

@@ -10,13 +10,16 @@
   </developer>
   <description>
     <p>
-      Native Rust and KDE Plasma 6 Kirigami desktop client for monitoring continuous blood glucose readings from LibreLinkUp.
+      Native Rust and KDE Plasma 6 Kirigami desktop client for monitoring continuous blood glucose readings from LibreLinkUp, with zero tracking and zero advertisements — forever.
     </p>
     <ul>
-      <li>AES-256-GCM and PBKDF2-HMAC-SHA256 encrypted credential storage</li>
+      <li>Zero tracking, zero analytics, and zero advertisements — forever</li>
+      <li>AES-256-GCM and PBKDF2-HMAC-SHA256 encrypted vaults for credentials, 90-day glucose history, and medications</li>
+      <li>Medications tab with Once Daily, Twice Daily, Weekly (day-of-week), and As-Needed schedules, 1-click dose logging, interactive desktop due-dose reminders, and 12-hour glucose graph dose markers</li>
+      <li>90-day Glycemic Analytics computing ADAG Estimated A1C (eA1C), Bergenstal GMI, Time in Range (TIR%), and CV% across 12h, 7d, 14d, 30d, and 90d windows</li>
       <li>Dynamic system tray badge showing live blood glucose value and hover tooltip</li>
       <li>Native KDE Plasma 6 Light, Dark, and System theme support</li>
-      <li>Interactive 12-hour CGM trend graph with point hover inspection</li>
+      <li>Interactive 12-hour CGM trend graph with point hover inspection and medication markers</li>
       <li>Floating desktop overlay widget with Dark Theme, on-card control buttons, scroll-wheel adjustable transparency, and persistent multi-monitor placement</li>
       <li>Stale-reading detection with signal-loss alerts, urgent-low/repeat/snooze alert engine, and built-in audible alarm sound</li>
       <li>Built-in diagnostic Log Viewer with filtering, search, and export</li>
@@ -29,11 +32,15 @@
   </branding>
   <screenshots>
     <screenshot type="default">
-      <image>https://raw.githubusercontent.com/russellmilliner/librelinkup-rust-desktop/v0.4.0/docs/screenshots/app-dashboard.png</image>
-      <caption>Live blood glucose dashboard and 12-hour interactive trend graph</caption>
+      <image>https://raw.githubusercontent.com/russellmilliner/librelinkup-rust-desktop/main/docs/screenshots/app-dashboard.png</image>
+      <caption>Live blood glucose dashboard, eA1C/GMI analytics, and 12-hour interactive trend graph with medication markers</caption>
     </screenshot>
     <screenshot>
-      <image>https://raw.githubusercontent.com/russellmilliner/librelinkup-rust-desktop/v0.4.0/docs/screenshots/app-settings.png</image>
+      <image>https://raw.githubusercontent.com/russellmilliner/librelinkup-rust-desktop/main/docs/screenshots/app-medications.png</image>
+      <caption>Medications tab with scheduled dose checklist, eA1C/GMI glycemic analytics, and recent dose log</caption>
+    </screenshot>
+    <screenshot>
+      <image>https://raw.githubusercontent.com/russellmilliner/librelinkup-rust-desktop/main/docs/screenshots/app-settings.png</image>
       <caption>Appearance, system tray badge, and floating desktop overlay settings</caption>
     </screenshot>
   </screenshots>

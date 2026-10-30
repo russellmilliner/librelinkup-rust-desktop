@@ -119,8 +119,12 @@ execute→ Windows: run installer; Linux: `flatpak install --user --reinstall`
 
 ---
 
-## 6. Logging and privacy
+## 6. Logging, privacy, and zero-tracking guarantee
 
+* **No tracking and no advertisements — ever:** LibreLinkUp Rust Desktop contains **no
+  advertisements, no analytics, no telemetry beacons, no crash-reporting SDKs, and no
+  third-party tracking**, and never will. Network requests go exclusively to the allowlisted
+  LibreView regional API and GitHub Releases (for signed update checks).
 * Logs are an in-memory ring buffer (1000 entries) with categories `SYSTEM/AUTH/API/CRYPTO/
   GLUCOSE/ALERT/MEDS/TRAY`. Exports are `0600`.
 * Email addresses are masked (`p***@example.com`); `Debug` impls for `StoredCredentials`,

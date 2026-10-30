@@ -215,11 +215,46 @@ Window {
                         border.color: Qt.rgba(1, 1, 1, 0.3)
                         border.width: 1
 
-                        QQC2.Label {
+                        Canvas {
+                            id: themeToggleCanvas
+                            width: 14
+                            height: 14
                             anchors.centerIn: parent
-                            text: overlayWindow.isDarkOverlay ? "🌙" : "🎨"
-                            font.pointSize: 8.5
-                            color: "#ffffff"
+                            onPaint: {
+                                const ctx = getContext("2d")
+                                ctx.reset()
+                                if (overlayWindow.isDarkOverlay) {
+                                    // Crescent moon icon
+                                    ctx.fillStyle = "#fde047"
+                                    ctx.beginPath()
+                                    ctx.arc(7, 7, 4.8, 0.35, Math.PI * 1.65, false)
+                                    ctx.arc(9.2, 5.6, 4.2, Math.PI * 1.48, 0.52, true)
+                                    ctx.closePath()
+                                    ctx.fill()
+                                } else {
+                                    // Sun / color theme icon
+                                    ctx.fillStyle = "#fef08a"
+                                    ctx.strokeStyle = "#ffffff"
+                                    ctx.lineWidth = 1.2
+                                    ctx.beginPath()
+                                    ctx.arc(7, 7, 3.2, 0, Math.PI * 2)
+                                    ctx.fill()
+                                    for (let a = 0; a < 8; ++a) {
+                                        const ang = (a * Math.PI) / 4
+                                        ctx.beginPath()
+                                        ctx.moveTo(7 + Math.cos(ang) * 4.4, 7 + Math.sin(ang) * 4.4)
+                                        ctx.lineTo(7 + Math.cos(ang) * 6.0, 7 + Math.sin(ang) * 6.0)
+                                        ctx.stroke()
+                                    }
+                                }
+                            }
+                        }
+
+                        Connections {
+                            target: overlayWindow
+                            function onIsDarkOverlayChanged() {
+                                themeToggleCanvas.requestPaint()
+                            }
                         }
 
                         MouseArea {

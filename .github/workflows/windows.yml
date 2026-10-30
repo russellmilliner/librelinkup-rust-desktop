@@ -164,10 +164,47 @@ jobs:
             windows/dist/*.zip
             windows/dist/*.sha256
 
-  release:
-    name: Publish Windows Release Assets
+  linux-flatpak:
+    name: Build, Sign & Attach Flatpak Bundle
     if: startsWith(github.ref, 'refs/tags/v')
-    needs: [security-audit, linux-test, build]
+    needs: [security-audit, linux-test]
+    runs-on: ubuntu-26.04
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+
+      - name: Install Flatpak, flatpak-builder and the KDE runtime/SDK
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends flatpak flatpak-builder
+          flatpak remote-add --user --if-not-exists flathub \
+            https://flathub.org/repo/flathub.flatpakrepo
+          flatpak install --user -y --noninteractive flathub \
+            org.kde.Platform//6.11 org.kde.Sdk//6.11 \
+            org.freedesktop.Sdk.Extension.rust-stable \
+            org.freedesktop.Sdk.Extension.llvm22
+
+      - name: Install Rust (stable)
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Build Flatpak bundle
+        run: ./scripts/build-flatpak.sh --no-install
+
+      - name: Report bundle
+        run: ls -lh target/release/*.flatpak target/release/*.sha256
+
+      - uses: actions/upload-artifact@v6
+        with:
+          name: LibreLinkUp-flatpak
+          path: |
+            target/release/*.flatpak
+            target/release/*.sha256
+
+  release:
+    name: Publish Release Assets
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs: [security-audit, linux-test, build, linux-flatpak]
     runs-on: ubuntu-26.04
     permissions:
       contents: write
@@ -177,6 +214,37 @@ jobs:
           name: LibreLinkUp-windows-x64
           path: windows/dist
 
+      - uses: actions/download-artifact@v7
+        with:
+          name: LibreLinkUp-flatpak
+          path: target/release
+
+      # Authenticity, not just integrity: the in-app updater refuses to execute any artifact
+      # without a signature that verifies against the public key compiled into the binary.
+      - name: Install minisign
+        run: sudo apt-get update && sudo apt-get install -y --no-install-recommends minisign
+
+      - name: Sign release artifacts (minisign)
+        env:
+          RELEASE_MINISIGN_KEY: ${{ secrets.RELEASE_MINISIGN_KEY }}
+        run: |
+          set -euo pipefail
+          if [ -z "${RELEASE_MINISIGN_KEY:-}" ]; then
+            echo "::error::RELEASE_MINISIGN_KEY secret is not configured; refusing to publish unsigned artifacts."
+            exit 1
+          fi
+          KEY="$RUNNER_TEMP/release.key"
+          printf '%s\n' "$RELEASE_MINISIGN_KEY" > "$KEY"
+          chmod 600 "$KEY"
+          shopt -s nullglob
+          for f in windows/dist/*.exe windows/dist/*.zip target/release/*.flatpak; do
+            minisign -S -s "$KEY" -m "$f" \
+              -c "LibreLinkUp Rust Desktop release artifact" \
+              -t "artifact:$(basename "$f") run:${GITHUB_RUN_ID}"
+          done
+          rm -f "$KEY"
+          ls -l windows/dist target/release
+
       - name: Attach to GitHub release
         uses: softprops/action-gh-release@v3
         with:
@@ -184,3 +252,7 @@ jobs:
             windows/dist/*.exe
             windows/dist/*.zip
             windows/dist/*.sha256
+            windows/dist/*.minisig
+            target/release/*.flatpak
+            target/release/*.flatpak.sha256
+            target/release/*.minisig

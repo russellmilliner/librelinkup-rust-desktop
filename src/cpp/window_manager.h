@@ -14,6 +14,7 @@
 #include <QPointer>
 #include <QRect>
 #include <QScreen>
+#include <QUuid>
 #include <QStandardPaths>
 #include <QString>
 #include <QTimer>
@@ -296,9 +297,13 @@ inline void apply_overlay_all_desktops(bool onAllDesktops) {
     const QString runtimeDir = QStandardPaths::writableLocation(QStandardPaths::RuntimeLocation).isEmpty()
         ? QDir::tempPath()
         : QStandardPaths::writableLocation(QStandardPaths::RuntimeLocation);
-    const QString scriptPath = runtimeDir + QStringLiteral("/librelinkup-kwin-desktop-mode.js");
+    // Unique, per-invocation script name and O_CREAT|O_EXCL: never follow a pre-existing
+    // path (which could be a symlink planted by another process in the runtime dir), and
+    // never reuse a file whose permissions we have not set ourselves.
+    const QString scriptPath = runtimeDir
+        + QStringLiteral("/librelinkup-kwin-%1.js").arg(QUuid::createUuid().toString(QUuid::Id128));
     QFile f(scriptPath);
-    if (f.open(QIODevice::WriteOnly | QIODevice::Truncate | QIODevice::Text)) {
+    if (f.open(QIODevice::NewOnly | QIODevice::WriteOnly | QIODevice::Text)) {
         f.setPermissions(QFileDevice::ReadOwner | QFileDevice::WriteOwner);
         const QString js = QStringLiteral(
             "var list = workspace.stackingOrder || workspace.windowList();\n"
@@ -315,8 +320,12 @@ inline void apply_overlay_all_desktops(bool onAllDesktops) {
             "  }\n"
             "}\n"
         ).arg(onAllDesktops ? QStringLiteral("true") : QStringLiteral("false"));
-        f.write(js.toUtf8());
+        const bool wrote = f.write(js.toUtf8()) >= 0;
         f.close();
+        if (!wrote) {
+            QFile::remove(scriptPath);
+            return;
+        }
 
         const QString pluginName = QStringLiteral("librelinkup_overlay_desktop_oneshot");
         QDBusMessage unloadMsg = QDBusMessage::createMethodCall(
@@ -345,7 +354,8 @@ inline void apply_overlay_all_desktops(bool onAllDesktops) {
                 QStringLiteral("run")
             );
             bus.call(runMsg, QDBus::NoBlock);
-            QTimer::singleShot(80, [pluginName]() {
+            QTimer::singleShot(80, [pluginName, scriptPath]() {
+                QFile::remove(scriptPath);
                 QDBusMessage cleanupMsg = QDBusMessage::createMethodCall(
                     QStringLiteral("org.kde.KWin"),
                     QStringLiteral("/Scripting"),
@@ -500,28 +510,14 @@ inline void hide_main_window_to_tray() {
 }
 
 inline void show_log_viewer_window() {
-    if (QWindow* logWin = find_log_viewer_window()) {
-        clamp_window_to_screen(logWin);
-        logWin->showNormal();
-        logWin->show();
-        logWin->raise();
-        logWin->requestActivate();
-        return;
-    }
+    show_main_window();
     if (QWindow* mainWin = find_main_window()) {
         QMetaObject::invokeMethod(mainWin, "openLogViewer", Qt::QueuedConnection);
     }
 }
 
 inline void show_about_window() {
-    if (QWindow* aboutWin = find_about_window()) {
-        clamp_window_to_screen(aboutWin);
-        aboutWin->showNormal();
-        aboutWin->show();
-        aboutWin->raise();
-        aboutWin->requestActivate();
-        return;
-    }
+    show_main_window();
     if (QWindow* mainWin = find_main_window()) {
         QMetaObject::invokeMethod(mainWin, "openAboutDialog", Qt::QueuedConnection);
     }

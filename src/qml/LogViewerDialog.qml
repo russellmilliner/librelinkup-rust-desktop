@@ -1,23 +1,15 @@
 import QtQuick
-import QtQuick.Window
 import QtQuick.Layouts
 import QtQuick.Controls as QQC2
 import QtQuick.Dialogs
 import org.kde.kirigami as Kirigami
 
-Window {
+Item {
     id: logViewerDialog
-    objectName: "librelinkupLogViewerWindow"
-    title: qsTr("LibreLinkUp Rust Desktop — Diagnostic Log Viewer")
-    width: 880
-    height: 560
-    minimumWidth: 680
-    minimumHeight: 420
-    visible: false
-    color: Kirigami.Theme.backgroundColor
+    objectName: "librelinkupLogViewerView"
 
     property var controller: null
-    property bool isLightTheme: (0.2126 * color.r + 0.7152 * color.g + 0.0722 * color.b) > 0.45
+    property bool isLightTheme: (0.2126 * Kirigami.Theme.backgroundColor.r + 0.7152 * Kirigami.Theme.backgroundColor.g + 0.0722 * Kirigami.Theme.backgroundColor.b) > 0.45
     property string categoryFilter: "ALL"
     property string levelFilter: "ALL"
     property string searchQuery: ""
@@ -25,6 +17,7 @@ Window {
     readonly property var categories: [
         "ALL",
         "GLUCOSE",
+        "MEDS",
         "API",
         "AUTH",
         "CRYPTO",
@@ -59,6 +52,7 @@ Window {
     function categoryBadgeColor(cat) {
         if (isLightTheme) {
             if (cat === "GLUCOSE") return "#15803d"
+            if (cat === "MEDS") return "#7e22ce"
             if (cat === "API") return "#0369a1"
             if (cat === "AUTH") return "#6d28d9"
             if (cat === "CRYPTO") return "#0f766e"
@@ -67,6 +61,7 @@ Window {
             return "#334155"
         }
         if (cat === "GLUCOSE") return "#4ade80"
+        if (cat === "MEDS") return "#c084fc"
         if (cat === "API") return "#38bdf8"
         if (cat === "AUTH") return "#a78bfa"
         if (cat === "CRYPTO") return "#2dd4bf"
@@ -124,10 +119,12 @@ Window {
             controller.refreshEventLogs()
         }
         refreshModel()
-        logViewerDialog.showNormal()
-        logViewerDialog.show()
-        logViewerDialog.raise()
-        logViewerDialog.requestActivate()
+    }
+
+    onVisibleChanged: {
+        if (visible) {
+            openLogWindow()
+        }
     }
 
     Connections {
@@ -153,27 +150,29 @@ Window {
     }
 
     ColumnLayout {
+        id: logMainColumn
+        objectName: "logMainColumn"
         anchors.fill: parent
-        anchors.margins: Kirigami.Units.largeSpacing
-        spacing: Kirigami.Units.mediumSpacing
+        spacing: 10
 
         RowLayout {
+            id: logHeaderRow
+            objectName: "logHeaderRow"
             Layout.fillWidth: true
-            spacing: Kirigami.Units.mediumSpacing
-
-            Kirigami.Heading {
-                level: 2
-                text: qsTr("Diagnostic Event & API Log")
-                color: Kirigami.Theme.textColor
-            }
+            spacing: 8
 
             Rectangle {
+                objectName: "logCountBadge"
                 radius: 6
                 color: Qt.alpha(Kirigami.Theme.highlightColor, 0.16)
                 border.color: Qt.alpha(Kirigami.Theme.highlightColor, 0.45)
                 border.width: 1
-                implicitWidth: countLabel.implicitWidth + 16
+                readonly property real badgeW: countLabel.implicitWidth + 16
+                implicitWidth: badgeW
                 implicitHeight: 24
+                Layout.preferredWidth: badgeW
+                Layout.minimumWidth: badgeW
+                Layout.preferredHeight: 24
 
                 QQC2.Label {
                     id: countLabel
@@ -187,18 +186,21 @@ Window {
             Item { Layout.fillWidth: true }
 
             QQC2.Button {
+                objectName: "logCopyButton"
                 icon.name: "edit-copy"
                 text: qsTr("Copy Shown")
                 onClicked: logViewerDialog.copyText(logViewerDialog.formatFilteredAsText())
             }
 
             QQC2.Button {
+                objectName: "logExportButton"
                 icon.name: "document-save"
                 text: qsTr("Export .log")
                 onClicked: exportLogFileDialog.open()
             }
 
             QQC2.Button {
+                objectName: "logClearButton"
                 icon.name: "edit-clear-history"
                 text: qsTr("Clear")
                 onClicked: {
@@ -211,8 +213,10 @@ Window {
         }
 
         RowLayout {
+            id: logFilterRow
+            objectName: "logFilterRow"
             Layout.fillWidth: true
-            spacing: Kirigami.Units.smallSpacing
+            spacing: 8
 
             QQC2.Label {
                 text: qsTr("Category:")
@@ -221,8 +225,10 @@ Window {
 
             QQC2.ComboBox {
                 id: categoryCombo
+                objectName: "logCategoryCombo"
                 model: logViewerDialog.categories
-                Layout.preferredWidth: 140
+                Layout.preferredWidth: 130
+                Layout.minimumWidth: 105
                 onActivated: {
                     logViewerDialog.categoryFilter = currentText
                     logViewerDialog.refreshModel()
@@ -236,8 +242,10 @@ Window {
 
             QQC2.ComboBox {
                 id: levelCombo
+                objectName: "logLevelCombo"
                 model: logViewerDialog.levels
-                Layout.preferredWidth: 110
+                Layout.preferredWidth: 100
+                Layout.minimumWidth: 85
                 onActivated: {
                     logViewerDialog.levelFilter = currentText
                     logViewerDialog.refreshModel()
@@ -246,7 +254,9 @@ Window {
 
             QQC2.TextField {
                 id: searchField
+                objectName: "logSearchField"
                 Layout.fillWidth: true
+                Layout.minimumWidth: 120
                 placeholderText: qsTr("Search timestamps, categories, or messages...")
                 onTextChanged: {
                     logViewerDialog.searchQuery = text
@@ -255,6 +265,7 @@ Window {
             }
 
             QQC2.Button {
+                objectName: "logRefreshButton"
                 icon.name: "view-refresh"
                 text: qsTr("Refresh")
                 onClicked: {
@@ -267,6 +278,7 @@ Window {
         }
 
         Rectangle {
+            objectName: "logListCard"
             Layout.fillWidth: true
             Layout.fillHeight: true
             radius: 8
@@ -277,51 +289,74 @@ Window {
 
             ListView {
                 id: logListView
+                objectName: "logListView"
                 anchors.fill: parent
                 anchors.margins: 6
                 model: filteredLogModel
                 spacing: 4
                 clip: true
+                boundsBehavior: Flickable.StopAtBounds
                 QQC2.ScrollBar.vertical: QQC2.ScrollBar {
+                    id: logVerticalScrollBar
                     policy: QQC2.ScrollBar.AsNeeded
                 }
 
                 delegate: Rectangle {
-                    width: Math.max(100, logListView.width - 14)
-                    height: rowLayout.implicitHeight + 12
-                    implicitHeight: rowLayout.implicitHeight + 12
+                    id: logDelegateCard
+                    objectName: "logDelegateCard"
+                    width: Math.max(120, logListView.width - 16)
+                    readonly property real contentRowHeight: Math.max(
+                        metaRow.height,
+                        messageLabel.contentHeight,
+                        20
+                    )
+                    height: contentRowHeight + 12
+                    implicitHeight: height
                     radius: 6
+                    clip: true
                     color: index % 2 === 0
                         ? Qt.alpha(Kirigami.Theme.backgroundColor, 0.65)
                         : Qt.alpha(Kirigami.Theme.alternateBackgroundColor, 0.45)
                     border.color: Qt.alpha(Kirigami.Theme.textColor, 0.08)
                     border.width: 1
 
-                    RowLayout {
-                        id: rowLayout
+                    Row {
+                        id: metaRow
+                        objectName: "logMetaRow"
                         anchors.left: parent.left
-                        anchors.right: parent.right
+                        anchors.leftMargin: 8
                         anchors.top: parent.top
-                        anchors.margins: 6
+                        anchors.topMargin: 6
+                        height: 20
                         spacing: 8
 
                         QQC2.Label {
+                            id: timestampLabel
+                            objectName: "logTimestampLabel"
+                            anchors.verticalCenter: parent.verticalCenter
                             text: model.timestamp
                             font.family: "monospace"
-                            opacity: 0.78
+                            font.pointSize: 9
+                            opacity: 0.82
                             color: Kirigami.Theme.textColor
-                            Layout.preferredWidth: 165
+                            width: Math.ceil(implicitWidth) + 2
                         }
 
                         Rectangle {
+                            id: levelBadge
+                            objectName: "logLevelBadge"
+                            anchors.verticalCenter: parent.verticalCenter
                             radius: 4
                             color: Qt.alpha(logViewerDialog.levelBadgeColor(model.level), 0.16)
                             border.color: logViewerDialog.levelBadgeColor(model.level)
                             border.width: 1
-                            Layout.preferredWidth: 58
+                            width: Math.max(54, Math.ceil(levelBadgeLabel.implicitWidth) + 12)
+                            height: 20
+                            implicitWidth: width
                             implicitHeight: 20
 
                             QQC2.Label {
+                                id: levelBadgeLabel
                                 anchors.centerIn: parent
                                 text: model.level
                                 font.bold: true
@@ -331,14 +366,20 @@ Window {
                         }
 
                         Rectangle {
+                            id: categoryBadge
+                            objectName: "logCategoryBadge"
+                            anchors.verticalCenter: parent.verticalCenter
                             radius: 4
                             color: Qt.alpha(logViewerDialog.categoryBadgeColor(model.category), 0.15)
                             border.color: logViewerDialog.categoryBadgeColor(model.category)
                             border.width: 1
-                            Layout.preferredWidth: 78
+                            width: Math.max(74, Math.ceil(categoryBadgeLabel.implicitWidth) + 12)
+                            height: 20
+                            implicitWidth: width
                             implicitHeight: 20
 
                             QQC2.Label {
+                                id: categoryBadgeLabel
                                 anchors.centerIn: parent
                                 text: model.category
                                 font.bold: true
@@ -346,14 +387,20 @@ Window {
                                 color: logViewerDialog.categoryBadgeColor(model.category)
                             }
                         }
+                    }
 
-                        QQC2.Label {
-                            text: model.message
-                            wrapMode: Text.WrapAnywhere
-                            color: Kirigami.Theme.textColor
-                            Layout.fillWidth: true
-                            Layout.preferredWidth: 0
-                        }
+                    QQC2.Label {
+                        id: messageLabel
+                        objectName: "logMessageLabel"
+                        anchors.left: metaRow.right
+                        anchors.leftMargin: 10
+                        anchors.right: parent.right
+                        anchors.rightMargin: 8
+                        anchors.top: parent.top
+                        anchors.topMargin: 6
+                        text: model.message
+                        wrapMode: Text.Wrap
+                        color: Kirigami.Theme.textColor
                     }
                 }
             }
@@ -364,16 +411,6 @@ Window {
                 text: qsTr("No matching log events.")
                 opacity: 0.65
                 color: Kirigami.Theme.textColor
-            }
-        }
-
-        RowLayout {
-            Layout.fillWidth: true
-            Item { Layout.fillWidth: true }
-            QQC2.Button {
-                icon.name: "window-close"
-                text: qsTr("Close")
-                onClicked: logViewerDialog.close()
             }
         }
     }

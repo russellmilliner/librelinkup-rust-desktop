@@ -9,7 +9,8 @@ command: librelinkup-kde
 finish-args:
   - --share=ipc
   - --share=network
-  - --socket=x11
+  - --socket=wayland
+  - --socket=fallback-x11
   - --socket=pulseaudio
   - --device=dri
   - --talk-name=org.kde.StatusNotifierWatcher
@@ -34,8 +35,11 @@ modules:
       - install -Dm644 ./data/icons/io.github.russellmilliner.LibreLinkUpDesktop.svg -t /app/share/icons/hicolor/scalable/apps/
       - install -Dm644 ./LICENSE ./NOTICE -t /app/share/licenses/io.github.russellmilliner.LibreLinkUpDesktop/
     sources:
+      # Pinned to the last released tag. Bump tag + commit as part of the release checklist
+      # (docs/RELEASING.md) and regenerate cargo-sources.json with
+      # `flatpak-cargo-generator.py Cargo.lock -o flathub/cargo-sources.json`.
       - type: git
         url: https://github.com/russellmilliner/librelinkup-rust-desktop.git
-        tag: v0.4.0
-        commit: 6bb0bcb47da97c1493ffc179f430423389693b04
+        tag: v0.4.5
+        commit: b099b12867cc94a7235ec8504d654973e1bccdae
       - cargo-sources.json

@@ -8,14 +8,14 @@ A native, lightweight **Rust (`eframe` / `egui`)** desktop application for **Win
 
 | Package | Download Link | Description |
 | :--- | :--- | :--- |
-| **Windows Installer (`x64`)** | [**`LibreLinkUp-Setup-0.4.5-x64.exe`**](https://github.com/russellmilliner/librelinkup-rust-desktop/releases/download/v0.4.5/LibreLinkUp-Setup-0.4.5-x64.exe) ([SHA-256](https://github.com/russellmilliner/librelinkup-rust-desktop/releases/download/v0.4.5/LibreLinkUp-Setup-0.4.5-x64.exe.sha256)) | Per-user Inno Setup installer (no admin prompt required), Start Menu shortcut with Toast `AppUserModelID`, optional start at Windows sign-in |
+| **Windows Installer (`x64`)** | [**`LibreLinkUp-Setup-0.5.0-x64.exe`**](https://github.com/russellmilliner/librelinkup-rust-desktop/releases/download/v0.4.5/LibreLinkUp-Setup-0.5.0-x64.exe) ([SHA-256](https://github.com/russellmilliner/librelinkup-rust-desktop/releases/download/v0.4.5/LibreLinkUp-Setup-0.5.0-x64.exe.sha256)) | Per-user Inno Setup installer (no admin prompt required), Start Menu shortcut with Toast `AppUserModelID`, optional start at Windows sign-in |
 | **Portable Zip (`x64`)** | [**`LibreLinkUp-0.4.5-windows-x64-portable.zip`**](https://github.com/russellmilliner/librelinkup-rust-desktop/releases/download/v0.4.5/LibreLinkUp-0.4.5-windows-x64-portable.zip) ([SHA-256](https://github.com/russellmilliner/librelinkup-rust-desktop/releases/download/v0.4.5/LibreLinkUp-0.4.5-windows-x64-portable.zip.sha256)) | Standalone `LibreLinkUp.exe` executable — extract anywhere and run |
 
 ### PowerShell Quick Install
 
 ```powershell
-Invoke-WebRequest -Uri "https://github.com/russellmilliner/librelinkup-rust-desktop/releases/download/v0.4.5/LibreLinkUp-Setup-0.4.5-x64.exe" -OutFile "$env:TEMP\LibreLinkUp-Setup-0.4.5-x64.exe"
-Start-Process -FilePath "$env:TEMP\LibreLinkUp-Setup-0.4.5-x64.exe"
+Invoke-WebRequest -Uri "https://github.com/russellmilliner/librelinkup-rust-desktop/releases/download/v0.4.5/LibreLinkUp-Setup-0.5.0-x64.exe" -OutFile "$env:TEMP\LibreLinkUp-Setup-0.5.0-x64.exe"
+Start-Process -FilePath "$env:TEMP\LibreLinkUp-Setup-0.5.0-x64.exe"
 ```
 
 > **Windows SmartScreen Note**: Because the binary is not code-signed with a commercial EV certificate, Windows SmartScreen may display *"Windows protected your PC"* on first launch. Click **More info → Run anyway**.
@@ -77,16 +77,21 @@ A borderless, translucent, always-on-top desktop widget (`276×88` default, conf
 
 | Resource | Windows Location / Mechanism |
 | :--- | :--- |
-| **Encrypted Credentials Vault** | `%APPDATA%\LibreLinkUpDesktop\credentials.enc.json` (`AES-256-GCM` authenticated encryption + `100,000`-round `PBKDF2-HMAC-SHA256`) |
+| **Encrypted Credentials Vault** | `%APPDATA%\LibreLinkUpDesktop\credentials.enc.json` (`AES-256-GCM` + `PBKDF2-HMAC-SHA256`, 210,000 rounds) |
+| **Encrypted Glucose History** | `%LOCALAPPDATA%\LibreLinkUpDesktop\glucose_history.enc.json` — 90 days of readings, `AES-256-GCM` |
+| **Encrypted Medication Vault** | `%APPDATA%\LibreLinkUpDesktop\medications.enc.json` — schedule + dose log, `AES-256-GCM` |
 | **DPAPI Master Key** | `%APPDATA%\LibreLinkUpDesktop\master.dpapi` — 32 random bytes encrypted via Windows **DPAPI (`CryptProtectData` / `CryptUnprotectData`)** bound to your Windows user account |
 | **Application Settings** | `%APPDATA%\LibreLinkUpDesktop\settings.json` |
-| **Diagnostic Event Log** | `%LOCALAPPDATA%\LibreLinkUpDesktop\events.log` |
+| **Diagnostic Event Log** | In-memory ring buffer (1000 entries); exports are written where you choose, mode-restricted |
+| **Crash Log** | `%LOCALAPPDATA%\LibreLinkUpDesktop\crash.log` |
 | **Login Autostart Registry Key** | `HKCU\Software\Microsoft\Windows\CurrentVersion\Run` → `LibreLinkUpDesktop` (`"C:\...\LibreLinkUp.exe" --minimized`) |
 | **Toast Notification Identity** | `HKCU\Software\Classes\AppUserModelId\io.github.russellmilliner.LibreLinkUpDesktop` |
 | **Single-Instance Mutex** | `Local\LibreLinkUpRustDesktop_SingleInstance` (launching a second instance brings the existing window to the foreground) |
 
 - **Opt-In Password Storage**: By default (`remember_password = false`), only the encrypted LibreView session JWT and account metadata are stored in `credentials.enc.json`. Enable **Remember password in encrypted vault (auto re-login)** on the sign-in screen if you want automatic re-authentication when a session token expires.
-- **SHA-256 Verified In-App Updater**: When installing an update from the Settings tab, About window, or update banner, `LibreLinkUp.exe` validates that the asset and `.sha256` URLs belong to `https://github.com/russellmilliner/librelinkup-rust-desktop/releases/download/...`, downloads the installer into a private folder under `%LOCALAPPDATA%\LibreLinkUpDesktop\updates\`, and verifies its cryptographic **SHA-256 digest** before launching the installer.
+- **Signed, Verified In-App Updater**: When installing an update, `LibreLinkUp.exe` validates that the asset URLs belong to `https://github.com/russellmilliner/librelinkup-rust-desktop/releases/download/...`, downloads the installer into a private folder under `%LOCALAPPDATA%\LibreLinkUpDesktop\`, and verifies **both** the cryptographic **SHA-256 digest** *and* a **minisign signature** against the public key compiled into the binary. Unsigned or tampered installers are never executed. (The SHA-256 sidecar comes from the same origin as the installer, so the signature is the check that actually proves authorship.)
+- **Fail-closed key handling**: if `credentials.enc.json` exists but `master.dpapi` cannot be unwrapped (for example after copying the vault to another PC), the app refuses to create a replacement key — that would make your data permanently unreadable — and asks you to sign in again.
+- **Encrypted health data**: glucose history and medication data are encrypted with the same DPAPI-protected master key as the credential vault, and plaintext `glucose_history.json` / `medications.json` from earlier versions are migrated and deleted on first launch.
 - **Memory & Log Redaction**: Sensitive credential strings and session tokens are wiped from memory on drop using `zeroize`, custom `Debug` implementations redact secrets and glucose readings, and email addresses are masked in `%LOCALAPPDATA%\LibreLinkUpDesktop\events.log`.
 - During uninstallation, Inno Setup stops any running instance, removes the autostart registry entry, and optionally offers to remove `%APPDATA%\LibreLinkUpDesktop` and `%LOCALAPPDATA%\LibreLinkUpDesktop`.
 
@@ -131,7 +136,7 @@ cargo build --release --manifest-path windows/Cargo.toml
 # Run headless self-test
 .\windows\target\release\LibreLinkUp.exe --self-test
 
-# Build the Inno Setup installer (produces windows\dist\LibreLinkUp-Setup-0.4.5-x64.exe)
+# Build the Inno Setup installer (produces windows\dist\LibreLinkUp-Setup-0.5.0-x64.exe)
 & "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe" `
     /DAppVersion=0.4.5 `
     /DSourceExe=..\target\release\LibreLinkUp.exe `
@@ -152,7 +157,7 @@ Prerequisites:
 ```
 
 Generated artifacts are placed in `windows/dist/`:
-- `windows/dist/LibreLinkUp-Setup-0.4.5-x64.exe` (+ `.sha256`)
+- `windows/dist/LibreLinkUp-Setup-0.5.0-x64.exe` (+ `.sha256`)
 - `windows/dist/LibreLinkUp-0.4.5-windows-x64-portable.zip` (+ `.sha256`)
 
 ---

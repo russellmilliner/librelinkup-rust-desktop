@@ -26,6 +26,23 @@ pub fn clamp_poll_interval(seconds: u32) -> u32 {
     seconds.clamp(MIN_POLL_INTERVAL_SECONDS, MAX_POLL_INTERVAL_SECONDS)
 }
 
+/// Adds up to +/-10% jitter to a poll interval so multiple instances (or a restart) do not
+/// hit the LibreView API in lockstep and trip its rate limiter.
+pub fn jittered_poll_interval(seconds: u32) -> u32 {
+    let base = clamp_poll_interval(seconds) as u64;
+    let span = base / 10;
+    if span == 0 {
+        return base as u32;
+    }
+    let nanos = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| u64::from(d.subsec_nanos()))
+        .unwrap_or(0);
+    let offset = nanos % (span * 2 + 1);
+    let jittered = (base + offset).saturating_sub(span);
+    clamp_poll_interval(jittered.min(u64::from(u32::MAX)) as u32)
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum GlucoseRangeStatus {
     CriticalLow,
@@ -229,6 +246,8 @@ pub struct AppSettings {
     /// Opt-in: also persist the account password inside the encrypted vault so expired
     /// bearer tokens can be silently refreshed without re-prompting. Defaults to `false`.
     pub remember_password: bool,
+    /// Selected glycemic statistics window (`12h`, `7d`, `14d`, `30d`, `90d`).
+    pub stats_window: String,
 }
 
 impl Default for AppSettings {
@@ -271,6 +290,7 @@ impl Default for AppSettings {
             snooze_until_epoch: 0,
             check_updates_on_startup: true,
             remember_password: false,
+            stats_window: "14d".to_string(),
         }
     }
 }
@@ -448,6 +468,14 @@ impl AlertKind {
     pub fn bypasses_snooze(&self) -> bool {
         matches!(self, Self::UrgentLow)
     }
+
+    /// Whether this alert warrants desktop-notification "critical" urgency.
+    ///
+    /// Stale (signal loss) and High are deliberately *not* critical: a dead sensor or a high
+    /// reading should not raise an un-dismissable critical toast every repeat interval.
+    pub fn is_critical(&self) -> bool {
+        matches!(self, Self::UrgentLow | Self::Low)
+    }
 }
 
 /// Interactive snooze action definitions `(action_id, button_label, minutes)` attached to
@@ -481,7 +509,13 @@ impl AppSettings {
     }
 
     pub fn is_reading_stale(&self, age_minutes: Option<i64>) -> bool {
-        age_minutes.is_some_and(|m| m >= self.effective_stale_after_minutes())
+        match age_minutes {
+            Some(m) => m >= self.effective_stale_after_minutes(),
+            // Fail closed. An unknown reading age (unparseable or missing timestamp) must be
+            // treated as stale, never as a fresh reading: silently showing an old value as
+            // live is the worst possible failure mode for a glucose monitor.
+            None => true,
+        }
     }
 
     pub fn is_snoozed(&self, now_epoch: i64) -> bool {
@@ -576,7 +610,46 @@ mod alert_tests {
         let s = settings();
         assert!(!s.is_reading_stale(Some(14)));
         assert!(s.is_reading_stale(Some(15)));
-        assert!(!s.is_reading_stale(None), "unknown age is not treated as stale");
+        // Fail closed: an unknown age is treated as stale, never as fresh.
+        assert!(
+            s.is_reading_stale(None),
+            "unknown reading age must be reported as stale"
+        );
+    }
+
+    #[test]
+    fn alert_criticality_does_not_escalate_stale_or_high() {
+        assert!(AlertKind::UrgentLow.is_critical());
+        assert!(AlertKind::Low.is_critical());
+        assert!(!AlertKind::High.is_critical());
+        assert!(
+            !AlertKind::Stale.is_critical(),
+            "signal loss must not raise critical-urgency toasts forever"
+        );
+    }
+
+    #[test]
+    fn poll_jitter_stays_within_bounds_and_budget() {
+        for base in [60u32, 90, 300, 3600] {
+            for _ in 0..50 {
+                let j = jittered_poll_interval(base);
+                let span = (base / 10).max(1);
+                assert!(j >= MIN_POLL_INTERVAL_SECONDS, "{base} -> {j}");
+                assert!(j <= MAX_POLL_INTERVAL_SECONDS, "{base} -> {j}");
+                assert!(
+                    j.abs_diff(base) <= span,
+                    "jitter too large: base {base} -> {j}"
+                );
+            }
+        }
+        // Floor/ceiling clamping still applies (jitter is applied before the clamp).
+        let floor = jittered_poll_interval(0);
+        assert!(
+            (MIN_POLL_INTERVAL_SECONDS..=MIN_POLL_INTERVAL_SECONDS + 6).contains(&floor),
+            "0 must clamp to the 60 s floor (+/-10% jitter), got {floor}"
+        );
+        let big = jittered_poll_interval(u32::MAX);
+        assert!((MAX_POLL_INTERVAL_SECONDS - 360..=MAX_POLL_INTERVAL_SECONDS).contains(&big));
     }
 
     #[test]
@@ -640,6 +713,7 @@ mod alert_tests {
         let def = AppSettings::default();
         assert_eq!(def.poll_interval_seconds, 60);
         assert!(!def.remember_password);
+        assert_eq!(def.stats_window, "14d");
         assert_eq!(clamp_poll_interval(15), 60);
         assert_eq!(clamp_poll_interval(60), 60);
         assert_eq!(clamp_poll_interval(99999), 3600);

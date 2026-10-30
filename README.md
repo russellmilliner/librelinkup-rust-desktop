@@ -1,8 +1,8 @@
 # LibreLinkUp Rust Desktop
 
-[![Version v0.4.5](https://img.shields.io/badge/Version-v0.4.5-0284c7?style=for-the-badge&logo=github)](https://github.com/russellmilliner/librelinkup-rust-desktop/releases/tag/v0.4.5)
-[![Windows Installer](https://img.shields.io/badge/Windows-Installer_v0.4.5-0078d4?style=for-the-badge&logo=windows&logoColor=white)](https://github.com/russellmilliner/librelinkup-rust-desktop/releases/download/v0.4.5/LibreLinkUp-Setup-0.4.5-x64.exe)
-[![Flatpak Bundle](https://img.shields.io/badge/Flatpak-Download_v0.4.5-4a90d9?style=for-the-badge&logo=flatpak&logoColor=white)](https://github.com/russellmilliner/librelinkup-rust-desktop/releases/download/v0.4.5/librelinkup-rust-desktop-v0.4.5-x86_64.flatpak)
+[![Version v0.5.0](https://img.shields.io/badge/Version-v0.5.0-0284c7?style=for-the-badge&logo=github)](https://github.com/russellmilliner/librelinkup-rust-desktop/releases/tag/v0.5.0)
+[![Windows Installer](https://img.shields.io/badge/Windows-Installer_v0.5.0-0078d4?style=for-the-badge&logo=windows&logoColor=white)](https://github.com/russellmilliner/librelinkup-rust-desktop/releases/download/v0.5.0/LibreLinkUp-Setup-0.5.0-x64.exe)
+[![Flatpak Bundle](https://img.shields.io/badge/Flatpak-Download_v0.5.0-4a90d9?style=for-the-badge&logo=flatpak&logoColor=white)](https://github.com/russellmilliner/librelinkup-rust-desktop/releases/download/v0.5.0/librelinkup-rust-desktop-v0.5.0-x86_64.flatpak)
 [![Platform: Linux x86_64](https://img.shields.io/badge/Platform-Linux%20x86__64-fcc624?style=for-the-badge&logo=linux&logoColor=black)](https://www.kernel.org/)
 [![Platform: Windows 10/11 x64](https://img.shields.io/badge/Platform-Windows%2010%2F11%20x64-0078d4?style=for-the-badge&logo=windows&logoColor=white)](windows/README.md)
 [![Desktop: KDE Plasma 6](https://img.shields.io/badge/KDE-Plasma%206%20%2F%20Kirigami-1d99f3?style=for-the-badge&logo=kde&logoColor=white)](https://kde.org/plasma-desktop/)
@@ -18,11 +18,11 @@ Native **Rust** desktop applications for monitoring continuous blood glucose rea
 
 | Item | Link / Details |
 | :--- | :--- |
-| **Current Version** | [**v0.4.5** (GitHub Release)](https://github.com/russellmilliner/librelinkup-rust-desktop/releases/tag/v0.4.5) • [All Releases](https://github.com/russellmilliner/librelinkup-rust-desktop/releases) |
-| **Windows Installer (`x64`)** | [**`LibreLinkUp-Setup-0.4.5-x64.exe`**](https://github.com/russellmilliner/librelinkup-rust-desktop/releases/download/v0.4.5/LibreLinkUp-Setup-0.4.5-x64.exe) ([SHA-256](https://github.com/russellmilliner/librelinkup-rust-desktop/releases/download/v0.4.5/LibreLinkUp-Setup-0.4.5-x64.exe.sha256)) |
-| **Windows Portable (`x64`)** | [**`LibreLinkUp-0.4.5-windows-x64-portable.zip`**](https://github.com/russellmilliner/librelinkup-rust-desktop/releases/download/v0.4.5/LibreLinkUp-0.4.5-windows-x64-portable.zip) ([SHA-256](https://github.com/russellmilliner/librelinkup-rust-desktop/releases/download/v0.4.5/LibreLinkUp-0.4.5-windows-x64-portable.zip.sha256)) |
+| **Current Version** | [**v0.5.0** (GitHub Release)](https://github.com/russellmilliner/librelinkup-rust-desktop/releases/tag/v0.5.0) • [All Releases](https://github.com/russellmilliner/librelinkup-rust-desktop/releases) |
+| **Windows Installer (`x64`)** | [**`LibreLinkUp-Setup-0.5.0-x64.exe`**](https://github.com/russellmilliner/librelinkup-rust-desktop/releases/download/v0.5.0/LibreLinkUp-Setup-0.5.0-x64.exe) ([SHA-256](https://github.com/russellmilliner/librelinkup-rust-desktop/releases/download/v0.5.0/LibreLinkUp-Setup-0.5.0-x64.exe.sha256)) |
+| **Windows Portable (`x64`)** | [**`LibreLinkUp-0.5.0-windows-x64-portable.zip`**](https://github.com/russellmilliner/librelinkup-rust-desktop/releases/download/v0.5.0/LibreLinkUp-0.5.0-windows-x64-portable.zip) ([SHA-256](https://github.com/russellmilliner/librelinkup-rust-desktop/releases/download/v0.5.0/LibreLinkUp-0.5.0-windows-x64-portable.zip.sha256)) |
 | **Windows Documentation** | [**`windows/README.md`**](windows/README.md) — Full Windows installation, overlay controls, DPAPI security & build guide |
-| **Linux Flatpak Bundle (`x86_64`)** | [**`librelinkup-rust-desktop-v0.4.5-x86_64.flatpak`**](https://github.com/russellmilliner/librelinkup-rust-desktop/releases/download/v0.4.5/librelinkup-rust-desktop-v0.4.5-x86_64.flatpak) ([SHA-256](https://github.com/russellmilliner/librelinkup-rust-desktop/releases/download/v0.4.5/librelinkup-rust-desktop-v0.4.5-x86_64.flatpak.sha256)) |
+| **Linux Flatpak Bundle (`x86_64`)** | [**`librelinkup-rust-desktop-v0.5.0-x86_64.flatpak`**](https://github.com/russellmilliner/librelinkup-rust-desktop/releases/download/v0.5.0/librelinkup-rust-desktop-v0.5.0-x86_64.flatpak) ([SHA-256](https://github.com/russellmilliner/librelinkup-rust-desktop/releases/download/v0.5.0/librelinkup-rust-desktop-v0.5.0-x86_64.flatpak.sha256)) |
 | **Flatpak Runtime** | [`org.kde.Platform//6.11`](https://flathub.org/) via [Flatpak](https://flatpak.org/) |
 | **Supported Platforms** | [Linux (`x86_64`)](https://www.kernel.org/) ([KDE Plasma 6](https://kde.org/plasma-desktop/) / [Kirigami](https://develop.kde.org/frameworks/kirigami/) / [Qt 6](https://www.qt.io/)) • [**Windows 10/11 (`x64`)**](windows/README.md) ([egui](https://github.com/emilk/egui) / [eframe](https://github.com/emilk/egui/tree/master/crates/eframe)) |
 | **Core Stack** | [Rust](https://www.rust-lang.org/) (`librelinkup-core`) + [KDAB CXX-Qt](https://github.com/KDAB/cxx-qt) (Linux) + [eframe/egui](https://github.com/emilk/egui) (Windows) + [Ring (AES-256-GCM)](https://github.com/briansmith/ring) |
@@ -30,18 +30,18 @@ Native **Rust** desktop applications for monitoring continuous blood glucose rea
 ### Quick Flatpak Install (Linux)
 
 ```bash
-curl -LO https://github.com/russellmilliner/librelinkup-rust-desktop/releases/download/v0.4.5/librelinkup-rust-desktop-v0.4.5-x86_64.flatpak
-flatpak install --user -y librelinkup-rust-desktop-v0.4.5-x86_64.flatpak
+curl -LO https://github.com/russellmilliner/librelinkup-rust-desktop/releases/download/v0.5.0/librelinkup-rust-desktop-v0.5.0-x86_64.flatpak
+flatpak install --user -y librelinkup-rust-desktop-v0.5.0-x86_64.flatpak
 flatpak run io.github.russellmilliner.LibreLinkUpDesktop
 ```
 
 ### Quick Windows 10 / 11 Install
 
-Download and run [**`LibreLinkUp-Setup-0.4.5-x64.exe`**](https://github.com/russellmilliner/librelinkup-rust-desktop/releases/download/v0.4.5/LibreLinkUp-Setup-0.4.5-x64.exe) (or extract the [**portable zip**](https://github.com/russellmilliner/librelinkup-rust-desktop/releases/download/v0.4.5/LibreLinkUp-0.4.5-windows-x64-portable.zip)):
+Download and run [**`LibreLinkUp-Setup-0.5.0-x64.exe`**](https://github.com/russellmilliner/librelinkup-rust-desktop/releases/download/v0.5.0/LibreLinkUp-Setup-0.5.0-x64.exe) (or extract the [**portable zip**](https://github.com/russellmilliner/librelinkup-rust-desktop/releases/download/v0.5.0/LibreLinkUp-0.5.0-windows-x64-portable.zip)):
 
 ```powershell
-Invoke-WebRequest -Uri "https://github.com/russellmilliner/librelinkup-rust-desktop/releases/download/v0.4.5/LibreLinkUp-Setup-0.4.5-x64.exe" -OutFile "$env:TEMP\LibreLinkUp-Setup-0.4.5-x64.exe"
-Start-Process -FilePath "$env:TEMP\LibreLinkUp-Setup-0.4.5-x64.exe"
+Invoke-WebRequest -Uri "https://github.com/russellmilliner/librelinkup-rust-desktop/releases/download/v0.5.0/LibreLinkUp-Setup-0.5.0-x64.exe" -OutFile "$env:TEMP\LibreLinkUp-Setup-0.5.0-x64.exe"
+Start-Process -FilePath "$env:TEMP\LibreLinkUp-Setup-0.5.0-x64.exe"
 ```
 
 - **Per-user install**: No administrator prompt is required. Creates a Start Menu shortcut (with Toast notification `AppUserModelID`) and an optional task to launch at Windows sign-in (`--minimized` to the system tray).
@@ -96,20 +96,51 @@ Start-Process -FilePath "$env:TEMP\LibreLinkUp-Setup-0.4.5-x64.exe"
   - **Scroll-Wheel Transparency Control**: Adjust opacity from **`20%`** to **`100%`** in **`5%`** steps by scrolling the mouse wheel directly over the floating overlay (or via the slider in Settings).
   - **Persistent Placement & State**: Automatically saves and restores the overlay's screen coordinates, dimensions, theme, opacity, virtual-desktop visibility (`overlay_on_all_desktops`), and visibility across restarts.
 - **Stale-Reading Detection & Multi-Tier Alert Engine**:
-  - **Stale-Reading Detection**: Readings display their age (`"3 min ago"`) and turn gray (`STALE`) when older than a configurable threshold (`5`–`60` min, default `15` min), with an optional signal-loss alert.
+  - **Stale-Reading Detection (fails closed)**: Readings display their age (`"3 min ago"`) and turn gray (`STALE`) when older than a configurable threshold (`5`–`60` min, default `15` min), with an optional signal-loss alert. If the age cannot be determined (unparseable timestamp) *or* polling has been failing, the reading is treated as **stale** rather than fresh, so a dead sensor can never masquerade as a live value.
   - **Urgent-Low, Low, High & Stale Alerts**: Urgent-Low alerts (default `55 mg/dL`) **cannot be snoozed** and repeat every 5 minutes; Low, High, and Stale alerts follow a configurable repeat interval (`5`–`120` min) and fire immediately if the condition worsens.
   - **Alert Snooze**: Snooze non-urgent alerts for `30 min`, `1 hour`, or `2 hours` directly from interactive buttons on desktop alert notifications (`Snooze 30 min`, `Snooze 1 hr`, `Snooze 2 hr`), the Dashboard, the Alerts page, or the System Tray menu.
   - **Audible Alarm & Desktop Notifications**: Built-in synthesized two-tone alarm sound (plus custom `.wav`/`.mp3`/`.ogg` file support) paired with native desktop notifications (`org.freedesktop.Notifications` on Linux and WinRT Toast notifications on Windows) featuring interactive snooze actions.
-- **AES-256-GCM Encrypted Credential Vault & Desktop Keyring Integration**:
-  - **Linux**: Stored in `$XDG_CONFIG_HOME/librelinkup-kde/credentials.enc.json` using **AES-256-GCM** (`ring`) with atomic `0600` file writes (`write_file_atomic_0600`). The 256-bit vault master secret is stored in the desktop keyring (**`org.freedesktop.secrets` / Secret Service** via `secret-tool` or **KDE KWallet** via `kwallet-query`) with automatic fallback to a random `0600` keyfile (`$XDG_DATA_HOME/librelinkup-kde/vault.key`). Automatically migrates active tokens from the legacy Electron Flatpak (`rocks.poopjournal.librelinkupdesktop`) on first launch.
-  - **Windows**: Stored in `%APPDATA%\LibreLinkUpDesktop\credentials.enc.json` using **AES-256-GCM**, with the 256-bit master key (`master.dpapi`) protected by **Windows DPAPI (`CryptProtectData`)** bound to the current Windows user account.
-  - **Opt-In Password Storage**: By default (`remember_password = false`), only the encrypted LibreView session JWT and account metadata are persisted on disk; users can optionally opt in to **Remember password for automatic re-authentication** on the Login page.
-  - **Memory & Log Redaction**: Sensitive strings are wiped from memory on drop via `zeroize`, custom `Debug` implementations redact secrets and health data, and email addresses are masked (`mask_email`) in diagnostic logs.
+- **AES-256-GCM Vaults for Credentials *and* Health Data**:
+  - **Credentials** (`credentials.enc.json`): LibreView session token, account metadata and, only if you opt in, your password.
+  - **Glucose history** (`glucose_history.enc.json`): the rolling 90-day sample series behind eA1C / GMI / Time-in-Range.
+  - **Medications** (`medications.enc.json`): your medication schedule and dose log.
+  - All three are **AES-256-GCM** envelopes (`ring`), written atomically at mode `0600` inside a `0700` directory (`write_file_atomic_0600`). Each vault is bound to its own AEAD label, so ciphertext cannot be swapped between them.
+  - **Linux**: master secret in the desktop keyring (**Secret Service** via `secret-tool` or **KDE KWallet** via `kwallet-query`), falling back to a `0600` keyfile (`~/.config/librelinkup-kde/master.key`). Secrets are piped over **stdin**, never placed on a command line.
+  - **Windows**: master secret (`master.dpapi`) protected by **DPAPI (`CryptProtectData`)** bound to your Windows user account.
+  - **Fail-closed key handling**: if a vault exists but its key is unavailable, the app refuses to generate a replacement key (which would render your data permanently unreadable) and tells you what to do.
+  - **Automatic migration**: plaintext `glucose_history.json` / `medications.json` from earlier versions, and legacy Electron Flatpak (`rocks.poopjournal.librelinkupdesktop`) tokens, are imported on first launch and the plaintext copies are deleted.
+  - **Memory & log redaction**: secrets are `zeroize`d on drop, custom `Debug` impls print `[REDACTED]`, and e-mail addresses are masked in diagnostic logs.
 - **Diagnostic Log Viewer**:
   - Built-in Log Viewer with category filtering (`AUTH`, `API`, `CRYPTO`, `TRAY`, `ALERT`, `APP`), minimum severity filtering (`DEBUG`, `INFO`, `WARN`, `ERROR`), real-time search, clipboard copy, and `.log` file export.
-- **SHA-256 Verified Built-in Update Checker & Installer**:
-  - Automatically checks GitHub Releases on startup (configurable via the **Check for updates on startup** toggle in Settings) and provides a one-click **Check for Updates** / **Install Update** workflow in the Settings page, About dialog, System Tray menu (Windows), and CLI (`--check-update` / `-u`).
-  - Enforces strict HTTPS host and repository owner allowlisting (`russellmilliner/librelinkup-rust-desktop`), downloads the companion `.sha256` checksum asset, and verifies the cryptographic **SHA-256 digest** in a private application data staging directory before launching the Windows Inno Setup installer or running sandbox-safe `flatpak-spawn --host flatpak install --user -y --reinstall` on Linux.
+- **Signed, Verified Built-in Update Checker & Installer**:
+  - Automatically checks GitHub Releases on startup (configurable via the **Check for updates on startup** toggle in Settings) and provides a one-click **Check for Updates** / **Install Update** workflow in the Settings page, About dialog, System Tray menu, and CLI (`--check-update` / `-u`).
+  - Strict HTTPS host + repository allowlisting (`russellmilliner/librelinkup-rust-desktop`), then **two** checks before anything is executed: the companion `.sha256` (integrity) **and** a **minisign signature** verified against a public key compiled into the binary (authenticity). Unsigned or tampered artifacts are refused.
+  - Linux releases now ship a signed `.flatpak` bundle, so in-app updates work there too; the Flathub build is updated by the store instead.
+
+---
+
+## Documentation
+
+| Document | Contents |
+| :--- | :--- |
+| [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) | Module map, three-controller data flow, threading model, on-disk formats, alert pipeline, **invariants** |
+| [`docs/SECURITY.md`](docs/SECURITY.md) | Threat model, vault crypto, trust boundaries, update-signing chain, network allowlist, known limitations |
+| [`docs/RELEASING.md`](docs/RELEASING.md) | Version bump, signing keys, Flatpak metadata, publish + verify checklist |
+| [`AGENTS.md`](AGENTS.md) | Coding rules for contributors and AI agents (build/test gates, hard rules, definition of done) |
+
+### Privacy: what is stored where
+
+| File | Contents | Protection |
+| :--- | :--- | :--- |
+| `credentials.enc.json` | LibreView token, account id, optional password | AES-256-GCM (label `credentials`) |
+| `glucose_history.enc.json` | 90 days of glucose readings | AES-256-GCM (label `glucose-history`) |
+| `medications.enc.json` | Medication schedule + dose log | AES-256-GCM (label `medications`) |
+| `settings.json` | Preferences and alert thresholds | `0600`, plaintext (no identifiers) |
+| `master.key` / `master.dpapi` | Vault key | `0600` file or OS keyring / DPAPI |
+
+On Linux the files live in `~/.config/librelinkup-kde/` (`glucose_history.enc.json` in
+`~/.local/share/librelinkup-kde/`); on Windows in `%APPDATA%\LibreLinkUpDesktop\`
+(`%LOCALAPPDATA%` for data). Logs are kept in memory only and exports are written `0600`.
 
 ---
 
@@ -137,8 +168,8 @@ If you find **LibreLinkUp Rust Desktop** helpful, consider buying me a coffee on
 
 | Path | Contents |
 | :--- | :--- |
-| [`crates/librelinkup-core/`](crates/librelinkup-core) | Platform-independent core shared by both apps: LibreView API client (`api.rs`), shared session/polling & alert orchestrator (`session.rs`), AES-256-GCM encrypted credential envelope & atomic `0600` file I/O (`crypto.rs`), settings (`settings.rs`), staleness evaluator (`staleness.rs`), alert state machine (`alerts.rs`), and alarm WAV generator (`audio.rs`) |
-| `src/bridge/` | Modular Linux CXX-Qt bridge: core lifecycle & polling (`app_controller.rs`), settings & alert handlers (`settings_handlers.rs`), and XDG autostart portal/desktop entry management (`autostart.rs`) |
+| [`crates/librelinkup-core/`](crates/librelinkup-core) | Platform-independent core shared by both apps: LibreView API client (`api.rs`), session/polling, re-auth backoff & alert decisions (`session.rs`), AES-256-GCM envelope + master-secret provider (`crypto.rs`), settings & alert policy (`models.rs`), glycemic analytics + 90-day encrypted history vault (`analytics.rs`), medication schedule/dose log with encrypted vault (`medications.rs`), signature-verifying updater (`updater.rs`), XDG paths & atomic `0600` writes (`paths.rs`), event log (`event_log.rs`), alarm WAV generator (`alert_sound.rs`) |
+| `src/bridge/` | Linux CXX-Qt bridge: shared Qt-thread state (`state.rs`), state transitions (`ops.rs`), Qt object declarations (`qobject_bridge.rs`), and the three controllers `telemetry.rs` / `settings.rs` / `medications.rs`, plus XDG autostart (`autostart.rs`) |
 | `src/cpp/` | Modular Qt 6 / KDE Plasma C++ helpers: façade (`app_helper.h`), QPainter tray badge renderer (`icon_renderer.h`), KWin/X11/Wayland overlay manager (`window_manager.h`), StatusNotifierItem & `org.freedesktop.Notifications` snooze action handler (`tray_manager.h`), audio playback (`audio_portal.h`), and headless QML test runner (`ui_tests.h`) |
 | [`windows/`](windows/README.md) | Windows 10/11 app (`eframe` / `egui`), DPAPI integration, WinRT Toast snooze activator, SHA-256 verified self-updater, Inno Setup installer script (`windows/installer/LibreLinkUp.iss`), and build tooling (`windows/scripts/build-windows.sh`). Standalone Cargo workspace so the Linux/Flathub build never vendors Windows-only crates |
 
@@ -147,8 +178,17 @@ If you find **LibreLinkUp Rust Desktop** helpful, consider buying me a coffee on
 ## Building & Testing (Linux / KDE Plasma 6)
 
 ```bash
-# Run the unit, integration, and headless QML UI layout test suites
-cargo test -- --test-threads=1
+# Core logic tests (fast, no Qt)
+cargo test -p librelinkup-core
+
+# Everything: unit, integration and the headless QML layout/behaviour suite
+QT_QPA_PLATFORM=offscreen cargo test --workspace -- --test-threads=1
+
+# Lint gate used by CI (fails on any warning)
+cargo clippy --workspace --all-targets -- -D warnings
+
+# Sign a release artifact you built locally
+./scripts/sign-release.sh ~/.config/librelinkup-release/release-signing.key <artifact>
 
 # Build release binary
 cargo build --release

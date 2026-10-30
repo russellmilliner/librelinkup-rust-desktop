@@ -1,6 +1,6 @@
 [package]
 name = "librelinkup-kde"
-version = "0.4.5"
+version = "0.5.0"
 edition = "2021"
 license = "Apache-2.0"
 description = "LibreLinkUp Rust Desktop — KDE Plasma 6 / Kirigami Blood Glucose Monitor for LibreLinkUp"
@@ -10,6 +10,12 @@ repository = "https://github.com/russellmilliner/librelinkup-rust-desktop"
 [lib]
 name = "librelinkup_kde"
 path = "src/lib.rs"
+
+# The shared core is a workspace member so `cargo clippy --workspace` / `cargo test
+# --workspace` actually cover it. `windows/` is its own separate workspace (it must not be
+# pulled into the Flatpak build) and is therefore not listed here.
+[workspace]
+members = [".", "crates/librelinkup-core"]
 
 [[bin]]
 name = "librelinkup-kde"

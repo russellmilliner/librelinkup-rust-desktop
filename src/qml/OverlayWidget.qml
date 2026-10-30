@@ -10,8 +10,8 @@ Window {
     title: onAllDesktops
         ? qsTr("LibreLinkUp Rust Desktop Overlay")
         : qsTr("LibreLinkUp Rust Desktop Overlay [SingleDesktop]")
-    width: controller ? Math.max(240, Math.min(600, controller.overlayWidth)) : 276
-    height: controller ? Math.max(80, Math.min(260, controller.overlayHeight)) : 88
+    width: settings ? Math.max(240, Math.min(600, settings.overlayWidth)) : 276
+    height: settings ? Math.max(80, Math.min(260, settings.overlayHeight)) : 88
     minimumWidth: 240
     minimumHeight: 80
     flags: Qt.Tool
@@ -19,16 +19,19 @@ Window {
         | Qt.WindowStaysOnTopHint
         | (onAllDesktops ? Qt.BypassWindowManagerHint : Qt.Widget)
     color: "transparent"
-    visible: Boolean(controller && controller.overlayVisible)
+    visible: Boolean(settings && settings.overlayVisible)
 
-    property var controller: null
+    /// Settings projection (overlay geometry, theme, toggles).
+    property var settings: null
+    /// Telemetry projection (glucose value, trend, range colour).
+    property var telemetry: null
     property bool placementReady: false
-    readonly property bool isDarkOverlay: Boolean(controller ? controller.overlayDarkTheme : true)
-    readonly property bool onAllDesktops: Boolean(controller ? controller.overlayOnAllDesktops : true)
+    readonly property bool isDarkOverlay: Boolean(settings ? settings.overlayDarkTheme : true)
+    readonly property bool onAllDesktops: Boolean(settings ? settings.overlayOnAllDesktops : true)
     onOnAllDesktopsChanged: allDesktopsCanvas.requestPaint()
-    readonly property int opacityPercent: controller ? Math.max(20, Math.min(100, controller.overlayOpacityPercent)) : 88
+    readonly property int opacityPercent: settings ? Math.max(20, Math.min(100, settings.overlayOpacityPercent)) : 88
     readonly property real opacityAlpha: opacityPercent / 100.0
-    readonly property color statusAccentColor: Qt.color(controller ? controller.rangeColorHex : "#22c55e")
+    readonly property color statusAccentColor: Qt.color(telemetry ? telemetry.rangeColorHex : "#22c55e")
 
     Rectangle {
         id: overlayPill
@@ -62,47 +65,47 @@ Window {
 
             onPressed: function(mouse) {
                 if (mouse.button === Qt.RightButton) {
-                    if (overlayWindow.controller) {
-                        overlayWindow.controller.popupTrayMenuAtCursor()
+                    if (overlayWindow.settings) {
+                        overlayWindow.settings.popupTrayMenuAtCursor()
                     }
                     return
                 }
-                if (mouse.button === Qt.LeftButton && overlayWindow.controller) {
+                if (mouse.button === Qt.LeftButton && overlayWindow.settings) {
                     dragging = true
-                    overlayWindow.controller.beginOverlayDrag()
+                    overlayWindow.settings.beginOverlayDrag()
                 }
             }
             onPositionChanged: function(mouse) {
-                if (dragging && (mouse.buttons & Qt.LeftButton) && overlayWindow.controller) {
-                    overlayWindow.controller.updateOverlayDrag()
+                if (dragging && (mouse.buttons & Qt.LeftButton) && overlayWindow.settings) {
+                    overlayWindow.settings.updateOverlayDrag()
                 }
             }
             onReleased: function() {
                 if (dragging) {
                     dragging = false
-                    if (overlayWindow.controller) {
-                        overlayWindow.controller.endOverlayDrag()
+                    if (overlayWindow.settings) {
+                        overlayWindow.settings.endOverlayDrag()
                     }
                 }
             }
             onCanceled: function() {
                 if (dragging) {
                     dragging = false
-                    if (overlayWindow.controller) {
-                        overlayWindow.controller.endOverlayDrag()
+                    if (overlayWindow.settings) {
+                        overlayWindow.settings.endOverlayDrag()
                     }
                 }
             }
             onDoubleClicked: function(mouse) {
-                if (mouse.button === Qt.LeftButton && overlayWindow.controller) {
-                    overlayWindow.controller.showMainWindow()
+                if (mouse.button === Qt.LeftButton && overlayWindow.settings) {
+                    overlayWindow.settings.showMainWindow()
                 }
             }
             onWheel: function(wheel) {
-                if (overlayWindow.controller) {
+                if (overlayWindow.settings) {
                     const step = wheel.angleDelta.y > 0 ? 5 : -5
                     const nextVal = Math.max(20, Math.min(100, overlayWindow.opacityPercent + step))
-                    overlayWindow.controller.updateOverlayOpacityPercent(nextVal)
+                    overlayWindow.settings.updateOverlayOpacityPercent(nextVal)
                 }
             }
         }
@@ -134,14 +137,14 @@ Window {
                     }
 
                     QQC2.Label {
-                        text: controller ? controller.glucoseDisplay : "--"
+                        text: telemetry ? telemetry.glucoseDisplay : "--"
                         font.pointSize: 20
                         font.bold: true
                         color: "#ffffff"
                     }
 
                     QQC2.Label {
-                        text: controller ? controller.resultUnit : "mg/dL"
+                        text: telemetry ? telemetry.resultUnit : "mg/dL"
                         font.pointSize: 9.5
                         font.bold: true
                         color: overlayWindow.isDarkOverlay
@@ -154,8 +157,8 @@ Window {
                 }
 
                 QQC2.Label {
-                    text: controller
-                        ? (controller.rangeStatusLabel + " • " + controller.trendDescription)
+                    text: telemetry
+                        ? (telemetry.rangeStatusLabel + " • " + telemetry.trendDescription)
                         : qsTr("Waiting...")
                     font.pointSize: 8.5
                     color: overlayWindow.isDarkOverlay
@@ -186,7 +189,7 @@ Window {
 
                 QQC2.Label {
                     anchors.centerIn: parent
-                    text: controller ? controller.trendSymbol : "→"
+                    text: telemetry ? telemetry.trendSymbol : "→"
                     font.pointSize: 14
                     font.bold: true
                     color: "#ffffff"
@@ -225,8 +228,8 @@ Window {
                             hoverEnabled: true
                             cursorShape: Qt.PointingHandCursor
                             onClicked: {
-                                if (overlayWindow.controller) {
-                                    overlayWindow.controller.updateOverlayDarkTheme(!overlayWindow.isDarkOverlay)
+                                if (overlayWindow.settings) {
+                                    overlayWindow.settings.updateOverlayDarkTheme(!overlayWindow.isDarkOverlay)
                                 }
                             }
                         }
@@ -294,8 +297,8 @@ Window {
                             hoverEnabled: true
                             cursorShape: Qt.PointingHandCursor
                             onClicked: {
-                                if (overlayWindow.controller) {
-                                    overlayWindow.controller.updateOverlayOnAllDesktops(!overlayWindow.onAllDesktops)
+                                if (overlayWindow.settings) {
+                                    overlayWindow.settings.updateOverlayOnAllDesktops(!overlayWindow.onAllDesktops)
                                 }
                             }
                         }
@@ -333,8 +336,8 @@ Window {
                             hoverEnabled: true
                             cursorShape: Qt.PointingHandCursor
                             onClicked: {
-                                if (overlayWindow.controller) {
-                                    overlayWindow.controller.showMainWindow()
+                                if (overlayWindow.settings) {
+                                    overlayWindow.settings.showMainWindow()
                                 }
                             }
                         }
@@ -374,8 +377,8 @@ Window {
                             hoverEnabled: true
                             cursorShape: Qt.PointingHandCursor
                             onClicked: {
-                                if (overlayWindow.controller) {
-                                    overlayWindow.controller.popupTrayMenuAtCursor()
+                                if (overlayWindow.settings) {
+                                    overlayWindow.settings.popupTrayMenuAtCursor()
                                 }
                             }
                         }
@@ -411,8 +414,8 @@ Window {
                             hoverEnabled: true
                             cursorShape: Qt.PointingHandCursor
                             onClicked: {
-                                if (overlayWindow.controller) {
-                                    overlayWindow.controller.updateOverlayVisible(false)
+                                if (overlayWindow.settings) {
+                                    overlayWindow.settings.updateOverlayVisible(false)
                                 }
                             }
                         }

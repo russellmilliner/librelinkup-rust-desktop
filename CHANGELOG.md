@@ -2,6 +2,11 @@
 
 All notable changes and bumped dependencies for `russellmilliner/librelinkup-rust-desktop` are documented in this file.
 
+## [v0.5.0](https://github.com/russellmilliner/librelinkup-rust-desktop/releases/tag/v0.5.0) — 2026-10-29
+
+### Highlights
+- Security hardening release: signed auto-updates (minisign), encryption at rest for glucose history and medication data, fail-closed staleness detection, re-auth backoff, and a three-controller architecture split.
+
 ## [v0.4.5](https://github.com/russellmilliner/librelinkup-rust-desktop/releases/tag/v0.4.5) — 2026-10-28
 
 ### Changes

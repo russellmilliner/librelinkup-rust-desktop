@@ -1,7 +1,24 @@
+//! Credential (and health-data) vault: AES-256-GCM envelopes with a PBKDF2-derived key,
+//! an injectable master-secret provider (file+keyring on Linux, DPAPI on Windows), and
+//! forward-compatible envelope versioning.
+//!
+//! ## Security model
+//!
+//! The KDF input is a **256-bit CSPRNG key**, never a user-chosen password. The PBKDF2
+//! step therefore is not the security boundary (there is no low-entropy secret to stretch);
+//! it only domain-separates the stored key from the AES key. The actual boundary is the
+//! key's storage: the OS keyring (Secret Service / KWallet) or a `0600` file owned by the
+//! user, DPAPI-protected on Windows.
+//!
+//! `/etc/machine-id` is mixed into the *legacy* file+key path as a speed bump against
+//! copying `master.key` alone to another machine. It is world-readable by design, so it
+//! provides no secrecy against a local attacker - it is not relied on for that.
+
 use std::fmt;
 use std::fs;
 use std::num::NonZeroU32;
 use std::path::Path;
+use std::sync::OnceLock;
 
 use ring::aead::{Aad, LessSafeKey, Nonce, UnboundKey, AES_256_GCM};
 use ring::pbkdf2;
@@ -13,12 +30,26 @@ use crate::paths::{
     credentials_file_path, legacy_flatpak_leveldb_dir, master_key_file_path, write_file_atomic_0600,
 };
 
-const ENVELOPE_VERSION: u32 = 1;
-const PBKDF2_ITERATIONS: u32 = 100_000;
+/// Current envelope format: binds the KDF metadata into the AEAD associated data.
+const ENVELOPE_VERSION: u32 = 2;
+/// Legacy envelope format (static AAD, no metadata binding). Accepted for reads only.
+const ENVELOPE_VERSION_V1: u32 = 1;
+/// Iterations written into new envelopes. See the module docs: the input is a random key,
+/// so this is domain separation rather than password hardening.
+const PBKDF2_ITERATIONS: u32 = 210_000;
+/// Envelopes claiming implausible iteration counts are rejected (DoS / downgrade guard).
+const PBKDF2_MIN_ACCEPTED_ITERATIONS: u32 = 1_000;
+const PBKDF2_MAX_ACCEPTED_ITERATIONS: u32 = 10_000_000;
 const SALT_LEN: usize = 16;
 const NONCE_LEN: usize = 12;
 const KEY_LEN: usize = 32;
-const AAD_CONTEXT: &[u8] = b"librelinkup-kde-credentials-v1";
+/// Associated-data context used by format v1 (fixed string, no metadata binding).
+const AAD_CONTEXT_V1: &[u8] = b"librelinkup-kde-credentials-v1";
+/// Separates credential envelopes from health-data envelopes so ciphertexts are not
+/// interchangeable between vaults.
+pub const AAD_LABEL_CREDENTIALS: &str = "credentials";
+pub const AAD_LABEL_GLUCOSE_HISTORY: &str = "glucose-history";
+pub const AAD_LABEL_MEDICATIONS: &str = "medications";
 
 #[derive(Clone, Default, Serialize, Deserialize, PartialEq, Eq)]
 pub struct StoredCredentials {
@@ -59,6 +90,8 @@ impl Drop for StoredCredentials {
         self.token.zeroize();
         self.account_id.zeroize();
         self.patient_id.zeroize();
+        self.first_name.zeroize();
+        self.last_name.zeroize();
     }
 }
 
@@ -114,13 +147,13 @@ pub fn bytes_to_hex(bytes: &[u8]) -> String {
 
 pub fn hex_to_bytes(hex: &str) -> Result<Vec<u8>, String> {
     let clean = hex.trim();
-    if clean.len() % 2 != 0 {
+    if !clean.len().is_multiple_of(2) {
         return Err("Invalid hex length (must be even)".to_string());
     }
     let mut out = Vec::with_capacity(clean.len() / 2);
     let bytes = clean.as_bytes();
-    for chunk in bytes.chunks_exact(2) {
-        let s = std::str::from_utf8(chunk).map_err(|e| e.to_string())?;
+    for pair in bytes.as_chunks::<2>().0 {
+        let s = std::str::from_utf8(pair).map_err(|e| e.to_string())?;
         let val = u8::from_str_radix(s, 16).map_err(|e| format!("Invalid hex byte '{s}': {e}"))?;
         out.push(val);
     }
@@ -136,9 +169,18 @@ pub fn generate_random_key() -> Result<[u8; KEY_LEN], String> {
     Ok(key)
 }
 
-fn derive_aes_key(master_secret: &[u8], salt: &[u8]) -> [u8; KEY_LEN] {
+fn derive_aes_key(
+    master_secret: &[u8],
+    salt: &[u8],
+    iterations: u32,
+) -> Result<[u8; KEY_LEN], String> {
+    let iterations = NonZeroU32::new(iterations)
+        .filter(|n| {
+            let n = n.get();
+            (PBKDF2_MIN_ACCEPTED_ITERATIONS..=PBKDF2_MAX_ACCEPTED_ITERATIONS).contains(&n)
+        })
+        .ok_or_else(|| format!("Refusing implausible PBKDF2 iteration count: {iterations}"))?;
     let mut key = [0u8; KEY_LEN];
-    let iterations = NonZeroU32::new(PBKDF2_ITERATIONS).expect("non-zero iterations");
     pbkdf2::derive(
         pbkdf2::PBKDF2_HMAC_SHA256,
         iterations,
@@ -146,12 +188,30 @@ fn derive_aes_key(master_secret: &[u8], salt: &[u8]) -> [u8; KEY_LEN] {
         master_secret,
         &mut key,
     );
-    key
+    Ok(key)
 }
 
-pub fn encrypt_credentials_with_secret(
-    creds: &StoredCredentials,
+/// Builds the AEAD associated data for an envelope. Format v1 used a fixed context;
+/// format v2 binds the label plus the KDF parameters so they cannot be tampered with
+/// (or swapped between the credential and health-data vaults) without failing the tag.
+fn associated_data(version: u32, label: &str, iterations: u32, salt: &[u8]) -> Vec<u8> {
+    if version == ENVELOPE_VERSION_V1 {
+        return AAD_CONTEXT_V1.to_vec();
+    }
+    let mut aad = Vec::with_capacity(32 + label.len() + salt.len());
+    aad.extend_from_slice(b"librelinkup-kde-");
+    aad.extend_from_slice(label.as_bytes());
+    aad.extend_from_slice(b"-v2\0");
+    aad.extend_from_slice(&iterations.to_le_bytes());
+    aad.extend_from_slice(salt);
+    aad
+}
+
+/// Encrypts arbitrary plaintext bytes into an [`EncryptedEnvelope`].
+pub fn encrypt_bytes_with_secret(
+    plaintext: &[u8],
     master_secret: &[u8],
+    label: &str,
 ) -> Result<EncryptedEnvelope, String> {
     if master_secret.is_empty() {
         return Err("Master secret must not be empty".to_string());
@@ -164,21 +224,17 @@ pub fn encrypt_credentials_with_secret(
     rng.fill(&mut nonce_bytes)
         .map_err(|_| "CSPRNG failure generating nonce".to_string())?;
 
-    let mut derived_key = derive_aes_key(master_secret, &salt);
+    let mut derived_key = derive_aes_key(master_secret, &salt, PBKDF2_ITERATIONS)?;
     let unbound_key = UnboundKey::new(&AES_256_GCM, &derived_key)
         .map_err(|_| "Failed to initialize AES-256-GCM key".to_string())?;
     derived_key.zeroize();
 
     let key = LessSafeKey::new(unbound_key);
     let nonce = Nonce::assume_unique_for_key(nonce_bytes);
+    let aad = associated_data(ENVELOPE_VERSION, label, PBKDF2_ITERATIONS, &salt);
 
-    let mut plaintext = serde_json::to_vec(creds)
-        .map_err(|e| format!("Failed to serialize credentials: {e}"))?;
-
-    let mut in_out = plaintext.clone();
-    plaintext.zeroize();
-
-    key.seal_in_place_append_tag(nonce, Aad::from(AAD_CONTEXT), &mut in_out)
+    let mut in_out = plaintext.to_vec();
+    key.seal_in_place_append_tag(nonce, Aad::from(aad.as_slice()), &mut in_out)
         .map_err(|_| "AES-256-GCM encryption failed".to_string())?;
 
     Ok(EncryptedEnvelope {
@@ -192,15 +248,23 @@ pub fn encrypt_credentials_with_secret(
     })
 }
 
-pub fn decrypt_credentials_with_secret(
+/// Decrypts an [`EncryptedEnvelope`] back into plaintext bytes.
+pub fn decrypt_bytes_with_secret(
     envelope: &EncryptedEnvelope,
     master_secret: &[u8],
-) -> Result<StoredCredentials, String> {
-    if envelope.version != ENVELOPE_VERSION {
+    label: &str,
+) -> Result<Vec<u8>, String> {
+    if envelope.version != ENVELOPE_VERSION && envelope.version != ENVELOPE_VERSION_V1 {
         return Err(format!("Unsupported envelope version: {}", envelope.version));
     }
     if envelope.algorithm != "AES-256-GCM" {
-        return Err(format!("Unsupported cipher algorithm: {}", envelope.algorithm));
+        return Err(format!(
+            "Unsupported cipher algorithm: {}",
+            envelope.algorithm
+        ));
+    }
+    if envelope.kdf != "PBKDF2-HMAC-SHA256" {
+        return Err(format!("Unsupported key derivation: {}", envelope.kdf));
     }
     if master_secret.is_empty() {
         return Err("Master secret must not be empty".to_string());
@@ -219,23 +283,77 @@ pub fn decrypt_credentials_with_secret(
         return Err("Ciphertext is shorter than authentication tag".to_string());
     }
 
-    let mut derived_key = derive_aes_key(master_secret, &salt);
+    // Honour the iteration count recorded in the envelope (forward compatibility) rather
+    // than assuming the current default, which would break every older vault.
+    let iterations = envelope.iterations;
+
+    let mut derived_key = derive_aes_key(master_secret, &salt, iterations)?;
     let unbound_key = UnboundKey::new(&AES_256_GCM, &derived_key)
         .map_err(|_| "Failed to initialize AES-256-GCM key".to_string())?;
     derived_key.zeroize();
 
     let key = LessSafeKey::new(unbound_key);
     let nonce = Nonce::assume_unique_for_key(nonce_bytes);
+    let aad = associated_data(envelope.version, label, iterations, &salt);
 
-    let decrypted_slice = key
-        .open_in_place(nonce, Aad::from(AAD_CONTEXT), &mut ciphertext)
-        .map_err(|_| "Credential authentication/decryption failed (tampered or wrong key)".to_string())?;
-
-    let creds: StoredCredentials = serde_json::from_slice(decrypted_slice)
-        .map_err(|e| format!("Failed to parse decrypted credentials JSON: {e}"))?;
+    let plaintext = key
+        .open_in_place(nonce, Aad::from(aad.as_slice()), &mut ciphertext)
+        .map_err(|_| {
+            "Vault authentication failed: wrong key, tampered envelope, or wrong vault label"
+                .to_string()
+        })?
+        .to_vec();
     ciphertext.zeroize();
 
-    Ok(creds)
+    Ok(plaintext)
+}
+
+pub fn encrypt_credentials_with_secret(
+    creds: &StoredCredentials,
+    master_secret: &[u8],
+) -> Result<EncryptedEnvelope, String> {
+    let mut plaintext =
+        serde_json::to_vec(creds).map_err(|e| format!("Failed to serialize credentials: {e}"))?;
+    let res = encrypt_bytes_with_secret(&plaintext, master_secret, AAD_LABEL_CREDENTIALS);
+    plaintext.zeroize();
+    res
+}
+
+pub fn decrypt_credentials_with_secret(
+    envelope: &EncryptedEnvelope,
+    master_secret: &[u8],
+) -> Result<StoredCredentials, String> {
+    let mut plaintext =
+        decrypt_bytes_with_secret(envelope, master_secret, AAD_LABEL_CREDENTIALS)?;
+    let res = serde_json::from_slice::<StoredCredentials>(&plaintext)
+        .map_err(|e| format!("Failed to parse decrypted credentials JSON: {e}"));
+    plaintext.zeroize();
+    res
+}
+
+// ---------------------------------------------------------------------------
+// Master-secret provider
+// ---------------------------------------------------------------------------
+
+/// Signature of a master-secret provider: returns the 32-byte key used to wrap the vaults.
+pub type SecretProvider = fn() -> Result<Vec<u8>, String>;
+
+static SECRET_PROVIDER: OnceLock<SecretProvider> = OnceLock::new();
+
+/// Installs the platform-specific master-secret provider (Windows DPAPI). Front-ends call
+/// this once at startup before touching any vault. Without it, the file + keyring
+/// ([`load_or_create_master_secret`]) path is used.
+pub fn set_secret_provider(provider: SecretProvider) {
+    let _ = SECRET_PROVIDER.set(provider);
+}
+
+/// Returns the master secret for health-data vaults (glucose history, medications).
+pub fn phi_secret() -> Result<Vec<u8>, String> {
+    if let Some(provider) = SECRET_PROVIDER.get() {
+        provider()
+    } else {
+        load_or_create_master_secret(&master_key_file_path())
+    }
 }
 
 #[cfg(unix)]
@@ -270,33 +388,28 @@ fn try_keyring_lookup() -> Option<String> {
     use std::process::Command;
 
     // 1. Freedesktop Secret Service (KWallet6/GNOME Keyring/KeePassXC Secret Service)
-    if let Ok(out) = Command::new("secret-tool")
-        .args([
-            "lookup",
-            "application",
-            crate::paths::APP_ID,
-            "key",
-            "vault-master-secret",
-        ])
-        .output()
-    {
-        if out.status.success() {
-            let s = String::from_utf8_lossy(&out.stdout).trim().to_string();
-            if s.len() == KEY_LEN * 2 && s.bytes().all(|b| b.is_ascii_hexdigit()) {
-                return Some(s);
-            }
-        }
-    }
-
-    // 2. KDE KWallet CLI (`kwallet-query`)
-    if let Ok(out) = Command::new("kwallet-query")
-        .args(["-r", "vault-master-secret", "-f", "LibreLinkUp", "kdewallet"])
-        .output()
-    {
-        if out.status.success() {
-            let s = String::from_utf8_lossy(&out.stdout).trim().to_string();
-            if s.len() == KEY_LEN * 2 && s.bytes().all(|b| b.is_ascii_hexdigit()) {
-                return Some(s);
+    for (program, args) in [
+        (
+            "secret-tool",
+            vec![
+                "lookup",
+                "application",
+                crate::paths::APP_ID,
+                "key",
+                "vault-master-secret",
+            ],
+        ),
+        (
+            "kwallet-query",
+            vec!["-r", "vault-master-secret", "-f", "LibreLinkUp", "kdewallet"],
+        ),
+    ] {
+        if let Ok(out) = Command::new(program).args(&args).output() {
+            if out.status.success() {
+                let s = String::from_utf8_lossy(&out.stdout).trim().to_string();
+                if s.len() == KEY_LEN * 2 && s.bytes().all(|b| b.is_ascii_hexdigit()) {
+                    return Some(s);
+                }
             }
         }
     }
@@ -349,16 +462,32 @@ fn try_keyring_store(hex_secret: &str) -> bool {
     try_pipe(kwallet)
 }
 
+/// Loads (or creates on first run) the file/keyring master secret used by the vaults.
+///
+/// **Never silently rotates the key.** If a vault already exists but no key can be
+/// recovered, this returns an error instead of minting a new key, because a new key would
+/// make every existing vault permanently undecryptable.
 pub fn load_or_create_master_secret(key_path: &Path) -> Result<Vec<u8>, String> {
+    load_or_create_master_secret_guarded(key_path, None)
+}
+
+/// Same as [`load_or_create_master_secret`] but refuses to mint a new key when
+/// `vault_path` exists (see [`load_credentials_from_path`]).
+pub fn load_or_create_master_secret_guarded(
+    key_path: &Path,
+    vault_path: Option<&Path>,
+) -> Result<Vec<u8>, String> {
     let machine_id = fs::read_to_string("/etc/machine-id")
         .unwrap_or_else(|_| "librelinkup-kde-fallback-machine-id".to_string());
 
     #[cfg(unix)]
     let use_keyring = should_use_desktop_keyring(key_path);
 
+    let vault_exists = vault_path.map(|p| p.exists()).unwrap_or(false);
+
     let file_secret = if key_path.exists() {
-        let mut raw_hex = fs::read_to_string(key_path)
-            .map_err(|e| format!("Failed to read master key file: {e}"))?;
+        let mut raw_hex =
+            fs::read_to_string(key_path).map_err(|e| format!("Failed to read master key file: {e}"))?;
         let trimmed = raw_hex.trim().to_string();
         let bytes = hex_to_bytes(&trimmed)?;
         #[cfg(unix)]
@@ -381,6 +510,15 @@ pub fn load_or_create_master_secret(key_path: &Path) -> Result<Vec<u8>, String> 
 
         if let Some(secret) = keyring_secret {
             secret
+        } else if vault_exists {
+            // Fail closed: an existing vault must never be orphaned by rotating the key.
+            return Err(
+                "An encrypted vault exists but its master key is not available (keyring locked, \
+                 secret service unreachable, or the key file was deleted). Refusing to create a \
+                 new key, which would make the existing credentials permanently unreadable. \
+                 Unlock your keyring and retry, or sign in again to replace the vault."
+                    .to_string(),
+            );
         } else {
             let mut random_key = generate_random_key()?;
             let mut hex_str = bytes_to_hex(&random_key);
@@ -413,15 +551,16 @@ pub fn save_credentials_to_path(
     creds_path: &Path,
     key_path: &Path,
 ) -> Result<(), String> {
-    let mut secret = load_or_create_master_secret(key_path)?;
-    let envelope = encrypt_credentials_with_secret(creds, &secret)?;
+    let mut secret = load_or_create_master_secret_guarded(key_path, Some(creds_path))?;
+    let res = (|| {
+        let envelope = encrypt_credentials_with_secret(creds, &secret)?;
+        let serialized = serde_json::to_string_pretty(&envelope)
+            .map_err(|e| format!("Failed to serialize encrypted envelope: {e}"))?;
+        write_file_atomic_0600(creds_path, serialized.as_bytes())
+            .map_err(|e| format!("Failed to write encrypted credentials file: {e}"))
+    })();
     secret.zeroize();
-
-    let serialized = serde_json::to_string_pretty(&envelope)
-        .map_err(|e| format!("Failed to serialize encrypted envelope: {e}"))?;
-    write_file_atomic_0600(creds_path, serialized.as_bytes())
-        .map_err(|e| format!("Failed to write encrypted credentials file: {e}"))?;
-    Ok(())
+    res
 }
 
 /// Encrypts and saves credentials using a caller-supplied master secret (e.g. a key
@@ -435,8 +574,7 @@ pub fn save_credentials_with_secret(
     let serialized = serde_json::to_string_pretty(&envelope)
         .map_err(|e| format!("Failed to serialize encrypted envelope: {e}"))?;
     write_file_atomic_0600(creds_path, serialized.as_bytes())
-        .map_err(|e| format!("Failed to write encrypted credentials file: {e}"))?;
-    Ok(())
+        .map_err(|e| format!("Failed to write encrypted credentials file: {e}"))
 }
 
 /// Loads and decrypts credentials using a caller-supplied master secret.
@@ -465,7 +603,7 @@ pub fn load_credentials_from_path(
         .map_err(|e| format!("Failed to read encrypted credentials file: {e}"))?;
     let envelope: EncryptedEnvelope = serde_json::from_str(&raw)
         .map_err(|e| format!("Corrupted encrypted credentials envelope: {e}"))?;
-    let mut secret = load_or_create_master_secret(key_path)?;
+    let mut secret = load_or_create_master_secret_guarded(key_path, Some(creds_path))?;
     let res = decrypt_credentials_with_secret(&envelope, &secret);
     secret.zeroize();
     res.map(Some)
@@ -585,9 +723,8 @@ pub fn try_migrate_legacy_leveldb_credentials(leveldb_dir: &Path) -> Option<Stor
 mod tests {
     use super::*;
 
-    #[test]
-    fn stored_credentials_and_envelope_debug_redact_secrets() {
-        let creds = StoredCredentials {
+    fn sample_creds() -> StoredCredentials {
+        StoredCredentials {
             username: "secret.user@example.com".into(),
             password: "MySuperSecretPassword!".into(),
             token: "eyJhbGciOiJIUzI1NiJ9.secret".into(),
@@ -597,7 +734,12 @@ mod tests {
             patient_id: "pat-uuid-8888".into(),
             first_name: "SecretFirst".into(),
             last_name: "SecretLast".into(),
-        };
+        }
+    }
+
+    #[test]
+    fn stored_credentials_and_envelope_debug_redact_secrets() {
+        let creds = sample_creds();
         let dbg = format!("{creds:?}");
         assert!(!dbg.contains("secret.user@example.com"));
         assert!(!dbg.contains("MySuperSecretPassword!"));
@@ -621,6 +763,88 @@ mod tests {
         assert!(!env_dbg.contains(&env.salt_hex));
         assert!(!env_dbg.contains(&env.nonce_hex));
         assert!(env_dbg.contains("[REDACTED]"));
+    }
+
+    #[test]
+    fn envelope_round_trips_and_binds_its_metadata() {
+        let secret = b"envelope-test-secret";
+        let env = encrypt_bytes_with_secret(b"hello vault", secret, AAD_LABEL_MEDICATIONS).unwrap();
+        assert_eq!(env.version, ENVELOPE_VERSION);
+        assert_eq!(
+            decrypt_bytes_with_secret(&env, secret, AAD_LABEL_MEDICATIONS).unwrap(),
+            b"hello vault"
+        );
+
+        // Wrong label (vault cross-use) must fail the tag check.
+        assert!(decrypt_bytes_with_secret(&env, secret, AAD_LABEL_GLUCOSE_HISTORY).is_err());
+
+        // Tampering with the recorded iteration count must fail authentication.
+        let mut tampered = env.clone();
+        tampered.iterations = env.iterations + 1;
+        assert!(decrypt_bytes_with_secret(&tampered, secret, AAD_LABEL_MEDICATIONS).is_err());
+
+        // Implausible iteration counts are rejected outright.
+        let mut downgraded = env.clone();
+        downgraded.iterations = 0;
+        assert!(decrypt_bytes_with_secret(&downgraded, secret, AAD_LABEL_MEDICATIONS).is_err());
+
+        // Wrong key must fail.
+        assert!(decrypt_bytes_with_secret(&env, b"other-secret", AAD_LABEL_MEDICATIONS).is_err());
+    }
+
+    #[test]
+    fn legacy_v1_envelopes_still_decrypt() {
+        // A v1 envelope is the same ciphertext but with the static AAD context and the
+        // historical iteration count; simulate one by re-encrypting with the v1 AAD.
+        let secret = b"legacy-secret";
+        let salt = [7u8; SALT_LEN];
+        let nonce = [9u8; NONCE_LEN];
+        let mut derived = derive_aes_key(secret, &salt, 100_000).unwrap();
+        let key = LessSafeKey::new(UnboundKey::new(&AES_256_GCM, &derived).unwrap());
+        derived.zeroize();
+        let mut ct = b"legacy-plaintext".to_vec();
+        key.seal_in_place_append_tag(
+            Nonce::assume_unique_for_key(nonce),
+            Aad::from(AAD_CONTEXT_V1),
+            &mut ct,
+        )
+        .unwrap();
+        let envelope = EncryptedEnvelope {
+            version: ENVELOPE_VERSION_V1,
+            algorithm: "AES-256-GCM".into(),
+            kdf: "PBKDF2-HMAC-SHA256".into(),
+            iterations: 100_000,
+            salt_hex: bytes_to_hex(&salt),
+            nonce_hex: bytes_to_hex(&nonce),
+            ciphertext_hex: bytes_to_hex(&ct),
+        };
+        assert_eq!(
+            decrypt_bytes_with_secret(&envelope, secret, AAD_LABEL_CREDENTIALS).unwrap(),
+            b"legacy-plaintext"
+        );
+    }
+
+    #[test]
+    fn missing_key_never_rotates_when_a_vault_exists() {
+        let dir = std::env::temp_dir().join(format!("llu-keyguard-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&dir);
+        fs::create_dir_all(&dir).unwrap();
+        let key_path = dir.join("master.key");
+        let vault_path = dir.join("credentials.enc.json");
+        fs::write(&vault_path, b"{}").unwrap();
+
+        // Key file absent + vault present -> refuse, and do not create a key.
+        let err = load_or_create_master_secret_guarded(&key_path, Some(&vault_path)).unwrap_err();
+        assert!(err.contains("Refusing to create a new key"), "{err}");
+        assert!(!key_path.exists(), "must not mint a replacement key");
+
+        // No vault -> a key is created normally.
+        fs::remove_file(&vault_path).unwrap();
+        let secret = load_or_create_master_secret_guarded(&key_path, Some(&vault_path)).unwrap();
+        assert!(!secret.is_empty());
+        assert!(key_path.exists());
+
+        let _ = fs::remove_dir_all(&dir);
     }
 
     #[test]

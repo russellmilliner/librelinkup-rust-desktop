@@ -68,7 +68,14 @@ public:
         bool withSnoozeActions = false
     ) {
         ensureInitialized();
-        if (withSnoozeActions && sendDesktopNotificationWithActions(title, body, critical)) {
+        const QStringList snoozeActions{
+            QStringLiteral("default"), QStringLiteral("Open"),
+            QStringLiteral("snooze_30"), QStringLiteral("Snooze 30 min"),
+            QStringLiteral("snooze_60"), QStringLiteral("Snooze 1 hr"),
+            QStringLiteral("snooze_120"), QStringLiteral("Snooze 2 hr"),
+        };
+        if (withSnoozeActions &&
+            sendDesktopNotificationWithActions(title, body, critical, snoozeActions, true)) {
             return;
         }
         if (!m_tray || !QSystemTrayIcon::supportsMessages()) {
@@ -78,6 +85,32 @@ public:
             title,
             body,
             critical ? QSystemTrayIcon::Critical : QSystemTrayIcon::Information,
+            15000
+        );
+    }
+
+    // Sends a desktop medication due reminder with interactive "✓ Taken" and "⏭ Skipped" buttons.
+    void showMedicationNotification(
+        const QString& medicationId,
+        const QString& title,
+        const QString& body
+    ) {
+        ensureInitialized();
+        const QStringList medActions{
+            QStringLiteral("default"), QStringLiteral("Open"),
+            QStringLiteral("med_taken:%1").arg(medicationId), QStringLiteral("✓ Taken"),
+            QStringLiteral("med_skip:%1").arg(medicationId), QStringLiteral("⏭ Skipped"),
+        };
+        if (sendDesktopNotificationWithActions(title, body, false, medActions, false)) {
+            return;
+        }
+        if (!m_tray || !QSystemTrayIcon::supportsMessages()) {
+            return;
+        }
+        m_tray->showMessage(
+            title,
+            body,
+            QSystemTrayIcon::Information,
             15000
         );
     }
@@ -522,7 +555,9 @@ private:
     bool sendDesktopNotificationWithActions(
         const QString& title,
         const QString& body,
-        bool critical
+        bool critical,
+        const QStringList& actions,
+        bool replaceLastAlert
     ) {
         if (qEnvironmentVariable("QT_QPA_PLATFORM") == QStringLiteral("offscreen")) {
             return false;
@@ -551,12 +586,6 @@ private:
             );
         }
 
-        const QStringList actions{
-            QStringLiteral("default"), QStringLiteral("Open"),
-            QStringLiteral("snooze_30"), QStringLiteral("Snooze 30 min"),
-            QStringLiteral("snooze_60"), QStringLiteral("Snooze 1 hr"),
-            QStringLiteral("snooze_120"), QStringLiteral("Snooze 2 hr"),
-        };
         QVariantMap hints;
         hints.insert(
             QStringLiteral("urgency"),
@@ -574,7 +603,7 @@ private:
             QStringLiteral("Notify")
         );
         msg << QStringLiteral("LibreLinkUp Rust Desktop")
-            << m_lastAlertNotificationId
+            << (replaceLastAlert ? m_lastAlertNotificationId : static_cast<uint>(0))
             << QStringLiteral("io.github.russellmilliner.LibreLinkUpDesktop")
             << title
             << body
@@ -587,7 +616,7 @@ private:
             watcher,
             &QDBusPendingCallWatcher::finished,
             watcher,
-            [this, title, body, critical](QDBusPendingCallWatcher* w) {
+            [this, title, body, critical, replaceLastAlert](QDBusPendingCallWatcher* w) {
                 QDBusPendingReply<uint> reply = *w;
                 if (reply.isError()) {
                     qWarning(
@@ -605,7 +634,9 @@ private:
                 } else {
                     const uint notifId = reply.value();
                     if (notifId > 0) {
-                        m_lastAlertNotificationId = notifId;
+                        if (replaceLastAlert) {
+                            m_lastAlertNotificationId = notifId;
+                        }
                         m_activeAlertNotificationIds.insert(notifId);
                     }
                 }
@@ -631,24 +662,16 @@ inline void update_tray_window_actions() {
 
 } // namespace librelinkup
 
-template <typename ControllerT>
-inline void librelinkup_sync_tray(
-    ControllerT& controller,
-    const QString& app_theme_mode,
-    const QString& badge_text,
-    const QString& trend_symbol,
-    const QString& badge_color_hex,
-    const QString& status_header,
-    const QString& range_header,
-    const QString& tooltip_text,
-    std::uint8_t flags
-) {
-    const bool useLightOnDarkIcon = (flags & 0x01u) != 0u;
-    const bool showGlucoseInIcon = (flags & 0x02u) != 0u;
-    const bool showGlucoseInTooltip = (flags & 0x04u) != 0u;
-    const bool autostartEnabled = (flags & 0x08u) != 0u;
-    const bool overlayVisible = (flags & 0x10u) != 0u;
-    const bool overlayOnAllDesktops = (flags & 0x20u) != 0u;
+// Two template parameters: the payload struct is declared by the generated cxx bridge header,
+// which is processed *after* this header is included, so the type must stay dependent here.
+template <typename ControllerT, typename PayloadT>
+inline void librelinkup_sync_tray(ControllerT& controller, PayloadT payload) {
+    const bool useLightOnDarkIcon = (payload.flags & 0x01u) != 0u;
+    const bool showGlucoseInIcon = (payload.flags & 0x02u) != 0u;
+    const bool showGlucoseInTooltip = (payload.flags & 0x04u) != 0u;
+    const bool autostartEnabled = (payload.flags & 0x08u) != 0u;
+    const bool overlayVisible = (payload.flags & 0x10u) != 0u;
+    const bool overlayOnAllDesktops = (payload.flags & 0x20u) != 0u;
 
     librelinkup::TrayManager::instance().sync(
         &controller,
@@ -658,13 +681,13 @@ inline void librelinkup_sync_tray(
         autostartEnabled,
         overlayVisible,
         overlayOnAllDesktops,
-        app_theme_mode,
-        badge_text,
-        trend_symbol,
-        badge_color_hex,
-        status_header,
-        range_header,
-        tooltip_text
+        payload.theme_mode,
+        payload.badge_text,
+        payload.trend_symbol,
+        payload.badge_color_hex,
+        payload.status_header,
+        payload.range_header,
+        payload.tooltip_text
     );
 }
 
@@ -733,5 +756,17 @@ inline void librelinkup_show_notification(
         body,
         critical,
         with_snooze_actions
+    );
+}
+
+inline void librelinkup_show_medication_notification(
+    const QString& medication_id,
+    const QString& title,
+    const QString& body
+) {
+    librelinkup::TrayManager::instance().showMedicationNotification(
+        medication_id,
+        title,
+        body
     );
 }

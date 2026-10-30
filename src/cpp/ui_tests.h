@@ -94,10 +94,15 @@ inline void inspect_item_tree(
         QStringLiteral("heroCard"),
         QStringLiteral("detailsCard"),
         QStringLiteral("graphCard"),
+        QStringLiteral("ea1cAnalyticsCard"),
+        QStringLiteral("medicationsScheduleCard"),
+        QStringLiteral("addMedicationCard"),
+        QStringLiteral("doseHistoryCard"),
         QStringLiteral("traySettingsCard"),
         QStringLiteral("displaySettingsCard"),
         QStringLiteral("alertsSettingsCard"),
         QStringLiteral("accountSecurityCard"),
+        QStringLiteral("logListCard"),
         QStringLiteral("aboutHeaderCard"),
         QStringLiteral("aboutLinksCard"),
         QStringLiteral("overlayPill"),
@@ -193,10 +198,20 @@ inline QString librelinkup_run_ui_overflow_tests() {
         app = ownedApp.get();
     }
 
+    // Surface the actual QML diagnostics: a silent "failed to load" is undebuggable in CI.
     QQmlApplicationEngine engine;
+    QStringList qmlErrors;
+    QObject::connect(&engine, &QQmlApplicationEngine::warnings, &engine,
+        [&qmlErrors](const QList<QQmlError>& warnings) {
+            for (const QQmlError& e : warnings) {
+                qmlErrors.append(e.toString());
+                qWarning("librelinkup-uitest: %s", qPrintable(e.toString()));
+            }
+        });
     engine.load(QUrl(QStringLiteral("qrc:/qt/qml/io/github/librelinkup/src/qml/Main.qml")));
     if (engine.rootObjects().isEmpty()) {
-        return QStringLiteral("FAIL: Failed to load Main.qml in QQmlApplicationEngine");
+        return QStringLiteral("FAIL: Failed to load Main.qml in QQmlApplicationEngine\n")
+            + qmlErrors.join(QLatin1Char('\n'));
     }
 
     QQuickWindow* mainWin = qobject_cast<QQuickWindow*>(engine.rootObjects().first());
@@ -206,8 +221,26 @@ inline QString librelinkup_run_ui_overflow_tests() {
 
     QObject* ctrl = mainWin->findChild<QObject*>(QStringLiteral("librelinkupAppController"));
     if (!ctrl) {
-        return QStringLiteral("FAIL: Could not find librelinkupAppController");
+        return QStringLiteral("FAIL: Could not find librelinkupAppController (TelemetryController)");
     }
+    QObject* settingsCtrl =
+        mainWin->findChild<QObject*>(QStringLiteral("librelinkupSettingsController"));
+    if (!settingsCtrl) {
+        return QStringLiteral("FAIL: Could not find librelinkupSettingsController");
+    }
+    QObject* medsCtrl =
+        mainWin->findChild<QObject*>(QStringLiteral("librelinkupMedicationsController"));
+    if (!medsCtrl) {
+        return QStringLiteral("FAIL: Could not find librelinkupMedicationsController");
+    }
+    // The QML UI is pull-based: a 250 ms timer runs `telemetry.tick()` and `sync()` on the
+    // other two controllers. The headless harness must drive that explicitly instead of
+    // sleeping long enough for the timer to fire.
+    auto sync_all = [ctrl, settingsCtrl, medsCtrl]() {
+        QMetaObject::invokeMethod(ctrl, "tick", Qt::DirectConnection);
+        QMetaObject::invokeMethod(settingsCtrl, "sync", Qt::DirectConnection);
+        QMetaObject::invokeMethod(medsCtrl, "sync", Qt::DirectConnection);
+    };
 
     QStringList violations;
     const QList<QSize> testSizes = {
@@ -217,9 +250,12 @@ inline QString librelinkup_run_ui_overflow_tests() {
     };
     const QStringList tabs = {
         QStringLiteral("dashboard"),
+        QStringLiteral("medications"),
         QStringLiteral("general"),
         QStringLiteral("alerts"),
-        QStringLiteral("account")
+        QStringLiteral("account"),
+        QStringLiteral("logs"),
+        QStringLiteral("about")
     };
 
     mainWin->show();
@@ -269,6 +305,22 @@ inline QString librelinkup_run_ui_overflow_tests() {
                     .arg(sz.height())
                     .arg(tab);
                 librelinkup_uitest::inspect_item_tree(mainWin->contentItem(), mainWin, ctx, violations);
+
+                if (tab == QStringLiteral("medications")) {
+                    if (QQuickItem* schedCombo = mainWin->findChild<QQuickItem*>(QStringLiteral("medScheduleCombo"))) {
+                        schedCombo->setProperty("currentIndex", 2); // Weekly -> shows medWeekdayCombo
+                        mainWin->setProperty("editingMedId", QStringLiteral("demo-med-1"));
+                        librelinkup_uitest::pump_events(25);
+                        librelinkup_uitest::inspect_item_tree(
+                            mainWin->contentItem(),
+                            mainWin,
+                            ctx + QStringLiteral(" weeklySchedule+editing"),
+                            violations
+                        );
+                        mainWin->setProperty("editingMedId", QStringLiteral(""));
+                        schedCombo->setProperty("currentIndex", 0);
+                    }
+                }
 
                 if (tab == QStringLiteral("dashboard")) {
                     if (QQuickItem* canvas = mainWin->findChild<QQuickItem*>(QStringLiteral("glucoseCanvas"))) {
@@ -327,34 +379,50 @@ inline QString librelinkup_run_ui_overflow_tests() {
         }
     }
 
-    // State C: Inspect LogViewerDialog at minimum size (680x420)
-    if (QQuickWindow* logWin = qobject_cast<QQuickWindow*>(librelinkup::find_log_viewer_window())) {
-        QMetaObject::invokeMethod(logWin, "openLogWindow", Qt::DirectConnection);
-        logWin->resize(680, 420);
-        librelinkup_uitest::pump_events(50);
-        librelinkup_uitest::inspect_item_tree(
-            logWin->contentItem(),
-            logWin,
-            QStringLiteral("LogViewerDialog 680x420"),
-            violations
-        );
-        logWin->hide();
+    // State C: Verify openLogViewer() and openAboutDialog() switch inline activeTab
+    // and never spawn separate top-level windows
+    QMetaObject::invokeMethod(mainWin, "openLogViewer", Qt::DirectConnection);
+    librelinkup_uitest::pump_events(30);
+    if (mainWin->property("activeTab").toString() != QStringLiteral("logs")) {
+        violations.append(QStringLiteral("openLogViewer() did not switch activeTab to 'logs'"));
+    }
+    if (librelinkup::find_log_viewer_window() != nullptr) {
+        violations.append(QStringLiteral("Logs view should be an inline tab, not a separate top-level window"));
     }
 
-    // State C2: Inspect AboutDialog at default (580x500) and minimum (480x400) sizes
-    if (QQuickWindow* aboutWin = qobject_cast<QQuickWindow*>(librelinkup::find_about_window())) {
-        QMetaObject::invokeMethod(aboutWin, "openAboutWindow", Qt::DirectConnection);
-        for (const QSize& abSz : {QSize(580, 500), QSize(480, 400)}) {
-            aboutWin->resize(abSz);
-            librelinkup_uitest::pump_events(40);
-            librelinkup_uitest::inspect_item_tree(
-                aboutWin->contentItem(),
-                aboutWin,
-                QStringLiteral("AboutDialog %1x%2").arg(abSz.width()).arg(abSz.height()),
-                violations
-            );
-        }
-        aboutWin->hide();
+    QMetaObject::invokeMethod(mainWin, "openAboutDialog", Qt::DirectConnection);
+    librelinkup_uitest::pump_events(30);
+    if (mainWin->property("activeTab").toString() != QStringLiteral("about")) {
+        violations.append(QStringLiteral("openAboutDialog() did not switch activeTab to 'about'"));
+    }
+    if (librelinkup::find_about_window() != nullptr) {
+        violations.append(QStringLiteral("About view should be an inline tab, not a separate top-level window"));
+    }
+    mainWin->setProperty("activeTab", QStringLiteral("dashboard"));
+    librelinkup_uitest::pump_events(20);
+
+    // Verify interactive desktop reminder notification actions ("med_taken:<id>" and "med_skip:<id>")
+    bool takenOk = false;
+    QMetaObject::invokeMethod(
+        ctrl,
+        "handleNotificationAction",
+        Qt::DirectConnection,
+        Q_RETURN_ARG(bool, takenOk),
+        Q_ARG(QString, QStringLiteral("med_taken:demo-med-1"))
+    );
+    if (!takenOk) {
+        violations.append(QStringLiteral("handleNotificationAction('med_taken:demo-med-1') should return true"));
+    }
+    bool skipOk = false;
+    QMetaObject::invokeMethod(
+        ctrl,
+        "handleNotificationAction",
+        Qt::DirectConnection,
+        Q_RETURN_ARG(bool, skipOk),
+        Q_ARG(QString, QStringLiteral("med_skip:demo-med-2"))
+    );
+    if (!skipOk) {
+        violations.append(QStringLiteral("handleNotificationAction('med_skip:demo-med-2') should return true"));
     }
 
     // State D: Inspect OverlayWidget (276x88 and minimum 240x80) across dark/color modes,
@@ -436,16 +504,18 @@ inline QString librelinkup_run_ui_overflow_tests() {
 
         // Verify On All Desktops toggle updates window flags and title
         QMetaObject::invokeMethod(ctrl, "updateOverlayOnAllDesktops", Qt::DirectConnection, Q_ARG(bool, false));
+        sync_all();
         librelinkup_uitest::pump_events(30);
-        if (ctrl->property("overlayOnAllDesktops").toBool()) {
+        if (settingsCtrl->property("overlayOnAllDesktops").toBool()) {
             violations.append(QStringLiteral("overlayOnAllDesktops should be false after updateOverlayOnAllDesktops(false)"));
         }
         if ((ovWin->flags() & Qt::BypassWindowManagerHint) != 0) {
             violations.append(QStringLiteral("OverlayWidget should clear Qt::BypassWindowManagerHint when overlayOnAllDesktops is false"));
         }
         QMetaObject::invokeMethod(ctrl, "updateOverlayOnAllDesktops", Qt::DirectConnection, Q_ARG(bool, true));
+        sync_all();
         librelinkup_uitest::pump_events(30);
-        if (!ctrl->property("overlayOnAllDesktops").toBool() ||
+        if (!settingsCtrl->property("overlayOnAllDesktops").toBool() ||
             (ovWin->flags() & Qt::BypassWindowManagerHint) != Qt::BypassWindowManagerHint) {
             violations.append(QStringLiteral("OverlayWidget should restore Qt::BypassWindowManagerHint when overlayOnAllDesktops is true"));
         }
@@ -455,6 +525,7 @@ inline QString librelinkup_run_ui_overflow_tests() {
         // - Overlay remains visible on screen (with Qt::Tool, so no Task Manager icon)
         // - System tray icon ALWAYS remains visible
         QMetaObject::invokeMethod(ctrl, "hideMainWindow", Qt::DirectConnection);
+        sync_all();
         librelinkup_uitest::pump_events(40);
         if (mainWin->isVisible()) {
             violations.append(QStringLiteral("MainWindow should be hidden (not in Task Manager) when minimized/closed to tray"));
@@ -465,7 +536,7 @@ inline QString librelinkup_run_ui_overflow_tests() {
         if (!librelinkup::TrayManager::instance().isTrayIconVisible()) {
             violations.append(QStringLiteral("Tray icon must always remain visible when only the overlay is showing"));
         }
-        if (!ctrl->property("overlayOnlyMode").toBool()) {
+        if (!settingsCtrl->property("overlayOnlyMode").toBool()) {
             violations.append(QStringLiteral("overlayOnlyMode should be true when main window is hidden while overlay is visible"));
         }
 

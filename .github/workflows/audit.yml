@@ -28,9 +28,8 @@ jobs:
       fail-fast: false
       matrix:
         lockfile:
-          - Cargo.lock                          # KDE Plasma app
-          - crates/librelinkup-core/Cargo.lock  # shared core (used by core tests in CI)
-          - windows/Cargo.lock                  # Windows egui app
+          - Cargo.lock        # KDE Plasma app + shared core (workspace root)
+          - windows/Cargo.lock # Windows egui app (separate workspace)
     steps:
       - uses: actions/checkout@v6
         with:
@@ -51,4 +50,4 @@ jobs:
       # Fails only on vulnerabilities; unmaintained/unsound/yanked notices are reported as warnings.
       # Use `--deny warnings` to make those fatal too.
       - name: Audit ${{ matrix.lockfile }}
-        run: cargo audit --file "${{ matrix.lockfile }}"
+        run: cargo audit --file "${{ matrix.lockfile }}" --deny unsound --deny yanked

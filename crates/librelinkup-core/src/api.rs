@@ -95,9 +95,27 @@ pub fn is_allowed_region(region: &str) -> bool {
     ALLOWED_LIBREVIEW_REGIONS.contains(&lower.as_str())
 }
 
-/// Validates that `url` is a local loopback `http://127.0.0.1:<port>/llu` or `http://localhost:<port>/llu`
-/// endpoint used by integration mock tests. External or non-loopback URLs are rejected.
-fn is_loopback_test_url(url: &str) -> bool {
+/// Whether an insecure `http://127.0.0.1`/`localhost` endpoint may be used as a LibreView
+/// base URL. This exists only for the loopback mock-server tests and CI smoke checks; it is
+/// compiled out of release builds unless `LIBRELINKUP_ALLOW_INSECURE_TEST_ENDPOINT=1` is set
+/// explicitly, so a shipped binary can never be talked into sending a password in cleartext.
+pub fn insecure_test_endpoint_allowed() -> bool {
+    if cfg!(debug_assertions) {
+        return true;
+    }
+    matches!(
+        std::env::var("LIBRELINKUP_ALLOW_INSECURE_TEST_ENDPOINT").as_deref(),
+        Ok("1") | Ok("true") | Ok("TRUE")
+    )
+}
+
+/// Validates that `url` is a local loopback `http://127.0.0.1:<port>/llu` or
+/// `http://localhost:<port>/llu` endpoint. `allow_insecure` is the policy switch (see
+/// [`insecure_test_endpoint_allowed`]); when it is `false` every URL is rejected.
+fn loopback_url_allowed(url: &str, allow_insecure: bool) -> bool {
+    if !allow_insecure {
+        return false;
+    }
     let trimmed = url.trim();
     if !trimmed.starts_with("http://") {
         return false;
@@ -111,6 +129,10 @@ fn is_loopback_test_url(url: &str) -> bool {
         && parsed.password().is_none()
         && parsed.query().is_none()
         && parsed.fragment().is_none()
+}
+
+fn is_loopback_test_url(url: &str) -> bool {
+    loopback_url_allowed(url, insecure_test_endpoint_allowed())
 }
 
 /// Maps a known LibreView region identifier or ISO-3166 country code to its canonical
@@ -422,7 +444,7 @@ async fn send_json_request(
 
             // Cloudflare WAF returned 403 Forbidden without a LibreView JSON body
             // (e.g. TLS JA3/JA4 block on rustls): retry once via system curl (OpenSSL + HTTP/2).
-            if status_u16 == 403 {
+            if status_u16 == 403 && crate::updater::system_curl_available() {
                 if let Ok((code, val)) =
                     curl_fallback_json(method.as_str(), url, token, account_id, json_payload).await
                 {
@@ -437,7 +459,7 @@ async fn send_json_request(
         Err(e) => {
             // Timeouts and connection failures (offline, DNS) would fail identically via
             // curl and only add another 15 s of waiting, so skip the fallback for them.
-            if !e.is_timeout() && !e.is_connect() {
+            if !e.is_timeout() && !e.is_connect() && crate::updater::system_curl_available() {
                 if let Ok((code, val)) =
                     curl_fallback_json(method.as_str(), url, token, account_id, json_payload).await
                 {
@@ -912,11 +934,15 @@ mod tests {
             assert_eq!(resolve_base_url(untrusted), "https://api.libreview.io/llu");
         }
 
-        // Loopback mock server URL remains allowed for integration tests
-        assert_eq!(
-            resolve_base_url("http://127.0.0.1:18080/llu"),
-            "http://127.0.0.1:18080/llu"
-        );
+        // Loopback mock server URLs are allowed only when the insecure test endpoint gate is
+        // open (debug builds / LIBRELINKUP_ALLOW_INSECURE_TEST_ENDPOINT=1). Release builds
+        // - including `cargo test --release` - must fall back to the safe default.
+        let loopback = "http://127.0.0.1:18080/llu";
+        if insecure_test_endpoint_allowed() {
+            assert_eq!(resolve_base_url(loopback), loopback);
+        } else {
+            assert_eq!(resolve_base_url(loopback), "https://api.libreview.io/llu");
+        }
 
         // Spoofed login redirect to an untrusted region or URL is rejected with an error
         let spoofed_redirect = serde_json::json!({
@@ -938,6 +964,22 @@ mod tests {
             }]
         });
         assert!(parse_connections_response(&bad_conn).is_err());
+    }
+
+    #[test]
+    fn loopback_endpoint_requires_explicit_opt_in() {
+        let url = "http://127.0.0.1:18080/llu";
+        // Allowed only when the insecure policy switch is on (debug builds / test flag).
+        assert!(loopback_url_allowed(url, true));
+        assert!(!loopback_url_allowed(url, false), "release builds must refuse plaintext loopback");
+        assert!(!loopback_url_allowed("http://localhost:1234/llu?x=1", true));
+        assert!(!loopback_url_allowed("http://user:pw@127.0.0.1:1/llu", true));
+        assert!(!loopback_url_allowed("https://api.libreview.io/llu", true));
+        // With the switch off, a stored loopback "region" normalizes back to the safe default.
+        assert_eq!(
+            normalize_country_code(url),
+            if insecure_test_endpoint_allowed() { url } else { "global" }
+        );
     }
 
     #[test]

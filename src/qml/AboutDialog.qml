@@ -1,38 +1,22 @@
 import QtQuick
-import QtQuick.Window
 import QtQuick.Layouts
 import QtQuick.Controls as QQC2
 import org.kde.kirigami as Kirigami
 
-Window {
+Item {
     id: aboutWindow
-    objectName: "librelinkupAboutWindow"
-    title: qsTr("About LibreLinkUp Rust Desktop")
-    width: 580
-    height: 500
-    minimumWidth: 480
-    minimumHeight: 400
-    visible: false
-    color: Kirigami.Theme.backgroundColor
+    objectName: "librelinkupAboutView"
 
     property var controller: null
-    readonly property bool isLightTheme: (0.2126 * color.r + 0.7152 * color.g + 0.0722 * color.b) > 0.45
-    readonly property string versionText: controller ? String(controller.appVersion || "0.4.5") : "0.4.5"
+    readonly property bool isLightTheme: (0.2126 * Kirigami.Theme.backgroundColor.r + 0.7152 * Kirigami.Theme.backgroundColor.g + 0.0722 * Kirigami.Theme.backgroundColor.b) > 0.45
+    property var telemetry: null
+    readonly property string versionText: telemetry ? String(telemetry.appVersion || "0.4.5") : "0.4.5"
 
     function openAboutWindow() {
-        aboutWindow.show()
-        aboutWindow.raise()
-        aboutWindow.requestActivate()
-    }
-
-    onClosing: function(close) {
-        close.accepted = false
-        aboutWindow.hide()
     }
 
     ColumnLayout {
         anchors.fill: parent
-        anchors.margins: 14
         spacing: 10
 
         QQC2.ScrollView {
@@ -46,8 +30,8 @@ Window {
             contentWidth: availableWidth
 
             ColumnLayout {
-                width: aboutScroll.availableWidth
-                spacing: 10
+                width: Math.min(aboutScroll.availableWidth, 760)
+                spacing: 14
 
                 Rectangle {
                     objectName: "aboutHeaderCard"
@@ -146,9 +130,9 @@ Window {
                             spacing: 8
 
                             QQC2.Label {
-                                text: controller ? controller.updateStatusMessage : ""
-                                font.bold: controller ? controller.updateAvailable : false
-                                color: (controller && controller.updateAvailable)
+                                text: settings ? settings.updateStatusMessage : ""
+                                font.bold: settings ? settings.updateAvailable : false
+                                color: (settings && settings.updateAvailable)
                                     ? (aboutWindow.isLightTheme ? "#0284c7" : "#38bdf8")
                                     : Kirigami.Theme.textColor
                                 opacity: 0.9
@@ -160,34 +144,34 @@ Window {
                             QQC2.Button {
                                 objectName: "aboutCheckUpdatesButton"
                                 icon.name: "system-software-update"
-                                text: (controller && controller.checkingForUpdates) ? qsTr("Checking...") : qsTr("Check Updates")
-                                enabled: controller ? !controller.checkingForUpdates : false
+                                text: (settings && settings.checkingForUpdates) ? qsTr("Checking...") : qsTr("Check Updates")
+                                enabled: settings ? !settings.checkingForUpdates : false
                                 onClicked: {
-                                    if (controller) {
-                                        controller.checkForUpdates()
+                                    if (telemetry) {
+                                        telemetry.checkForUpdates()
                                     }
                                 }
                             }
 
                             QQC2.Button {
-                                visible: controller ? controller.updateAvailable : false
+                                visible: settings ? settings.updateAvailable : false
                                 icon.name: "download"
-                                text: controller ? (controller.installingUpdate ? qsTr("Installing...") : qsTr("Install %1").arg(controller.latestVersion)) : ""
-                                enabled: controller ? !controller.installingUpdate : false
+                                text: settings ? (settings.installingUpdate ? qsTr("Installing...") : qsTr("Install %1").arg(settings.latestVersion)) : ""
+                                enabled: settings ? !settings.installingUpdate : false
                                 onClicked: {
-                                    if (controller) {
-                                        controller.installUpdate()
+                                    if (telemetry) {
+                                        telemetry.installUpdate()
                                     }
                                 }
                             }
 
                             QQC2.Button {
-                                visible: controller ? controller.updateAvailable : false
+                                visible: settings ? settings.updateAvailable : false
                                 icon.name: "globe"
                                 text: qsTr("View Release")
                                 onClicked: {
-                                    if (controller && controller.updateUrl) {
-                                        Qt.openUrlExternally(controller.updateUrl)
+                                    if (settings && settings.updateUrl) {
+                                        Qt.openUrlExternally(settings.updateUrl)
                                     }
                                 }
                             }
@@ -363,13 +347,6 @@ Window {
             }
 
             Item { Layout.fillWidth: true }
-
-            QQC2.Button {
-                objectName: "closeAboutButton"
-                icon.name: "window-close"
-                text: qsTr("Close")
-                onClicked: aboutWindow.hide()
-            }
         }
     }
 }

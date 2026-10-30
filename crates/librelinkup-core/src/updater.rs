@@ -18,6 +18,15 @@ pub const GITHUB_RELEASES_PAGE_URL: &str =
 pub const GITHUB_RELEASE_DOWNLOAD_PREFIX: &str =
     "/russellmilliner/librelinkup-rust-desktop/releases/download/";
 
+/// Embedded minisign public key for release artifacts (base64 blob, key id `a1274a...
+///
+/// If this line changes, already-installed copies can no longer verify new releases, so it is
+/// part of the executable trust root: rotating it requires a manually distributed update.
+/// The matching secret key lives ONLY in the `RELEASE_MINISIGN_KEY` CI secret and on the
+/// maintainer's offline backup - it must never be committed.
+pub const UPDATE_SIGNING_PUBLIC_KEY: &str =
+    "RWSUaEnKXTS/QV+rIrbkaqqqZRXJHSwvVGW9g5EP5Nf2T8l6XqGLVqco";
+
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct UpdateCheckResult {
     pub checked: bool,
@@ -28,6 +37,8 @@ pub struct UpdateCheckResult {
     pub download_url: String,
     #[serde(default)]
     pub sha256_url: String,
+    #[serde(default)]
+    pub signature_url: String,
     pub release_notes: String,
     pub message: String,
 }
@@ -153,6 +164,40 @@ pub fn verify_sha256_bytes(bytes: &[u8], expected_hex: &str) -> Result<(), Strin
     Ok(())
 }
 
+/// Verifies a minisign signature over `bytes` against `public_key_b64`.
+///
+/// This is the actual authenticity check for auto-updates: the SHA-256 sidecar comes from the
+/// same origin as the artifact and therefore only proves the download was not corrupted,
+/// whereas the signature proves the artifact was produced by the holder of the release key.
+pub fn verify_minisign_signature(
+    bytes: &[u8],
+    signature_text: &str,
+    public_key_b64: &str,
+) -> Result<(), String> {
+    if signature_text.trim().is_empty() {
+        return Err("Refusing update: release signature is missing.".into());
+    }
+    let public_key = minisign_verify::PublicKey::from_base64(public_key_b64.trim())
+        .map_err(|e| format!("Invalid embedded update public key: {e}"))?;
+    // Skip any leading comment lines the caller may have included.
+    let cleaned: String = signature_text
+        .lines()
+        .filter(|l| !l.trim_start().starts_with("untrusted comment:") || l.contains("signature"))
+        .collect::<Vec<_>>()
+        .join("\n");
+    let signature = minisign_verify::Signature::decode(&cleaned)
+        .or_else(|_| minisign_verify::Signature::decode(signature_text))
+        .map_err(|e| format!("Malformed update signature: {e}"))?;
+    public_key
+        .verify(bytes, &signature, false)
+        .map_err(|e| format!("Update signature verification failed: {e}"))
+}
+
+/// Verifies `bytes` against the compiled-in release public key.
+pub fn verify_update_signature(bytes: &[u8], signature_text: &str) -> Result<(), String> {
+    verify_minisign_signature(bytes, signature_text, UPDATE_SIGNING_PUBLIC_KEY)
+}
+
 /// Parses a version string such as `"v0.4.1"` or `"0.4.1-rc1"` into `(major, minor, patch)`.
 pub fn parse_semver(version: &str) -> Option<(u32, u32, u32)> {
     let cleaned = version
@@ -226,6 +271,7 @@ pub fn parse_github_release_json(
     let mut flatpak_asset: Option<(String, String)> = None;
     let mut windows_installer_asset: Option<(String, String)> = None;
     let mut sha256_assets: HashMap<String, String> = HashMap::new();
+    let mut signature_assets: HashMap<String, String> = HashMap::new();
 
     if let Some(assets) = val.get("assets").and_then(|v| v.as_array()) {
         for asset in assets {
@@ -244,6 +290,8 @@ pub fn parse_github_release_json(
             }
             if name.ends_with(".sha256") {
                 sha256_assets.insert(name.to_string(), url.to_string());
+            } else if name.ends_with(".minisig") {
+                signature_assets.insert(name.to_string(), url.to_string());
             } else if name.ends_with(".flatpak") && flatpak_asset.is_none() {
                 flatpak_asset = Some((name.to_string(), url.to_string()));
             } else if name.ends_with(".exe") && windows_installer_asset.is_none() {
@@ -257,16 +305,19 @@ pub fn parse_github_release_json(
     } else {
         flatpak_asset.or(windows_installer_asset)
     };
-    let (download_url, sha256_url) = match preferred_asset {
+    let (download_url, sha256_url, signature_url) = match preferred_asset {
         Some((asset_name, asset_url)) => {
-            let sha_name = format!("{asset_name}.sha256");
             let sha_url = sha256_assets
-                .get(&sha_name)
+                .get(&format!("{asset_name}.sha256"))
                 .cloned()
                 .unwrap_or_else(|| format!("{asset_url}.sha256"));
-            (asset_url, sha_url)
+            let sig_url = signature_assets
+                .get(&format!("{asset_name}.minisig"))
+                .cloned()
+                .unwrap_or_else(|| format!("{asset_url}.minisig"));
+            (asset_url, sha_url, sig_url)
         }
-        None => (release_url.clone(), String::new()),
+        None => (release_url.clone(), String::new(), String::new()),
     };
 
     let cur_norm = normalize_version_tag(current_version);
@@ -286,6 +337,7 @@ pub fn parse_github_release_json(
         release_url,
         download_url,
         sha256_url,
+        signature_url,
         release_notes,
         message,
     })
@@ -315,6 +367,31 @@ fn github_headers(current_version: &str) -> HeaderMap {
     headers
 }
 
+/// Whether a usable system `curl` exists.
+///
+/// The curl fallback exists because Cloudflare can block the rustls TLS fingerprint; when the
+/// binary is absent (minimal containers, some Flatpak runtimes) the fallback cannot work, and
+/// silently retrying just turns a clear error into a confusing one. Probed once and cached.
+pub fn system_curl_available() -> bool {
+    static AVAILABLE: OnceLock<bool> = OnceLock::new();
+    *AVAILABLE.get_or_init(|| {
+        let ok = std::process::Command::new("curl")
+            .arg("--version")
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null())
+            .status()
+            .map(|s| s.success())
+            .unwrap_or(false);
+        if !ok {
+            crate::event_log::log_warn(
+                "SYSTEM",
+                "System curl is unavailable: the TLS-fingerprint fallback for blocked requests is disabled.",
+            );
+        }
+        ok
+    })
+}
+
 #[cfg(unix)]
 fn curl_get_github_release(url: &str, current_version: &str) -> Result<String, String> {
     let ua = format!(
@@ -341,6 +418,34 @@ fn curl_get_github_release(url: &str, current_version: &str) -> Result<String, S
         ));
     }
     Ok(String::from_utf8_lossy(&out.stdout).to_string())
+}
+
+/// Fetches a small text asset (checksum / signature) with a `curl` fallback on Unix, used
+/// when Cloudflare-style TLS fingerprint filtering blocks the rustls client.
+async fn fetch_release_text(client: &reqwest::Client, url: &str) -> Option<String> {
+    if let Ok(resp) = client.get(url).send().await {
+        if resp.status().is_success() {
+            if let Ok(text) = resp.text().await {
+                if !text.trim().is_empty() {
+                    return Some(text);
+                }
+            }
+        }
+    }
+    #[cfg(unix)]
+    if system_curl_available() {
+        let owned = url.to_string();
+        if let Ok(Ok(raw)) = tokio::task::spawn_blocking(move || {
+            curl_get_github_release(&owned, env!("CARGO_PKG_VERSION"))
+        })
+        .await
+        {
+            if !raw.trim().is_empty() {
+                return Some(raw);
+            }
+        }
+    }
+    None
 }
 
 static SHARED_UPDATE_CLIENT: OnceLock<reqwest::Client> = OnceLock::new();
@@ -399,7 +504,7 @@ pub async fn check_for_updates_async(current_version: &str) -> Result<UpdateChec
         }
         Err(err) => {
             #[cfg(unix)]
-            {
+            if system_curl_available() {
                 let cur = current_version.to_string();
                 if let Ok(Ok(raw)) = tokio::task::spawn_blocking(move || {
                     curl_get_github_release(GITHUB_RELEASES_LATEST_URL, &cur)
@@ -435,8 +540,12 @@ pub fn check_for_updates_blocking(current_version: &str) -> Result<UpdateCheckRe
         }
         Err(err) => {
             #[cfg(unix)]
-            if let Ok(raw) = curl_get_github_release(GITHUB_RELEASES_LATEST_URL, current_version) {
-                return parse_github_release_json(&raw, current_version);
+            if system_curl_available() {
+                if let Ok(raw) =
+                    curl_get_github_release(GITHUB_RELEASES_LATEST_URL, current_version)
+                {
+                    return parse_github_release_json(&raw, current_version);
+                }
             }
             Err(format!("Update check failed: {err}"))
         }
@@ -482,8 +591,12 @@ pub async fn download_and_install_update_async(
         .filter(|s| !s.is_empty())
         .ok_or_else(|| "Invalid asset filename in download URL.".to_string())?;
     let sha256_url = format!("{download_url}.sha256");
+    let signature_url = format!("{download_url}.minisig");
     if !is_trusted_github_asset_url(&sha256_url) {
         return Err("Invalid SHA-256 checksum URL.".into());
+    }
+    if !is_trusted_github_asset_url(&signature_url) {
+        return Err("Invalid update signature URL.".into());
     }
 
     let file_name = if cfg!(target_os = "windows") {
@@ -497,33 +610,24 @@ pub async fn download_and_install_update_async(
 
     let client = shared_download_client()?;
 
-    // 1. Fetch and parse the mandatory .sha256 checksum file before trusting the installer.
-    let mut sha256_text: Option<String> = None;
-    if let Ok(resp) = client.get(&sha256_url).send().await {
-        if resp.status().is_success() {
-            if let Ok(text) = resp.text().await {
-                if !text.trim().is_empty() {
-                    sha256_text = Some(text);
-                }
-            }
-        }
-    }
-    #[cfg(unix)]
-    if sha256_text.is_none() {
-        let sha_url_owned = sha256_url.clone();
-        if let Ok(Ok(raw)) = tokio::task::spawn_blocking(move || {
-            curl_get_github_release(&sha_url_owned, env!("CARGO_PKG_VERSION"))
-        })
+    // 1. The signature is mandatory and is checked against the compiled-in release key.
+    //    It is the only check that survives a compromised repository/token, because the
+    //    SHA-256 sidecar is fetched from the very same origin as the artifact.
+    let signature_text = fetch_release_text(client, &signature_url)
         .await
-        {
-            if !raw.trim().is_empty() {
-                sha256_text = Some(raw);
-            }
-        }
-    }
-    let sha256_raw = sha256_text.ok_or_else(|| {
-        format!("Refusing to install update: could not fetch SHA-256 checksum from {sha256_url}")
-    })?;
+        .ok_or_else(|| {
+            format!(
+                "Refusing to install update: release signature could not be fetched from \
+                 {signature_url}. Unsigned updates are never executed."
+            )
+        })?;
+
+    // 2. Fetch and parse the mandatory .sha256 checksum file (corruption/partial-download guard).
+    let sha256_raw = fetch_release_text(client, &sha256_url)
+        .await
+        .ok_or_else(|| {
+            format!("Refusing to install update: could not fetch SHA-256 checksum from {sha256_url}")
+        })?;
     let expected_sha256 = parse_sha256_checksum(&sha256_raw, Some(asset_file_name))?;
 
     // 2. Download the installer/bundle and verify its SHA-256 digest before execution.
@@ -539,7 +643,7 @@ pub async fn download_and_install_update_async(
     }
 
     #[cfg(unix)]
-    if verified_bytes.is_none() {
+    if verified_bytes.is_none() && system_curl_available() {
         let url_owned = download_url.to_string();
         let (tmp_dl_path, tmp_dl_file) =
             crate::paths::create_private_temp_file(&dest_dir, ".llu-update-", ".part")?;
@@ -579,6 +683,12 @@ pub async fn download_and_install_update_async(
     };
 
     if let Err(err) = verify_sha256_bytes(&bytes, &expected_sha256) {
+        let _ = std::fs::remove_file(&dest_path);
+        return Err(format!("Refusing to install update: {err}"));
+    }
+
+    // 3. Authenticity: the artifact must be signed by the release key before it is executed.
+    if let Err(err) = verify_update_signature(&bytes, &signature_text) {
         let _ = std::fs::remove_file(&dest_path);
         return Err(format!("Refusing to install update: {err}"));
     }
@@ -737,6 +847,69 @@ mod tests {
         assert!(!is_trusted_github_asset_url(
             "https://github.com/russellmilliner/librelinkup-rust-desktop/releases/download/v0.4.4/LibreLinkUp-Setup-0.4.4-x64.exe?redirect=1"
         ));
+    }
+
+    #[test]
+    fn verifies_minisign_signatures_and_rejects_tampering() {
+        // Fixture generated with a throwaway test key (never the release key).
+        const TEST_PUBKEY: &str = "RWRRI0rrvCS5oePZPKf/GuR5nGi7Y9L4V1r026s2IY9Ze0HhrIYHkjy6";
+        const TEST_SIG: &str = "untrusted comment: test:update-fixture\n\
+RURRI0rrvCS5obXzUzG5SAKLqhmV7rJHLvTbBN9qISUB8hfJ/STjnzWraGunPcopQnoZTwIw3PilJs82T9piNArxmF3ZDyWMKgo=\n\
+trusted comment: timestamp:1793326084\n\
+CwkbwGp+4TByUUf5t2zRCWvVkwdiTliNUMi8V5+91AenrDh/4eoeBNYWtKhcb/T3RFgv5+Udsj96Y5C+iCcSAA==";
+        let payload = b"librelinkup-update-fixture-payload-v1";
+
+        verify_minisign_signature(payload, TEST_SIG, TEST_PUBKEY).expect("valid signature");
+
+        // Tampered payload must fail.
+        assert!(verify_minisign_signature(b"tampered", TEST_SIG, TEST_PUBKEY).is_err());
+        // Wrong key must fail.
+        assert!(verify_minisign_signature(payload, TEST_SIG, UPDATE_SIGNING_PUBLIC_KEY).is_err());
+        // Missing / empty signature must fail closed.
+        assert!(verify_minisign_signature(payload, "", TEST_PUBKEY).is_err());
+        assert!(verify_minisign_signature(payload, "   \n", TEST_PUBKEY).is_err());
+        // Garbage signature must not panic.
+        assert!(verify_minisign_signature(payload, "not a signature", TEST_PUBKEY).is_err());
+    }
+
+    #[test]
+    fn embedded_release_public_key_is_a_valid_minisign_key() {
+        // Guards against a truncated/pasted-wrong trust root: if this fails, every
+        // installed copy would refuse all future updates.
+        minisign_verify::PublicKey::from_base64(UPDATE_SIGNING_PUBLIC_KEY)
+            .expect("embedded update public key must decode");
+        assert!(!UPDATE_SIGNING_PUBLIC_KEY.trim().is_empty());
+    }
+
+    #[test]
+    fn release_json_exposes_checksum_and_signature_urls() {
+        let sample = r#"{
+            "tag_name": "v0.6.0",
+            "html_url": "https://github.com/russellmilliner/librelinkup-rust-desktop/releases/tag/v0.6.0",
+            "assets": [
+                {
+                    "name": "librelinkup-rust-desktop-v0.6.0-x86_64.flatpak",
+                    "browser_download_url": "https://github.com/russellmilliner/librelinkup-rust-desktop/releases/download/v0.6.0/librelinkup-rust-desktop-v0.6.0-x86_64.flatpak"
+                },
+                {
+                    "name": "librelinkup-rust-desktop-v0.6.0-x86_64.flatpak.sha256",
+                    "browser_download_url": "https://github.com/russellmilliner/librelinkup-rust-desktop/releases/download/v0.6.0/librelinkup-rust-desktop-v0.6.0-x86_64.flatpak.sha256"
+                },
+                {
+                    "name": "librelinkup-rust-desktop-v0.6.0-x86_64.flatpak.minisig",
+                    "browser_download_url": "https://github.com/russellmilliner/librelinkup-rust-desktop/releases/download/v0.6.0/librelinkup-rust-desktop-v0.6.0-x86_64.flatpak.minisig"
+                }
+            ]
+        }"#;
+        let res = parse_github_release_json(sample, "0.5.0").expect("valid release json");
+        assert!(res.download_url.ends_with(".flatpak"));
+        assert!(res.sha256_url.ends_with(".flatpak.sha256"));
+        assert!(
+            res.signature_url.ends_with(".flatpak.minisig"),
+            "signature_url must be discovered from release assets: {}",
+            res.signature_url
+        );
+        assert!(is_trusted_github_asset_url(&res.signature_url));
     }
 
     #[test]

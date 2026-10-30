@@ -2,11 +2,15 @@
 //! (re-exported here so `crate::api`, `crate::models`, … keep working).
 
 pub use librelinkup_core::{
-    alert_sound, api, crypto, event_log, models, paths, session, updater,
+    alert_sound, analytics, api, crypto, event_log, medications, models, paths, session, updater,
 };
 
 pub mod bridge {
-    pub mod app_controller;
     pub mod autostart;
-    pub mod settings_handlers;
+    pub mod medications;
+    pub mod ops;
+    pub mod qobject_bridge;
+    pub mod settings;
+    pub mod state;
+    pub mod telemetry;
 }

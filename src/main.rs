@@ -1,4 +1,4 @@
-use librelinkup_kde::bridge::app_controller::qobject::librelinkup_run_app;
+use librelinkup_kde::bridge::qobject_bridge::qobject::librelinkup_run_app;
 
 fn main() {
     let args: Vec<String> = std::env::args().collect();

@@ -9,7 +9,7 @@ import io.github.librelinkup 1.0
 Kirigami.ApplicationWindow {
     id: root
     objectName: "librelinkupMainWindow"
-    title: qsTr("LibreLinkUp Rust Desktop v%1 — KDE Plasma 6").arg(appController.appVersion)
+    title: qsTr("LibreLinkUp Rust Desktop v%1 — KDE Plasma 6").arg(telemetry.appVersion)
     width: 980
     height: 680
     minimumWidth: 780
@@ -41,7 +41,9 @@ Kirigami.ApplicationWindow {
 
     Component.onCompleted: measureHeaderAndFitWindow()
     property string activeTab: "dashboard"
-    readonly property alias controller: appController
+    readonly property alias controller: telemetry
+    /// Alias kept for the overlay/dialogs that need both projections.
+    readonly property alias settingsController: settings
 
     readonly property var regionOptions: [
         { value: "us", label: "United States (us)" },
@@ -67,52 +69,145 @@ Kirigami.ApplicationWindow {
     }
 
     function openLogViewer() {
+        root.activeTab = "logs"
         logViewerWindow.openLogWindow()
     }
 
     function openAboutDialog() {
+        root.activeTab = "about"
         aboutDialogWindow.openAboutWindow()
+    }
+
+    property string editingMedId: ""
+
+    function scheduleIndexForCode(code) {
+        const clean = String(code || "daily").toLowerCase()
+        if (clean === "twice_daily") return 1
+        if (clean === "weekly") return 2
+        if (clean === "as_needed") return 3
+        return 0
+    }
+
+    function startEditingMedication(item) {
+        if (!item) return
+        root.editingMedId = String(item.id || "")
+        medNameField.text = String(item.name || "")
+        medDosageField.text = String(item.dosage || "")
+        medScheduleCombo.currentIndex = root.scheduleIndexForCode(item.schedule_code)
+        const wd = Number(item.weekday || 0)
+        medWeekdayCombo.currentIndex = (wd >= 0 && wd <= 6) ? wd : 0
+        medTimesField.text = String(item.scheduled_time || "08:00")
+        medReminderSwitch.checked = Boolean(item.reminder_enabled)
+    }
+
+    function cancelEditingMedication() {
+        root.editingMedId = ""
+        medNameField.text = ""
+        medDosageField.text = ""
+        medScheduleCombo.currentIndex = 0
+        medWeekdayCombo.currentIndex = 0
+        medTimesField.text = "08:00"
+        medReminderSwitch.checked = true
+    }
+
+    readonly property var medicationsListModel: {
+        try {
+            return JSON.parse(medications.medicationsJson || "[]")
+        } catch (e) {
+            return []
+        }
+    }
+
+    readonly property var medicationDosesListModel: {
+        try {
+            return JSON.parse(medications.medicationDosesJson || "[]").slice(0, 25)
+        } catch (e) {
+            return []
+        }
     }
 
     onClosing: function(close) {
         close.accepted = false
-        appController.hideMainWindow()
+        settings.hideMainWindow()
     }
 
-    AppController {
-        id: appController
+    // ---------------------------------------------------------------------------------
+    // Qt controllers. State lives in Rust (`bridge::state`); these three objects expose
+    // disjoint slices of it:
+    //   telemetry   - auth, CGM value/trend, analytics, alerts, tray/service host
+    //   settings    - preferences, window/overlay placement, updater status, log viewer
+    //   medications - medication schedule and dose log
+    // ---------------------------------------------------------------------------------
+    TelemetryController {
+        id: telemetry
         objectName: "librelinkupAppController"
         Component.onCompleted: {
-            appController.initializeController()
+            telemetry.initialize()
+            settings.initialize()
+            medications.initialize()
+            appSyncTimer.start()
         }
-        onGraphPointsJsonChanged: {
-            glucoseCanvas.requestPaint()
-        }
-        onResultUnitChanged: {
-            glucoseCanvas.requestPaint()
-        }
-        onThemeModeChanged: {
-            glucoseCanvas.requestPaint()
+        onGraphPointsJsonChanged: glucoseCanvas.requestPaint()
+        onResultUnitChanged: glucoseCanvas.requestPaint()
+    }
+
+    SettingsController {
+        id: settings
+        objectName: "librelinkupSettingsController"
+        onThemeModeChanged: glucoseCanvas.requestPaint()
+        onOverlayVisibleChanged: overlayWidgetWindow.visible = overlayVisible
+    }
+
+    MedicationsController {
+        id: medications
+        objectName: "librelinkupMedicationsController"
+        onGraphDosesJsonChanged: glucoseCanvas.requestPaint()
+    }
+
+    // Single refresh tick: applies pending async results, recomputes derived strings,
+    // updates the tray and evaluates alerts. Replaces the previous pull of separate
+    // per-property signals.
+    Timer {
+        id: appSyncTimer
+        interval: 250
+        repeat: true
+        running: false
+        onTriggered: {
+            telemetry.tick()
+            settings.sync()
+            medications.sync()
         }
     }
 
-    // Re-evaluates reading age every 30 s so stale data / signal loss is flagged (and
-    // alerted) even when fetches keep failing or the sensor stops uploading.
+    // Coarse staleness sweep (signal loss must be flagged even when fetches keep failing).
     Timer {
         id: stalenessTimer
         interval: 30000
         repeat: true
-        running: appController.loggedIn
-        onTriggered: appController.evaluateStaleness()
+        running: telemetry.loggedIn
+        onTriggered: telemetry.evaluateStaleness()
     }
 
     Timer {
         id: pollTimer
-        interval: Math.max(60, appController.pollIntervalSeconds) * 1000
-        repeat: true
-        running: appController.loggedIn
+        // Jittered per cycle (+/-10%, computed in Rust) and re-armed on every tick.
+        interval: telemetry.nextPollIntervalMs()
+        repeat: false
+        running: false
         onTriggered: {
-            appController.refreshGlucoseNow()
+            telemetry.refreshGlucoseNow()
+            pollTimer.restart()
+        }
+    }
+
+    Connections {
+        target: telemetry
+        function onLoggedInChanged() {
+            if (telemetry.loggedIn) {
+                pollTimer.restart()
+            } else {
+                pollTimer.stop()
+            }
         }
     }
 
@@ -121,25 +216,14 @@ Kirigami.ApplicationWindow {
         id: updateCheckTimer
         interval: 6 * 3600 * 1000
         repeat: true
-        running: appController.checkUpdatesOnStartup
-        onTriggered: {
-            appController.checkForUpdatesSilent()
-        }
-    }
-
-    LogViewerDialog {
-        id: logViewerWindow
-        controller: appController
-    }
-
-    AboutDialog {
-        id: aboutDialogWindow
-        controller: appController
+        running: settings.checkUpdatesOnStartup
+        onTriggered: telemetry.checkForUpdatesSilent()
     }
 
     OverlayWidget {
         id: overlayWidgetWindow
-        controller: appController
+        settings: settings
+        telemetry: telemetry
     }
 
     FileDialog {
@@ -164,19 +248,13 @@ Kirigami.ApplicationWindow {
             anchors.rightMargin: 8
             spacing: 2
 
-            Kirigami.Heading {
-                level: 4
-                text: root.headerCompact ? qsTr("LibreLinkUp") : qsTr("LibreLinkUp Rust")
-                font.bold: true
-            }
-
             Rectangle {
                 objectName: "vaultStatusBadge"
                 radius: 6
-                color: appController.credentialsEncrypted
+                color: telemetry.credentialsEncrypted
                     ? Qt.rgba(0.13, 0.77, 0.37, 0.18)
                     : Qt.rgba(0.58, 0.64, 0.72, 0.18)
-                border.color: appController.credentialsEncrypted ? "#22c55e" : "#94a3b8"
+                border.color: telemetry.credentialsEncrypted ? "#22c55e" : "#94a3b8"
                 border.width: 1
                 implicitWidth: vaultLabel.implicitWidth + 10
                 implicitHeight: 22
@@ -185,8 +263,8 @@ Kirigami.ApplicationWindow {
                     id: vaultLabel
                     anchors.centerIn: parent
                     text: root.headerCompact
-                        ? (appController.credentialsEncrypted ? "🔒" : "🔓")
-                        : (appController.credentialsEncrypted ? qsTr("🔒 AES-256") : qsTr("🔓 Unset"))
+                        ? (telemetry.credentialsEncrypted ? "🔒" : "🔓")
+                        : (telemetry.credentialsEncrypted ? qsTr("🔒 AES-256") : qsTr("🔓 Unset"))
                     font.pointSize: 8
                     font.bold: true
                     color: Kirigami.Theme.textColor
@@ -205,6 +283,18 @@ Kirigami.ApplicationWindow {
                 checkable: true
                 checked: root.activeTab === "dashboard"
                 onClicked: root.activeTab = "dashboard"
+            }
+
+            QQC2.ToolButton {
+                objectName: "tabButtonMedications"
+                display: root.headerCompact ? QQC2.AbstractButton.IconOnly : QQC2.AbstractButton.TextBesideIcon
+                QQC2.ToolTip.visible: root.headerCompact && hovered
+                QQC2.ToolTip.text: text
+                icon.name: "bookmarks"
+                text: qsTr("Medications")
+                checkable: true
+                checked: root.activeTab === "medications"
+                onClicked: root.activeTab = "medications"
             }
 
             QQC2.ToolButton {
@@ -246,10 +336,12 @@ Kirigami.ApplicationWindow {
             QQC2.ToolButton {
                 objectName: "tabButtonLogs"
                 icon.name: "utilities-log-viewer"
-                text: qsTr("Logs (%1)").arg(appController.eventLogCount)
+                text: qsTr("Logs (%1)").arg(settings.eventLogCount)
                 display: root.headerCompact ? QQC2.AbstractButton.IconOnly : QQC2.AbstractButton.TextBesideIcon
                 QQC2.ToolTip.visible: hovered
-                QQC2.ToolTip.text: qsTr("Open Diagnostic Log Viewer (%1 entries)").arg(appController.eventLogCount)
+                QQC2.ToolTip.text: qsTr("Diagnostic Log Viewer (%1 entries)").arg(settings.eventLogCount)
+                checkable: true
+                checked: root.activeTab === "logs"
                 onClicked: root.openLogViewer()
             }
 
@@ -259,7 +351,9 @@ Kirigami.ApplicationWindow {
                 text: qsTr("About")
                 display: root.headerCompact ? QQC2.AbstractButton.IconOnly : QQC2.AbstractButton.TextBesideIcon
                 QQC2.ToolTip.visible: hovered
-                QQC2.ToolTip.text: qsTr("About LibreLinkUp Rust Desktop v%1").arg(appController.appVersion)
+                QQC2.ToolTip.text: qsTr("About LibreLinkUp Rust Desktop v%1").arg(telemetry.appVersion)
+                checkable: true
+                checked: root.activeTab === "about"
                 onClicked: root.openAboutDialog()
             }
 
@@ -300,8 +394,8 @@ Kirigami.ApplicationWindow {
                 display: QQC2.AbstractButton.IconOnly
                 QQC2.ToolTip.visible: hovered
                 QQC2.ToolTip.text: qsTr("Refresh glucose telemetry now")
-                enabled: appController.loggedIn && !appController.busy
-                onClicked: appController.refreshGlucoseNow()
+                enabled: telemetry.loggedIn && !telemetry.busy
+                onClicked: telemetry.refreshGlucoseNow()
             }
 
             QQC2.ToolButton {
@@ -310,7 +404,7 @@ Kirigami.ApplicationWindow {
                 display: QQC2.AbstractButton.IconOnly
                 QQC2.ToolTip.visible: hovered
                 QQC2.ToolTip.text: qsTr("Hide window to the KDE system tray")
-                onClicked: appController.hideMainWindow()
+                onClicked: settings.hideMainWindow()
             }
         }
     }
@@ -327,7 +421,7 @@ Kirigami.ApplicationWindow {
             id: errorBanner
             objectName: "errorBanner"
             Layout.fillWidth: true
-            visible: appController.errorMessage.length > 0
+            visible: telemetry.errorMessage.length > 0
             implicitHeight: errRow.implicitHeight + 16
             radius: 8
             color: Qt.rgba(0.94, 0.27, 0.27, 0.16)
@@ -349,7 +443,7 @@ Kirigami.ApplicationWindow {
                 }
 
                 QQC2.Label {
-                    text: appController.errorMessage
+                    text: telemetry.errorMessage
                     wrapMode: Text.WordWrap
                     color: Kirigami.Theme.textColor
                     Layout.fillWidth: true
@@ -362,7 +456,7 @@ Kirigami.ApplicationWindow {
             id: updateBanner
             objectName: "updateBanner"
             Layout.fillWidth: true
-            visible: appController.updateAvailable
+            visible: settings.updateAvailable
             implicitHeight: updateRow.implicitHeight + 16
             radius: 8
             color: Qt.rgba(0.02, 0.52, 0.78, 0.16)
@@ -384,7 +478,7 @@ Kirigami.ApplicationWindow {
                 }
 
                 QQC2.Label {
-                    text: qsTr("New version available: %1 (current: v%2)").arg(appController.latestVersion).arg(appController.appVersion)
+                    text: qsTr("New version available: %1 (current: v%2)").arg(settings.latestVersion).arg(telemetry.appVersion)
                     font.bold: true
                     wrapMode: Text.WordWrap
                     color: Kirigami.Theme.textColor
@@ -395,16 +489,16 @@ Kirigami.ApplicationWindow {
                 QQC2.Button {
                     objectName: "bannerInstallUpdateButton"
                     icon.name: "download"
-                    text: appController.installingUpdate ? qsTr("Installing...") : qsTr("Install %1").arg(appController.latestVersion)
-                    enabled: !appController.installingUpdate
-                    onClicked: appController.installUpdate()
+                    text: settings.installingUpdate ? qsTr("Installing...") : qsTr("Install %1").arg(settings.latestVersion)
+                    enabled: !settings.installingUpdate
+                    onClicked: telemetry.installUpdate()
                 }
 
                 QQC2.Button {
                     objectName: "bannerViewUpdateButton"
                     icon.name: "globe"
                     text: qsTr("View Release")
-                    onClicked: Qt.openUrlExternally(appController.updateUrl)
+                    onClicked: Qt.openUrlExternally(settings.updateUrl)
                 }
             }
         }
@@ -423,7 +517,7 @@ Kirigami.ApplicationWindow {
             QQC2.ScrollView {
                 id: loginScrollView
                 anchors.fill: parent
-                visible: !appController.loggedIn
+                visible: !telemetry.loggedIn
                 clip: true
                 contentWidth: availableWidth
 
@@ -482,7 +576,7 @@ Kirigami.ApplicationWindow {
                                     id: loginEmailField
                                     Layout.fillWidth: true
                                     placeholderText: qsTr("you@example.com")
-                                    text: appController.username
+                                    text: telemetry.username
                                 }
                             }
 
@@ -520,17 +614,17 @@ Kirigami.ApplicationWindow {
                                     textRole: "label"
                                     valueRole: "value"
                                     Component.onCompleted: {
-                                        currentIndex = root.regionIndexForCode(appController.country)
+                                        currentIndex = root.regionIndexForCode(settings.country)
                                     }
                                     onActivated: function(index) {
                                         if (index >= 0 && index < root.regionOptions.length) {
-                                            appController.updateCountry(root.regionOptions[index].value)
+                                            settings.updateCountry(root.regionOptions[index].value)
                                         }
                                     }
                                     Connections {
-                                        target: appController
+                                        target: settings
                                         function onCountryChanged() {
-                                            const targetIdx = root.regionIndexForCode(appController.country)
+                                            const targetIdx = root.regionIndexForCode(settings.country)
                                             if (loginRegionCombo.currentIndex !== targetIdx) {
                                                 loginRegionCombo.currentIndex = targetIdx
                                             }
@@ -542,8 +636,8 @@ Kirigami.ApplicationWindow {
                             QQC2.CheckBox {
                                 objectName: "loginRememberPasswordCheck"
                                 text: qsTr("Remember password in encrypted vault (auto-renew expired tokens)")
-                                checked: appController.rememberPassword
-                                onToggled: appController.updateRememberPassword(checked)
+                                checked: settings.rememberPassword
+                                onToggled: settings.updateRememberPassword(checked)
                                 Layout.fillWidth: true
                             }
 
@@ -556,16 +650,16 @@ Kirigami.ApplicationWindow {
                                     Layout.fillWidth: true
                                     highlighted: true
                                     icon.name: "dialog-ok-apply"
-                                    text: appController.busy ? qsTr("Signing In...") : qsTr("Sign In & Encrypt")
-                                    enabled: !appController.busy
+                                    text: telemetry.busy ? qsTr("Signing In...") : qsTr("Sign In & Encrypt")
+                                    enabled: !telemetry.busy
                                     onClicked: {
                                         const idx = loginRegionCombo.currentIndex >= 0 ? loginRegionCombo.currentIndex : 0
                                         const selectedRegion = root.regionOptions[idx].value
-                                        appController.login(
+                                        telemetry.login(
                                             loginEmailField.text,
                                             loginPasswordField.text,
                                             selectedRegion,
-                                            appController.language
+                                            settings.language
                                         )
                                     }
                                 }
@@ -573,7 +667,7 @@ Kirigami.ApplicationWindow {
                                 QQC2.Button {
                                     icon.name: "view-preview"
                                     text: qsTr("Sample Data")
-                                    onClicked: appController.loadDemoSampleData()
+                                    onClicked: telemetry.loadDemoSampleData()
                                 }
                             }
                         }
@@ -586,7 +680,7 @@ Kirigami.ApplicationWindow {
                 id: telemetryMainColumn
                 objectName: "telemetryMainColumn"
                 anchors.fill: parent
-                visible: appController.loggedIn
+                visible: telemetry.loggedIn
                 spacing: 12
 
                 RowLayout {
@@ -610,7 +704,7 @@ Kirigami.ApplicationWindow {
                         Layout.preferredHeight: topCardsRow.unifiedCardHeight
                         implicitHeight: topCardsRow.unifiedCardHeight
                         radius: 14
-                        color: appController.rangeColorHex
+                        color: telemetry.rangeColorHex
                         border.color: Qt.rgba(1, 1, 1, 0.35)
                         border.width: 1.5
 
@@ -642,7 +736,7 @@ Kirigami.ApplicationWindow {
                                     QQC2.Label {
                                         id: statusPillLabel
                                         anchors.centerIn: parent
-                                        text: appController.rangeStatusLabel
+                                        text: telemetry.rangeStatusLabel
                                         font.pointSize: 8
                                         font.bold: true
                                         color: "#ffffff"
@@ -655,7 +749,7 @@ Kirigami.ApplicationWindow {
                                 spacing: 8
 
                                 QQC2.Label {
-                                    text: appController.glucoseDisplay
+                                    text: telemetry.glucoseDisplay
                                     font.pointSize: 34
                                     font.bold: true
                                     color: "#ffffff"
@@ -665,7 +759,7 @@ Kirigami.ApplicationWindow {
                                     Layout.fillWidth: true
                                     spacing: 2
                                     QQC2.Label {
-                                        text: appController.resultUnit
+                                        text: telemetry.resultUnit
                                         font.pointSize: 11
                                         font.bold: true
                                         color: "#ffffff"
@@ -673,7 +767,7 @@ Kirigami.ApplicationWindow {
                                         elide: Text.ElideRight
                                     }
                                     QQC2.Label {
-                                        text: appController.trendDescription
+                                        text: telemetry.trendDescription
                                         font.pointSize: 9
                                         color: Qt.rgba(1, 1, 1, 0.92)
                                         Layout.fillWidth: true
@@ -691,7 +785,7 @@ Kirigami.ApplicationWindow {
 
                                     QQC2.Label {
                                         anchors.centerIn: parent
-                                        text: appController.trendSymbol
+                                        text: telemetry.trendSymbol
                                         font.pointSize: 20
                                         font.bold: true
                                         color: "#ffffff"
@@ -700,19 +794,47 @@ Kirigami.ApplicationWindow {
                             }
 
                             QQC2.Label {
-                                text: appController.readingStale
-                                      ? qsTr("⚠ STALE — updated: %1").arg(appController.lastUpdated)
-                                      : qsTr("Updated: %1").arg(appController.lastUpdated)
+                                text: telemetry.readingStale
+                                      ? qsTr("⚠ STALE — updated: %1").arg(telemetry.lastUpdated)
+                                      : qsTr("Updated: %1").arg(telemetry.lastUpdated)
                                 font.pointSize: 8.5
-                                font.bold: appController.readingStale
+                                font.bold: telemetry.readingStale
                                 color: Qt.rgba(1, 1, 1, 0.9)
                                 Layout.fillWidth: true
                                 elide: Text.ElideRight
                             }
 
+                            Rectangle {
+                                objectName: "heroEa1cPill"
+                                Layout.fillWidth: true
+                                implicitHeight: 24
+                                radius: 6
+                                color: Qt.rgba(0, 0, 0, 0.22)
+                                border.color: Qt.rgba(1, 1, 1, 0.28)
+                                border.width: 1
+
+                                QQC2.Label {
+                                    anchors.left: parent.left
+                                    anchors.right: parent.right
+                                    anchors.verticalCenter: parent.verticalCenter
+                                    anchors.leftMargin: 8
+                                    anchors.rightMargin: 8
+                                    text: qsTr("eA1C %1 • GMI %2 • TIR %3 (%4)")
+                                        .arg(telemetry.ea1CDisplay)
+                                        .arg(telemetry.gmiDisplay)
+                                        .arg(telemetry.tirDisplay)
+                                        .arg(telemetry.statsWindow)
+                                    font.pointSize: 8.5
+                                    font.bold: true
+                                    color: "#ffffff"
+                                    elide: Text.ElideRight
+                                    horizontalAlignment: Text.AlignHCenter
+                                }
+                            }
+
                             QQC2.Label {
-                                visible: appController.alertsSnoozed
-                                text: "🔕 " + appController.snoozeUntilDisplay
+                                visible: telemetry.alertsSnoozed
+                                text: "🔕 " + telemetry.snoozeUntilDisplay
                                 font.pointSize: 8.5
                                 color: Qt.rgba(1, 1, 1, 0.9)
                                 Layout.fillWidth: true
@@ -747,8 +869,8 @@ Kirigami.ApplicationWindow {
                                 spacing: 6
                                 Kirigami.Heading {
                                     level: 3
-                                    text: appController.patientName.length > 0
-                                        ? qsTr("Patient: %1").arg(appController.patientName)
+                                    text: telemetry.patientName.length > 0
+                                        ? qsTr("Patient: %1").arg(telemetry.patientName)
                                         : qsTr("CGM Sensor Overview")
                                     color: Kirigami.Theme.textColor
                                     Layout.fillWidth: true
@@ -756,26 +878,26 @@ Kirigami.ApplicationWindow {
                                     elide: Text.ElideRight
                                 }
                                 QQC2.ToolButton {
-                                    icon.name: appController.overlayDarkTheme ? "weather-clear-night" : "color-picker"
+                                    icon.name: settings.overlayDarkTheme ? "weather-clear-night" : "color-picker"
                                     text: qsTr("Overlay Dark")
                                     font.pointSize: 9.5
                                     leftPadding: 6
                                     rightPadding: 6
                                     checkable: true
-                                    checked: appController.overlayDarkTheme
+                                    checked: settings.overlayDarkTheme
                                     QQC2.ToolTip.visible: hovered
                                     QQC2.ToolTip.text: qsTr("Toggle dark slate background for the floating desktop overlay")
-                                    onClicked: appController.updateOverlayDarkTheme(!appController.overlayDarkTheme)
+                                    onClicked: settings.updateOverlayDarkTheme(!settings.overlayDarkTheme)
                                 }
                                 QQC2.ToolButton {
                                     icon.name: "window-duplicate"
-                                    text: appController.overlayVisible
+                                    text: settings.overlayVisible
                                         ? qsTr("Hide Overlay")
                                         : qsTr("Overlay")
                                     font.pointSize: 9.5
                                     leftPadding: 6
                                     rightPadding: 6
-                                    onClicked: appController.updateOverlayVisible(!appController.overlayVisible)
+                                    onClicked: settings.updateOverlayVisible(!settings.overlayVisible)
                                 }
                             }
 
@@ -784,7 +906,7 @@ Kirigami.ApplicationWindow {
                                 spacing: 12
 
                                 QQC2.Label {
-                                    text: qsTr("Target: %1").arg(appController.targetRangeDisplay)
+                                    text: qsTr("Target: %1").arg(telemetry.targetRangeDisplay)
                                     font.bold: true
                                     color: Kirigami.Theme.textColor
                                     Layout.fillWidth: true
@@ -793,7 +915,7 @@ Kirigami.ApplicationWindow {
                                 }
 
                                 QQC2.Label {
-                                    text: qsTr("Region: %1 • Poll: %2s").arg(appController.country.toUpperCase()).arg(appController.pollIntervalSeconds)
+                                    text: qsTr("Region: %1 • Poll: %2s").arg(settings.country.toUpperCase()).arg(settings.pollIntervalSeconds)
                                     color: Kirigami.Theme.textColor
                                     elide: Text.ElideRight
                                 }
@@ -805,16 +927,86 @@ Kirigami.ApplicationWindow {
 
                                 QQC2.CheckBox {
                                     text: qsTr("Tray Icon Badge")
-                                    checked: appController.showGlucoseInTrayIcon
-                                    onToggled: appController.updateShowGlucoseInTrayIcon(checked)
+                                    checked: settings.showGlucoseInTrayIcon
+                                    onToggled: settings.updateShowGlucoseInTrayIcon(checked)
                                     Layout.fillWidth: true
                                 }
 
                                 QQC2.CheckBox {
                                     text: qsTr("Tray Hover Info")
-                                    checked: appController.showGlucoseInTrayTooltip
-                                    onToggled: appController.updateShowGlucoseInTrayTooltip(checked)
+                                    checked: settings.showGlucoseInTrayTooltip
+                                    onToggled: settings.updateShowGlucoseInTrayTooltip(checked)
                                     Layout.fillWidth: true
+                                }
+                            }
+
+                            RowLayout {
+                                Layout.fillWidth: true
+                                spacing: 8
+
+                                QQC2.Label {
+                                    objectName: "dashboardEa1cHeadlineLabel"
+                                    text: telemetry.ea1CHeadline
+                                    font.bold: true
+                                    font.pointSize: 9.5
+                                    color: Kirigami.Theme.textColor
+                                    Layout.fillWidth: true
+                                    Layout.preferredWidth: 0
+                                    elide: Text.ElideRight
+                                    QQC2.ToolTip.visible: ea1cHover.hovered
+                                    QQC2.ToolTip.text: telemetry.ea1CSubline
+                                    HoverHandler { id: ea1cHover }
+                                }
+
+                                QQC2.ToolButton {
+                                    text: "12h"
+                                    display: QQC2.AbstractButton.TextOnly
+                                    font.pointSize: 8.5
+                                    leftPadding: 4
+                                    rightPadding: 4
+                                    checkable: true
+                                    checked: telemetry.statsWindow === "12h"
+                                    onClicked: telemetry.updateStatsWindow("12h")
+                                }
+                                QQC2.ToolButton {
+                                    text: "7d"
+                                    display: QQC2.AbstractButton.TextOnly
+                                    font.pointSize: 8.5
+                                    leftPadding: 4
+                                    rightPadding: 4
+                                    checkable: true
+                                    checked: telemetry.statsWindow === "7d"
+                                    onClicked: telemetry.updateStatsWindow("7d")
+                                }
+                                QQC2.ToolButton {
+                                    text: "14d"
+                                    display: QQC2.AbstractButton.TextOnly
+                                    font.pointSize: 8.5
+                                    leftPadding: 4
+                                    rightPadding: 4
+                                    checkable: true
+                                    checked: telemetry.statsWindow === "14d"
+                                    onClicked: telemetry.updateStatsWindow("14d")
+                                }
+                                QQC2.ToolButton {
+                                    text: "30d"
+                                    display: QQC2.AbstractButton.TextOnly
+                                    font.pointSize: 8.5
+                                    leftPadding: 4
+                                    rightPadding: 4
+                                    checkable: true
+                                    checked: telemetry.statsWindow === "30d"
+                                    onClicked: telemetry.updateStatsWindow("30d")
+                                }
+                                QQC2.ToolButton {
+                                    text: "90d"
+                                    display: QQC2.AbstractButton.TextOnly
+                                    font.pointSize: 8.5
+                                    leftPadding: 4
+                                    rightPadding: 4
+                                    checkable: true
+                                    checked: telemetry.statsWindow === "90d"
+                                    onClicked: telemetry.updateStatsWindow("90d")
                                 }
                             }
 
@@ -834,8 +1026,8 @@ Kirigami.ApplicationWindow {
                                     leftPadding: 6
                                     rightPadding: 6
                                     checkable: true
-                                    checked: appController.themeMode === "system"
-                                    onClicked: appController.updateThemeMode("system")
+                                    checked: settings.themeMode === "system"
+                                    onClicked: settings.updateThemeMode("system")
                                 }
                                 QQC2.ToolButton {
                                     text: qsTr("Dark")
@@ -844,8 +1036,8 @@ Kirigami.ApplicationWindow {
                                     leftPadding: 6
                                     rightPadding: 6
                                     checkable: true
-                                    checked: appController.themeMode === "dark"
-                                    onClicked: appController.updateThemeMode("dark")
+                                    checked: settings.themeMode === "dark"
+                                    onClicked: settings.updateThemeMode("dark")
                                 }
                                 QQC2.ToolButton {
                                     text: qsTr("Light")
@@ -854,8 +1046,8 @@ Kirigami.ApplicationWindow {
                                     leftPadding: 6
                                     rightPadding: 6
                                     checkable: true
-                                    checked: appController.themeMode === "light"
-                                    onClicked: appController.updateThemeMode("light")
+                                    checked: settings.themeMode === "light"
+                                    onClicked: settings.updateThemeMode("light")
                                 }
 
                                 Item { Layout.fillWidth: true }
@@ -872,8 +1064,8 @@ Kirigami.ApplicationWindow {
                                     leftPadding: 6
                                     rightPadding: 6
                                     checkable: true
-                                    checked: appController.resultUnit === "mg/dL"
-                                    onClicked: appController.updateResultUnit("mg/dL")
+                                    checked: telemetry.resultUnit === "mg/dL"
+                                    onClicked: settings.updateResultUnit("mg/dL")
                                 }
                                 QQC2.ToolButton {
                                     text: "mmol/L"
@@ -882,8 +1074,8 @@ Kirigami.ApplicationWindow {
                                     leftPadding: 6
                                     rightPadding: 6
                                     checkable: true
-                                    checked: appController.resultUnit === "mmol/L"
-                                    onClicked: appController.updateResultUnit("mmol/L")
+                                    checked: telemetry.resultUnit === "mmol/L"
+                                    onClicked: settings.updateResultUnit("mmol/L")
                                 }
                             }
                         }
@@ -911,7 +1103,7 @@ Kirigami.ApplicationWindow {
                             spacing: 8
                             Kirigami.Heading {
                                 level: 3
-                                text: qsTr("Continuous Glucose Trend (%1)").arg(appController.resultUnit)
+                                text: qsTr("Continuous Glucose Trend (%1)").arg(telemetry.resultUnit)
                                 color: Kirigami.Theme.textColor
                                 Layout.fillWidth: true
                                 Layout.preferredWidth: 0
@@ -921,7 +1113,7 @@ Kirigami.ApplicationWindow {
                                 objectName: "graphTargetBandLabel"
                                 text: glucoseCanvas.hoveredIndex >= 0
                                     ? (glucoseCanvas.hoveredValueText + " • " + glucoseCanvas.hoveredTimeText)
-                                    : qsTr("Target band: %1").arg(appController.targetRangeDisplay)
+                                    : qsTr("Target band: %1").arg(telemetry.targetRangeDisplay)
                                 font.bold: glucoseCanvas.hoveredIndex >= 0
                                 opacity: glucoseCanvas.hoveredIndex >= 0 ? 0.95 : 0.75
                                 color: Kirigami.Theme.textColor
@@ -956,7 +1148,7 @@ Kirigami.ApplicationWindow {
                             function updateHoverAt(mx, my) {
                                 let pts = []
                                 try {
-                                    pts = JSON.parse(appController.graphPointsJson || "[]")
+                                    pts = JSON.parse(telemetry.graphPointsJson || "[]")
                                 } catch (e) {
                                     pts = []
                                 }
@@ -1021,7 +1213,7 @@ Kirigami.ApplicationWindow {
 
                                 const pt = pts[bestIdx]
                                 const mg = Number(pt.value_mg_dl || 0)
-                                const isMmol = appController.resultUnit === "mmol/L"
+                                const isMmol = telemetry.resultUnit === "mmol/L"
                                 const formattedVal = isMmol
                                     ? (mg / 18.0).toFixed(1) + " mmol/L"
                                     : Math.round(mg).toString() + " mg/dL"
@@ -1034,7 +1226,7 @@ Kirigami.ApplicationWindow {
                                 } else if (mg > 240) {
                                     statusLabel = qsTr("High")
                                     ptColor = "#f97316"
-                                } else if (mg < appController.targetLowMgDl || mg > appController.targetHighMgDl) {
+                                } else if (mg < telemetry.targetLowMgDl || mg > telemetry.targetHighMgDl) {
                                     statusLabel = qsTr("Out of Target")
                                     ptColor = "#eab308"
                                 }
@@ -1044,7 +1236,17 @@ Kirigami.ApplicationWindow {
                                 hoveredY = bestY
                                 hoveredValueText = formattedVal
                                 hoveredStatusText = statusLabel
-                                hoveredTimeText = String(pt.timestamp || qsTr("Unknown time"))
+                                let timeStr = String(pt.timestamp || qsTr("Unknown time"))
+                                try {
+                                    const dMarkers = JSON.parse(medications.graphDosesJson || "[]")
+                                    for (let d = 0; d < dMarkers.length; ++d) {
+                                        const dm = dMarkers[d]
+                                        if (Math.abs(Number(dm.point_index || 0) - bestIdx) <= 0.75) {
+                                            timeStr += " • 💊 " + String(dm.medication_name || "") + " (" + String(dm.dosage || "") + ")"
+                                        }
+                                    }
+                                } catch (e) {}
+                                hoveredTimeText = timeStr
                                 hoveredColorHex = ptColor
                                 requestPaint()
                             }
@@ -1182,7 +1384,7 @@ Kirigami.ApplicationWindow {
 
                                 let pts = []
                                 try {
-                                    pts = JSON.parse(appController.graphPointsJson || "[]")
+                                    pts = JSON.parse(telemetry.graphPointsJson || "[]")
                                 } catch (e) {
                                     pts = []
                                 }
@@ -1194,7 +1396,7 @@ Kirigami.ApplicationWindow {
                                 const plotW = Math.max(10, width - padLeft - padRight)
                                 const plotH = Math.max(10, height - padTop - padBottom)
 
-                                const isMmol = appController.resultUnit === "mmol/L"
+                                const isMmol = telemetry.resultUnit === "mmol/L"
                                 const conv = function(mg) {
                                     return isMmol ? (mg / 18.0) : mg
                                 }
@@ -1215,8 +1417,8 @@ Kirigami.ApplicationWindow {
                                 }
 
                                 // Target range shaded band
-                                const yHigh = yForMg(appController.targetHighMgDl)
-                                const yLow = yForMg(appController.targetLowMgDl)
+                                const yHigh = yForMg(telemetry.targetHighMgDl)
+                                const yLow = yForMg(telemetry.targetLowMgDl)
                                 ctx.fillStyle = root.isLightTheme
                                     ? "rgba(34, 197, 94, 0.14)"
                                     : "rgba(34, 197, 94, 0.18)"
@@ -1294,7 +1496,7 @@ Kirigami.ApplicationWindow {
                                     let ptColor = "#22c55e"
                                     if (v < 70) ptColor = "#ef4444"
                                     else if (v > 240) ptColor = "#f97316"
-                                    else if (v < appController.targetLowMgDl || v > appController.targetHighMgDl) ptColor = "#eab308"
+                                    else if (v < telemetry.targetLowMgDl || v > telemetry.targetHighMgDl) ptColor = "#eab308"
 
                                     if (i === hoveredIndex) {
                                         ctx.fillStyle = root.isLightTheme
@@ -1318,6 +1520,647 @@ Kirigami.ApplicationWindow {
                                         ctx.arc(x, y, 3.5, 0, Math.PI * 2)
                                         ctx.fill()
                                     }
+                                }
+
+                                // Logged Medication Dose Markers (#a855f7 diamond + vertical guide)
+                                let doseMarkers = []
+                                try {
+                                    doseMarkers = JSON.parse(medications.graphDosesJson || "[]")
+                                } catch (e) {
+                                    doseMarkers = []
+                                }
+                                for (let d = 0; d < doseMarkers.length; ++d) {
+                                    const dm = doseMarkers[d]
+                                    const pIdx = Number(dm.point_index || 0)
+                                    const mx = pts.length <= 1
+                                        ? (padLeft + plotW / 2)
+                                        : (padLeft + (plotW * pIdx) / (pts.length - 1))
+                                    const my = yForMg(Number(dm.value_mg_dl || 110))
+
+                                    ctx.save()
+                                    ctx.strokeStyle = "rgba(168, 85, 247, 0.55)"
+                                    ctx.lineWidth = 1.5
+                                    ctx.beginPath()
+                                    ctx.moveTo(mx, padTop)
+                                    ctx.lineTo(mx, padTop + plotH)
+                                    ctx.stroke()
+
+                                    // Purple diamond marker
+                                    ctx.fillStyle = "#a855f7"
+                                    ctx.beginPath()
+                                    ctx.moveTo(mx, my - 7)
+                                    ctx.lineTo(mx + 7, my)
+                                    ctx.lineTo(mx, my + 7)
+                                    ctx.lineTo(mx - 7, my)
+                                    ctx.closePath()
+                                    ctx.fill()
+                                    ctx.strokeStyle = "#ffffff"
+                                    ctx.lineWidth = 1.5
+                                    ctx.stroke()
+
+                                    // Compact label above marker
+                                    const medTag = String(dm.medication_name || "Dose")
+                                    ctx.font = "bold 10px sans-serif"
+                                    ctx.fillStyle = root.isLightTheme ? "#6b21a8" : "#e9d5ff"
+                                    const labelX = Math.max(padLeft + 4, Math.min(padLeft + plotW - 72, mx - 18))
+                                    const labelY = Math.max(padTop + 12, my - 11)
+                                    ctx.fillText("💊 " + medTag, labelX, labelY)
+                                    ctx.restore()
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        // ==================== TAB 5: MEDICATIONS & GLYCEMIC ANALYTICS ====================
+        QQC2.ScrollView {
+            id: medicationsScrollView
+            objectName: "medicationsScrollView"
+            implicitHeight: 0
+            Layout.fillWidth: true
+            Layout.fillHeight: true
+            Layout.minimumHeight: 0
+            Layout.preferredHeight: 0
+            visible: root.activeTab === "medications"
+            clip: true
+            contentWidth: availableWidth
+
+            ColumnLayout {
+                id: medicationsContentColumn
+                objectName: "medicationsContentColumn"
+                width: Math.min(medicationsScrollView.availableWidth, 760)
+                spacing: 14
+
+                Kirigami.Heading {
+                    level: 2
+                    text: qsTr("Medications, Dose Log & Estimated A1C")
+                    color: Kirigami.Theme.textColor
+                    Layout.fillWidth: true
+                    wrapMode: Text.WordWrap
+                }
+
+                // Glycemic Analytics (eA1C / GMI / TIR%) Card
+                Rectangle {
+                    objectName: "ea1cAnalyticsCard"
+                    Layout.fillWidth: true
+                    implicitHeight: ea1cCardCol.implicitHeight + 28
+                    radius: 10
+                    color: Kirigami.Theme.alternateBackgroundColor
+                    border.color: Qt.alpha(Kirigami.Theme.textColor, 0.15)
+                    border.width: 1
+
+                    ColumnLayout {
+                        id: ea1cCardCol
+                        anchors.left: parent.left
+                        anchors.right: parent.right
+                        anchors.top: parent.top
+                        anchors.margins: 14
+                        spacing: 8
+
+                        RowLayout {
+                            Layout.fillWidth: true
+                            spacing: 6
+
+                            Kirigami.Heading {
+                                level: 3
+                                text: qsTr("Estimated A1C (eA1C) & Glycemic Management Indicator (GMI)")
+                                color: Kirigami.Theme.textColor
+                                Layout.fillWidth: true
+                                Layout.preferredWidth: 0
+                                wrapMode: Text.WordWrap
+                            }
+
+                            QQC2.ToolButton {
+                                text: "12h"
+                                display: QQC2.AbstractButton.TextOnly
+                                leftPadding: 6
+                                rightPadding: 6
+                                checkable: true
+                                checked: telemetry.statsWindow === "12h"
+                                onClicked: telemetry.updateStatsWindow("12h")
+                            }
+                            QQC2.ToolButton {
+                                text: "7d"
+                                display: QQC2.AbstractButton.TextOnly
+                                leftPadding: 6
+                                rightPadding: 6
+                                checkable: true
+                                checked: telemetry.statsWindow === "7d"
+                                onClicked: telemetry.updateStatsWindow("7d")
+                            }
+                            QQC2.ToolButton {
+                                text: "14d"
+                                display: QQC2.AbstractButton.TextOnly
+                                leftPadding: 6
+                                rightPadding: 6
+                                checkable: true
+                                checked: telemetry.statsWindow === "14d"
+                                onClicked: telemetry.updateStatsWindow("14d")
+                            }
+                            QQC2.ToolButton {
+                                text: "30d"
+                                display: QQC2.AbstractButton.TextOnly
+                                leftPadding: 6
+                                rightPadding: 6
+                                checkable: true
+                                checked: telemetry.statsWindow === "30d"
+                                onClicked: telemetry.updateStatsWindow("30d")
+                            }
+                            QQC2.ToolButton {
+                                text: "90d"
+                                display: QQC2.AbstractButton.TextOnly
+                                leftPadding: 6
+                                rightPadding: 6
+                                checkable: true
+                                checked: telemetry.statsWindow === "90d"
+                                onClicked: telemetry.updateStatsWindow("90d")
+                            }
+                        }
+
+                        QQC2.Label {
+                            text: telemetry.ea1CHeadline
+                            font.bold: true
+                            font.pointSize: 11
+                            color: Kirigami.Theme.textColor
+                            Layout.fillWidth: true
+                            Layout.preferredWidth: 0
+                            wrapMode: Text.WordWrap
+                        }
+
+                        QQC2.Label {
+                            text: telemetry.ea1CSubline
+                            opacity: 0.85
+                            color: Kirigami.Theme.textColor
+                            Layout.fillWidth: true
+                            Layout.preferredWidth: 0
+                            wrapMode: Text.WordWrap
+                        }
+
+                        QQC2.Label {
+                            text: qsTr("Formulas: ADAG eA1C (%) = (Mean mg/dL + 46.7) / 28.7 • Bergenstal GMI (%) = 3.31 + 0.02392 × Mean mg/dL.")
+                            font.pointSize: 8.5
+                            opacity: 0.72
+                            color: Kirigami.Theme.textColor
+                            Layout.fillWidth: true
+                            Layout.preferredWidth: 0
+                            wrapMode: Text.WordWrap
+                        }
+                    }
+                }
+
+                // Scheduled Medications & Quick Dose Checklist Card
+                Rectangle {
+                    objectName: "medicationsScheduleCard"
+                    Layout.fillWidth: true
+                    implicitHeight: medsScheduleCol.implicitHeight + 28
+                    radius: 10
+                    color: Kirigami.Theme.alternateBackgroundColor
+                    border.color: Qt.alpha(Kirigami.Theme.textColor, 0.15)
+                    border.width: 1
+
+                    ColumnLayout {
+                        id: medsScheduleCol
+                        anchors.left: parent.left
+                        anchors.right: parent.right
+                        anchors.top: parent.top
+                        anchors.margins: 14
+                        spacing: 10
+
+                        RowLayout {
+                            Layout.fillWidth: true
+                            spacing: 8
+
+                            Kirigami.Heading {
+                                level: 3
+                                text: qsTr("Scheduled Medications & Quick Dose Checklist")
+                                color: Kirigami.Theme.textColor
+                                Layout.fillWidth: true
+                                Layout.preferredWidth: 0
+                                wrapMode: Text.WordWrap
+                            }
+
+                            QQC2.Label {
+                                text: medications.medicationsSummary
+                                font.bold: true
+                                opacity: 0.85
+                                color: Kirigami.Theme.textColor
+                            }
+                        }
+
+                        QQC2.Label {
+                            visible: root.medicationsListModel.length === 0
+                            text: qsTr("No medications configured yet. Add your oral medications or insulin below, or load Sample Data on the Dashboard.")
+                            wrapMode: Text.WordWrap
+                            opacity: 0.78
+                            color: Kirigami.Theme.textColor
+                            Layout.fillWidth: true
+                            Layout.preferredWidth: 0
+                        }
+
+                        Repeater {
+                            model: root.medicationsListModel
+
+                            delegate: Rectangle {
+                                readonly property bool isEditingThis: root.editingMedId === String(modelData.id || "") && root.editingMedId.length > 0
+                                Layout.fillWidth: true
+                                implicitHeight: medItemRow.implicitHeight + 16
+                                radius: 8
+                                color: isEditingThis
+                                    ? Qt.alpha(Kirigami.Theme.highlightColor, 0.14)
+                                    : Qt.alpha(Kirigami.Theme.backgroundColor, 0.55)
+                                border.color: isEditingThis
+                                    ? Kirigami.Theme.highlightColor
+                                    : Qt.alpha(Kirigami.Theme.textColor, 0.12)
+                                border.width: isEditingThis ? 1.5 : 1
+
+                                RowLayout {
+                                    id: medItemRow
+                                    anchors.left: parent.left
+                                    anchors.right: parent.right
+                                    anchors.top: parent.top
+                                    anchors.margins: 8
+                                    spacing: 8
+
+                                    ColumnLayout {
+                                        Layout.fillWidth: true
+                                        Layout.preferredWidth: 0
+                                        spacing: 2
+
+                                        QQC2.Label {
+                                            text: String(modelData.name || "") + " — " + String(modelData.dosage || "")
+                                            font.bold: true
+                                            color: Kirigami.Theme.textColor
+                                            Layout.fillWidth: true
+                                            Layout.preferredWidth: 0
+                                            wrapMode: Text.WordWrap
+                                        }
+
+                                        QQC2.Label {
+                                            text: String(modelData.schedule_label || "")
+                                                + (String(modelData.schedule_code) === "weekly" && modelData.weekday_label
+                                                    ? (" (" + String(modelData.weekday_label) + " " + String(modelData.scheduled_time || "") + ")")
+                                                    : (modelData.scheduled_time && String(modelData.schedule_code) !== "as_needed"
+                                                        ? (" (" + String(modelData.scheduled_time) + ")")
+                                                        : ""))
+                                                + " • " + String(modelData.status_label || "")
+                                            font.pointSize: 8.5
+                                            opacity: 0.82
+                                            color: Kirigami.Theme.textColor
+                                            Layout.fillWidth: true
+                                            Layout.preferredWidth: 0
+                                            wrapMode: Text.WordWrap
+                                        }
+                                    }
+
+                                    Rectangle {
+                                        readonly property string pillColor: {
+                                            const c = String(modelData.status_code || "")
+                                            if (c === "taken") return "#22c55e"
+                                            if (c === "skipped") return "#64748b"
+                                            if (c === "due") return "#f97316"
+                                            if (c === "as_needed") return "#a855f7"
+                                            return "#38bdf8"
+                                        }
+                                        radius: 6
+                                        color: Qt.alpha(pillColor, 0.18)
+                                        border.color: pillColor
+                                        border.width: 1
+                                        implicitWidth: medStatusLabel.implicitWidth + 12
+                                        implicitHeight: 22
+
+                                        QQC2.Label {
+                                            id: medStatusLabel
+                                            anchors.centerIn: parent
+                                            text: {
+                                                const c = String(modelData.status_code || "")
+                                                if (c === "taken") return qsTr("Taken")
+                                                if (c === "skipped") return qsTr("Skipped")
+                                                if (c === "due") return qsTr("Due Now")
+                                                if (c === "as_needed") return qsTr("As Needed")
+                                                return qsTr("Scheduled")
+                                            }
+                                            font.pointSize: 8
+                                            font.bold: true
+                                            color: Kirigami.Theme.textColor
+                                        }
+                                    }
+
+                                    QQC2.Button {
+                                        objectName: "logMedicationDoseButton"
+                                        highlighted: true
+                                        icon.name: "dialog-ok-apply"
+                                        text: qsTr("Taken")
+                                        onClicked: medications.logMedicationDose(String(modelData.id || ""), "", "")
+                                    }
+
+                                    QQC2.Button {
+                                        objectName: "skipMedicationDoseButton"
+                                        visible: String(modelData.schedule_code || "") !== "as_needed"
+                                        icon.name: "media-skip-forward"
+                                        text: qsTr("Skipped")
+                                        onClicked: medications.skipMedicationDose(String(modelData.id || ""), "")
+                                    }
+
+                                    QQC2.ToolButton {
+                                        objectName: "editMedicationButton"
+                                        icon.name: "document-edit"
+                                        display: QQC2.AbstractButton.IconOnly
+                                        QQC2.ToolTip.visible: hovered
+                                        QQC2.ToolTip.text: qsTr("Edit medication dosage or schedule")
+                                        onClicked: root.startEditingMedication(modelData)
+                                    }
+
+                                    QQC2.ToolButton {
+                                        icon.name: "edit-delete"
+                                        display: QQC2.AbstractButton.IconOnly
+                                        QQC2.ToolTip.visible: hovered
+                                        QQC2.ToolTip.text: qsTr("Remove medication")
+                                        onClicked: {
+                                            const delId = String(modelData.id || "")
+                                            if (root.editingMedId === delId) {
+                                                root.cancelEditingMedication()
+                                            }
+                                            medications.removeMedication(delId)
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+
+                // Add / Update Medication Card
+                Rectangle {
+                    objectName: "addMedicationCard"
+                    Layout.fillWidth: true
+                    implicitHeight: addMedCol.implicitHeight + 28
+                    radius: 10
+                    color: Kirigami.Theme.alternateBackgroundColor
+                    border.color: Qt.alpha(Kirigami.Theme.textColor, 0.15)
+                    border.width: 1
+
+                    ColumnLayout {
+                        id: addMedCol
+                        anchors.left: parent.left
+                        anchors.right: parent.right
+                        anchors.top: parent.top
+                        anchors.margins: 14
+                        spacing: 10
+
+                        Kirigami.Heading {
+                            level: 3
+                            text: root.editingMedId.length > 0
+                                ? qsTr("Edit Medication Dosage or Schedule")
+                                : qsTr("Add Scheduled or As-Needed Medication")
+                            color: Kirigami.Theme.textColor
+                            Layout.fillWidth: true
+                            Layout.preferredWidth: 0
+                            wrapMode: Text.WordWrap
+                        }
+
+                        RowLayout {
+                            Layout.fillWidth: true
+                            spacing: 10
+
+                            ColumnLayout {
+                                Layout.fillWidth: true
+                                Layout.preferredWidth: 0
+                                spacing: 4
+                                QQC2.Label {
+                                    text: qsTr("Medication Name")
+                                    font.bold: true
+                                    color: Kirigami.Theme.textColor
+                                }
+                                QQC2.TextField {
+                                    id: medNameField
+                                    objectName: "medNameField"
+                                    Layout.fillWidth: true
+                                    placeholderText: qsTr("e.g. Metformin ER, Lantus, Lispro")
+                                }
+                            }
+
+                            ColumnLayout {
+                                Layout.fillWidth: true
+                                Layout.preferredWidth: 0
+                                spacing: 4
+                                QQC2.Label {
+                                    text: qsTr("Dosage")
+                                    font.bold: true
+                                    color: Kirigami.Theme.textColor
+                                }
+                                QQC2.TextField {
+                                    id: medDosageField
+                                    objectName: "medDosageField"
+                                    Layout.fillWidth: true
+                                    placeholderText: qsTr("e.g. 500 mg, 18 units")
+                                }
+                            }
+                        }
+
+                        RowLayout {
+                            Layout.fillWidth: true
+                            spacing: 10
+
+                            ColumnLayout {
+                                Layout.fillWidth: true
+                                Layout.preferredWidth: 0
+                                spacing: 4
+                                QQC2.Label {
+                                    text: qsTr("Schedule")
+                                    font.bold: true
+                                    color: Kirigami.Theme.textColor
+                                }
+                                QQC2.ComboBox {
+                                    id: medScheduleCombo
+                                    objectName: "medScheduleCombo"
+                                    Layout.fillWidth: true
+                                    model: [
+                                        { label: qsTr("Once Daily"), value: "daily" },
+                                        { label: qsTr("Twice Daily"), value: "twice_daily" },
+                                        { label: qsTr("Weekly"), value: "weekly" },
+                                        { label: qsTr("As Needed (PRN)"), value: "as_needed" }
+                                    ]
+                                    textRole: "label"
+                                    valueRole: "value"
+                                    onActivated: {
+                                        if (currentValue === "twice_daily" && medTimesField.text === "08:00") {
+                                            medTimesField.text = "08:00, 20:00"
+                                        } else if (currentValue === "daily" && medTimesField.text === "08:00, 20:00") {
+                                            medTimesField.text = "08:00"
+                                        }
+                                    }
+                                }
+                            }
+
+                            ColumnLayout {
+                                Layout.fillWidth: true
+                                Layout.preferredWidth: 0
+                                visible: medScheduleCombo.currentValue === "weekly"
+                                spacing: 4
+                                QQC2.Label {
+                                    text: qsTr("Day of Week")
+                                    font.bold: true
+                                    color: Kirigami.Theme.textColor
+                                    elide: Text.ElideRight
+                                    Layout.fillWidth: true
+                                }
+                                QQC2.ComboBox {
+                                    id: medWeekdayCombo
+                                    objectName: "medWeekdayCombo"
+                                    Layout.fillWidth: true
+                                    model: [
+                                        { label: qsTr("Monday"), value: 0 },
+                                        { label: qsTr("Tuesday"), value: 1 },
+                                        { label: qsTr("Wednesday"), value: 2 },
+                                        { label: qsTr("Thursday"), value: 3 },
+                                        { label: qsTr("Friday"), value: 4 },
+                                        { label: qsTr("Saturday"), value: 5 },
+                                        { label: qsTr("Sunday"), value: 6 }
+                                    ]
+                                    textRole: "label"
+                                    valueRole: "value"
+                                }
+                            }
+
+                            ColumnLayout {
+                                Layout.fillWidth: true
+                                Layout.preferredWidth: 0
+                                visible: medScheduleCombo.currentValue !== "as_needed"
+                                spacing: 4
+                                QQC2.Label {
+                                    text: qsTr("Scheduled Time(s) (24h HH:MM)")
+                                    font.bold: true
+                                    color: Kirigami.Theme.textColor
+                                    elide: Text.ElideRight
+                                    Layout.fillWidth: true
+                                }
+                                QQC2.TextField {
+                                    id: medTimesField
+                                    objectName: "medTimesField"
+                                    Layout.fillWidth: true
+                                    text: "08:00"
+                                    placeholderText: qsTr("08:00 or 08:00, 20:00")
+                                }
+                            }
+                        }
+
+                        RowLayout {
+                            Layout.fillWidth: true
+                            spacing: 10
+
+                            QQC2.Switch {
+                                id: medReminderSwitch
+                                text: qsTr("Desktop reminder notification when due")
+                                checked: true
+                                Layout.fillWidth: true
+                            }
+
+                            QQC2.Button {
+                                objectName: "cancelEditMedicationButton"
+                                visible: root.editingMedId.length > 0
+                                icon.name: "dialog-cancel"
+                                text: qsTr("Cancel")
+                                onClicked: root.cancelEditingMedication()
+                            }
+
+                            QQC2.Button {
+                                objectName: "addMedicationButton"
+                                highlighted: true
+                                icon.name: root.editingMedId.length > 0 ? "document-save" : "list-add"
+                                text: root.editingMedId.length > 0
+                                    ? qsTr("Save Changes")
+                                    : qsTr("Add Medication")
+                                enabled: medNameField.text.trim().length > 0
+                                onClicked: {
+                                    medications.upsertMedication(
+                                        root.editingMedId,
+                                        medNameField.text,
+                                        medDosageField.text,
+                                        medScheduleCombo.currentValue,
+                                        medTimesField.text,
+                                        Number(medWeekdayCombo.currentValue || 0),
+                                        medReminderSwitch.checked,
+                                        ""
+                                    )
+                                    root.cancelEditingMedication()
+                                }
+                            }
+                        }
+                    }
+                }
+
+                // Recent Dose History Log Card
+                Rectangle {
+                    objectName: "doseHistoryCard"
+                    Layout.fillWidth: true
+                    implicitHeight: doseHistoryCol.implicitHeight + 28
+                    radius: 10
+                    color: Kirigami.Theme.alternateBackgroundColor
+                    border.color: Qt.alpha(Kirigami.Theme.textColor, 0.15)
+                    border.width: 1
+
+                    ColumnLayout {
+                        id: doseHistoryCol
+                        anchors.left: parent.left
+                        anchors.right: parent.right
+                        anchors.top: parent.top
+                        anchors.margins: 14
+                        spacing: 8
+
+                        Kirigami.Heading {
+                            level: 3
+                            text: qsTr("Recent Dose History (%1 logged)").arg(medications.medicationDosesCount)
+                            color: Kirigami.Theme.textColor
+                            Layout.fillWidth: true
+                            Layout.preferredWidth: 0
+                            wrapMode: Text.WordWrap
+                        }
+
+                        QQC2.Label {
+                            visible: root.medicationDosesListModel.length === 0
+                            text: qsTr("No doses logged yet. Click 'Log Dose' above when taking a medication — doses within the last 12 hours are also plotted as purple markers (💊) on the Dashboard glucose trend graph.")
+                            wrapMode: Text.WordWrap
+                            opacity: 0.78
+                            color: Kirigami.Theme.textColor
+                            Layout.fillWidth: true
+                            Layout.preferredWidth: 0
+                        }
+
+                        Repeater {
+                            model: root.medicationDosesListModel
+
+                            delegate: RowLayout {
+                                Layout.fillWidth: true
+                                spacing: 8
+
+                                QQC2.Label {
+                                    text: (modelData.skipped ? "⏭ " : "💊 ")
+                                        + String(modelData.medication_name || "")
+                                        + " (" + String(modelData.dosage || "") + ")"
+                                        + (modelData.skipped ? (" — " + qsTr("Skipped")) : "")
+                                    font.bold: true
+                                    color: Kirigami.Theme.textColor
+                                    Layout.fillWidth: true
+                                    Layout.preferredWidth: 0
+                                    elide: Text.ElideRight
+                                }
+
+                                QQC2.Label {
+                                    text: String(modelData.taken_at_display || "") + (modelData.glucose_mg_dl_at_dose ? (" • " + Math.round(Number(modelData.glucose_mg_dl_at_dose)) + " mg/dL") : "")
+                                    font.pointSize: 8.5
+                                    opacity: 0.82
+                                    color: Kirigami.Theme.textColor
+                                    elide: Text.ElideRight
+                                }
+
+                                QQC2.ToolButton {
+                                    icon.name: "edit-delete"
+                                    display: QQC2.AbstractButton.IconOnly
+                                    QQC2.ToolTip.visible: hovered
+                                    QQC2.ToolTip.text: qsTr("Remove dose log entry")
+                                    onClicked: medications.removeMedicationDose(String(modelData.id || ""))
                                 }
                             }
                         }
@@ -1380,29 +2223,29 @@ Kirigami.ApplicationWindow {
 
                         QQC2.Switch {
                             text: qsTr("Show blood glucose level inside the System Tray icon badge")
-                            checked: appController.showGlucoseInTrayIcon
-                            onToggled: appController.updateShowGlucoseInTrayIcon(checked)
+                            checked: settings.showGlucoseInTrayIcon
+                            onToggled: settings.updateShowGlucoseInTrayIcon(checked)
                             Layout.fillWidth: true
                         }
 
                         QQC2.Switch {
                             text: qsTr("Show blood glucose telemetry in the System Tray hover tooltip")
-                            checked: appController.showGlucoseInTrayTooltip
-                            onToggled: appController.updateShowGlucoseInTrayTooltip(checked)
+                            checked: settings.showGlucoseInTrayTooltip
+                            onToggled: settings.updateShowGlucoseInTrayTooltip(checked)
                             Layout.fillWidth: true
                         }
 
                         QQC2.Switch {
                             text: qsTr("Launch automatically when logging into KDE Plasma")
-                            checked: appController.autostartEnabled
-                            onToggled: appController.updateAutostartEnabled(checked)
+                            checked: settings.autostartEnabled
+                            onToggled: settings.updateAutostartEnabled(checked)
                             Layout.fillWidth: true
                         }
 
                         QQC2.Switch {
                             text: qsTr("Start minimized to the System Tray on login")
-                            checked: appController.startMinimized
-                            onToggled: appController.updateStartMinimized(checked)
+                            checked: settings.startMinimized
+                            onToggled: settings.updateStartMinimized(checked)
                             Layout.fillWidth: true
                         }
                     }
@@ -1452,8 +2295,8 @@ Kirigami.ApplicationWindow {
                                 ]
                                 textRole: "label"
                                 valueRole: "value"
-                                currentIndex: appController.themeMode === "dark" ? 1 : (appController.themeMode === "light" ? 2 : 0)
-                                onActivated: appController.updateThemeMode(currentValue)
+                                currentIndex: settings.themeMode === "dark" ? 1 : (settings.themeMode === "light" ? 2 : 0)
+                                onActivated: settings.updateThemeMode(currentValue)
                             }
                         }
 
@@ -1469,8 +2312,8 @@ Kirigami.ApplicationWindow {
                                 Layout.fillWidth: true
                                 Layout.maximumWidth: 320
                                 model: ["mg/dL", "mmol/L"]
-                                currentIndex: appController.resultUnit === "mmol/L" ? 1 : 0
-                                onActivated: appController.updateResultUnit(currentText)
+                                currentIndex: telemetry.resultUnit === "mmol/L" ? 1 : 0
+                                onActivated: settings.updateResultUnit(currentText)
                             }
                         }
 
@@ -1492,26 +2335,26 @@ Kirigami.ApplicationWindow {
                                 ]
                                 textRole: "label"
                                 valueRole: "value"
-                                currentIndex: appController.windowMode === "overlay"
+                                currentIndex: settings.windowMode === "overlay"
                                     ? 1
-                                    : (appController.windowMode === "overlayTransparent" ? 2 : 0)
-                                onActivated: appController.updateWindowMode(currentValue)
+                                    : (settings.windowMode === "overlayTransparent" ? 2 : 0)
+                                onActivated: settings.updateWindowMode(currentValue)
                             }
                         }
 
                         QQC2.Switch {
                             objectName: "overlayDarkThemeSwitch"
                             text: qsTr("Desktop Overlay Dark Theme (Dark slate background with status accent border)")
-                            checked: appController.overlayDarkTheme
-                            onToggled: appController.updateOverlayDarkTheme(checked)
+                            checked: settings.overlayDarkTheme
+                            onToggled: settings.updateOverlayDarkTheme(checked)
                             Layout.fillWidth: true
                         }
 
                         QQC2.Switch {
                             objectName: "overlayAllDesktopsSwitch"
                             text: qsTr("Show Desktop Overlay on All Virtual Desktops")
-                            checked: appController.overlayOnAllDesktops
-                            onToggled: appController.updateOverlayOnAllDesktops(checked)
+                            checked: settings.overlayOnAllDesktops
+                            onToggled: settings.updateOverlayOnAllDesktops(checked)
                             Layout.fillWidth: true
                         }
 
@@ -1519,7 +2362,7 @@ Kirigami.ApplicationWindow {
                             Layout.fillWidth: true
                             spacing: 12
                             QQC2.Label {
-                                text: qsTr("Desktop Overlay Opacity (%1%):").arg(appController.overlayOpacityPercent)
+                                text: qsTr("Desktop Overlay Opacity (%1%):").arg(settings.overlayOpacityPercent)
                                 Layout.preferredWidth: 190
                                 color: Kirigami.Theme.textColor
                             }
@@ -1531,8 +2374,8 @@ Kirigami.ApplicationWindow {
                                 from: 20
                                 to: 100
                                 stepSize: 5
-                                value: appController.overlayOpacityPercent
-                                onMoved: appController.updateOverlayOpacityPercent(Math.round(value))
+                                value: settings.overlayOpacityPercent
+                                onMoved: settings.updateOverlayOpacityPercent(Math.round(value))
                             }
                             QQC2.SpinBox {
                                 id: overlayOpacitySpin
@@ -1540,8 +2383,8 @@ Kirigami.ApplicationWindow {
                                 from: 20
                                 to: 100
                                 stepSize: 5
-                                value: appController.overlayOpacityPercent
-                                onValueModified: appController.updateOverlayOpacityPercent(value)
+                                value: settings.overlayOpacityPercent
+                                onValueModified: settings.updateOverlayOpacityPercent(value)
                             }
                         }
 
@@ -1557,16 +2400,16 @@ Kirigami.ApplicationWindow {
                                 from: 60
                                 to: 3600
                                 stepSize: 15
-                                value: appController.pollIntervalSeconds
-                                onValueModified: appController.updatePollIntervalSeconds(value)
+                                value: settings.pollIntervalSeconds
+                                onValueModified: settings.updatePollIntervalSeconds(value)
                             }
                         }
 
                         QQC2.Switch {
                             objectName: "checkUpdatesSwitch"
                             text: qsTr("Automatically check GitHub Releases for updates (on startup & every 6 hours)")
-                            checked: appController.checkUpdatesOnStartup
-                            onToggled: appController.updateCheckUpdatesOnStartup(checked)
+                            checked: settings.checkUpdatesOnStartup
+                            onToggled: settings.updateCheckUpdatesOnStartup(checked)
                             Layout.fillWidth: true
                         }
 
@@ -1577,33 +2420,33 @@ Kirigami.ApplicationWindow {
                             QQC2.Button {
                                 objectName: "checkUpdatesNowButton"
                                 icon.name: "system-software-update"
-                                text: appController.checkingForUpdates ? qsTr("Checking...") : qsTr("Check for Updates")
-                                enabled: !appController.checkingForUpdates
-                                onClicked: appController.checkForUpdates()
+                                text: settings.checkingForUpdates ? qsTr("Checking...") : qsTr("Check for Updates")
+                                enabled: !settings.checkingForUpdates
+                                onClicked: telemetry.checkForUpdates()
                             }
 
                             QQC2.Label {
-                                text: appController.updateStatusMessage
-                                color: appController.updateAvailable ? "#0284c7" : Kirigami.Theme.textColor
-                                font.bold: appController.updateAvailable
+                                text: settings.updateStatusMessage
+                                color: settings.updateAvailable ? "#0284c7" : Kirigami.Theme.textColor
+                                font.bold: settings.updateAvailable
                                 Layout.fillWidth: true
                                 Layout.preferredWidth: 0
                                 wrapMode: Text.WordWrap
                             }
 
                             QQC2.Button {
-                                visible: appController.updateAvailable
+                                visible: settings.updateAvailable
                                 icon.name: "download"
-                                text: appController.installingUpdate ? qsTr("Installing...") : qsTr("Install %1").arg(appController.latestVersion)
-                                enabled: !appController.installingUpdate
-                                onClicked: appController.installUpdate()
+                                text: settings.installingUpdate ? qsTr("Installing...") : qsTr("Install %1").arg(settings.latestVersion)
+                                enabled: !settings.installingUpdate
+                                onClicked: telemetry.installUpdate()
                             }
 
                             QQC2.Button {
-                                visible: appController.updateAvailable
+                                visible: settings.updateAvailable
                                 icon.name: "globe"
                                 text: qsTr("Release Notes")
-                                onClicked: Qt.openUrlExternally(appController.updateUrl)
+                                onClicked: Qt.openUrlExternally(settings.updateUrl)
                             }
                         }
                     }
@@ -1658,21 +2501,21 @@ Kirigami.ApplicationWindow {
                         QQC2.Switch {
                             id: bringToFrontSwitch
                             text: qsTr("Bring main window to front when glucose is out of range")
-                            checked: appController.bringToFrontEnabled
+                            checked: settings.bringToFrontEnabled
                             Layout.fillWidth: true
                         }
 
                         QQC2.Switch {
                             id: flashWindowSwitch
                             text: qsTr("Flash taskbar / window attention on out-of-range reading")
-                            checked: appController.flashWindowEnabled
+                            checked: settings.flashWindowEnabled
                             Layout.fillWidth: true
                         }
 
                         QQC2.Switch {
                             id: audioAlertSwitch
                             text: qsTr("Play audio alert when glucose is out of range")
-                            checked: appController.audioAlertEnabled
+                            checked: settings.audioAlertEnabled
                             Layout.fillWidth: true
                         }
 
@@ -1680,7 +2523,7 @@ Kirigami.ApplicationWindow {
                             id: customSoundSwitch
                             visible: audioAlertSwitch.checked
                             text: qsTr("Use custom audio file (.mp3 / .wav / .ogg)")
-                            checked: appController.useCustomSound
+                            checked: settings.useCustomSound
                             Layout.fillWidth: true
                         }
 
@@ -1692,7 +2535,7 @@ Kirigami.ApplicationWindow {
                             QQC2.TextField {
                                 id: customSoundField
                                 Layout.fillWidth: true
-                                text: appController.customSoundPath
+                                text: settings.customSoundPath
                                 placeholderText: qsTr("/path/to/custom-alert.mp3")
                             }
 
@@ -1706,7 +2549,7 @@ Kirigami.ApplicationWindow {
                         QQC2.Switch {
                             id: overrideThresholdSwitch
                             text: qsTr("Override sensor target range with custom alert thresholds (mg/dL)")
-                            checked: appController.overrideThreshold
+                            checked: settings.overrideThreshold
                             Layout.fillWidth: true
                         }
 
@@ -1724,7 +2567,7 @@ Kirigami.ApplicationWindow {
                                     id: customLowSpin
                                     from: 40
                                     to: 180
-                                    value: Math.round(appController.customTargetLow)
+                                    value: Math.round(settings.customTargetLow)
                                 }
                             }
 
@@ -1737,7 +2580,7 @@ Kirigami.ApplicationWindow {
                                     id: customHighSpin
                                     from: 100
                                     to: 400
-                                    value: Math.round(appController.customTargetHigh)
+                                    value: Math.round(settings.customTargetHigh)
                                 }
                             }
                         }
@@ -1762,7 +2605,7 @@ Kirigami.ApplicationWindow {
                                 id: urgentLowSpin
                                 from: 40
                                 to: 100
-                                value: Math.round(appController.urgentLowMgDl)
+                                value: Math.round(settings.urgentLowMgDl)
                             }
 
                             QQC2.Label {
@@ -1775,20 +2618,20 @@ Kirigami.ApplicationWindow {
                                 id: alertRepeatSpin
                                 from: 1
                                 to: 240
-                                value: appController.alertRepeatMinutes
+                                value: settings.alertRepeatMinutes
                             }
 
                             QQC2.Switch {
                                 id: alertOnStaleSwitch
                                 text: qsTr("Alert when no new reading for (minutes)")
-                                checked: appController.alertOnStale
+                                checked: settings.alertOnStale
                                 Layout.fillWidth: true
                             }
                             QQC2.SpinBox {
                                 id: staleAfterSpin
                                 from: 5
                                 to: 120
-                                value: appController.staleAfterMinutes
+                                value: settings.staleAfterMinutes
                             }
                         }
 
@@ -1805,8 +2648,8 @@ Kirigami.ApplicationWindow {
                             spacing: 8
 
                             QQC2.Label {
-                                text: appController.alertsSnoozed
-                                      ? appController.snoozeUntilDisplay
+                                text: telemetry.alertsSnoozed
+                                      ? telemetry.snoozeUntilDisplay
                                       : qsTr("Snooze alerts:")
                                 color: Kirigami.Theme.textColor
                                 Layout.fillWidth: true
@@ -1815,21 +2658,21 @@ Kirigami.ApplicationWindow {
                             QQC2.Button {
                                 text: qsTr("30 min")
                                 icon.name: "notifications-disabled"
-                                onClicked: appController.snoozeAlerts(30)
+                                onClicked: telemetry.snoozeAlerts(30)
                             }
                             QQC2.Button {
                                 text: qsTr("1 hour")
-                                onClicked: appController.snoozeAlerts(60)
+                                onClicked: telemetry.snoozeAlerts(60)
                             }
                             QQC2.Button {
                                 text: qsTr("2 hours")
-                                onClicked: appController.snoozeAlerts(120)
+                                onClicked: telemetry.snoozeAlerts(120)
                             }
                             QQC2.Button {
-                                visible: appController.alertsSnoozed
+                                visible: telemetry.alertsSnoozed
                                 text: qsTr("Cancel")
                                 icon.name: "notifications"
-                                onClicked: appController.snoozeAlerts(0)
+                                onClicked: telemetry.snoozeAlerts(0)
                             }
                         }
 
@@ -1842,13 +2685,13 @@ Kirigami.ApplicationWindow {
                                 icon.name: "document-save"
                                 text: qsTr("Save Alert Settings")
                                 onClicked: {
-                                    appController.saveAdvancedAlertSettings(
+                                    settings.saveAdvancedAlertSettings(
                                         urgentLowSpin.value,
                                         alertRepeatSpin.value,
                                         staleAfterSpin.value,
                                         alertOnStaleSwitch.checked
                                     )
-                                    appController.saveAlertSettings(
+                                    settings.saveAlertSettings(
                                         bringToFrontSwitch.checked,
                                         flashWindowSwitch.checked,
                                         audioAlertSwitch.checked,
@@ -1864,7 +2707,7 @@ Kirigami.ApplicationWindow {
                             QQC2.Button {
                                 icon.name: "media-playback-start"
                                 text: qsTr("Test Alert Now")
-                                onClicked: appController.testAlertNow()
+                                onClicked: settings.testAlertNow()
                             }
                         }
                     }
@@ -1917,7 +2760,7 @@ Kirigami.ApplicationWindow {
                         spacing: 10
 
                         QQC2.Label {
-                            text: qsTr("Session Status: %1").arg(appController.statusMessage)
+                            text: qsTr("Session Status: %1").arg(telemetry.statusMessage)
                             font.bold: true
                             color: Kirigami.Theme.textColor
                             Layout.fillWidth: true
@@ -1927,7 +2770,7 @@ Kirigami.ApplicationWindow {
 
                         QQC2.Label {
                             text: qsTr("Connected Patient: %1").arg(
-                                appController.patientName.length > 0 ? appController.patientName : qsTr("None")
+                                telemetry.patientName.length > 0 ? telemetry.patientName : qsTr("None")
                             )
                             color: Kirigami.Theme.textColor
                             Layout.fillWidth: true
@@ -1939,7 +2782,7 @@ Kirigami.ApplicationWindow {
                             Layout.fillWidth: true
                             spacing: 10
                             QQC2.Label {
-                                text: qsTr("Regional Endpoint: %1").arg(appController.country.toUpperCase())
+                                text: qsTr("Regional Endpoint: %1").arg(settings.country.toUpperCase())
                                 color: Kirigami.Theme.textColor
                                 Layout.fillWidth: true
                                 Layout.preferredWidth: 0
@@ -1951,10 +2794,10 @@ Kirigami.ApplicationWindow {
                                 model: root.regionOptions
                                 textRole: "label"
                                 valueRole: "value"
-                                currentIndex: root.regionIndexForCode(appController.country)
+                                currentIndex: root.regionIndexForCode(settings.country)
                                 onActivated: function(index) {
                                     if (index >= 0 && index < root.regionOptions.length) {
-                                        appController.updateCountry(root.regionOptions[index].value)
+                                        settings.updateCountry(root.regionOptions[index].value)
                                     }
                                 }
                             }
@@ -1971,13 +2814,13 @@ Kirigami.ApplicationWindow {
                         QQC2.Switch {
                             objectName: "accountRememberPasswordSwitch"
                             text: qsTr("Remember password in encrypted vault for automatic token renewal")
-                            checked: appController.rememberPassword
-                            onToggled: appController.updateRememberPassword(checked)
+                            checked: settings.rememberPassword
+                            onToggled: settings.updateRememberPassword(checked)
                             Layout.fillWidth: true
                         }
 
                         QQC2.Label {
-                            text: qsTr("Encrypted Vault Path: %1").arg(appController.credentialsVaultPath)
+                            text: qsTr("Encrypted Vault Path: %1").arg(settings.credentialsVaultPath)
                             font.family: "monospace"
                             wrapMode: Text.WrapAnywhere
                             color: Kirigami.Theme.textColor
@@ -1991,9 +2834,9 @@ Kirigami.ApplicationWindow {
                             QQC2.Button {
                                 icon.name: "system-log-out"
                                 text: qsTr("Sign Out & Wipe Encrypted Vault")
-                                enabled: appController.loggedIn || appController.credentialsEncrypted
+                                enabled: telemetry.loggedIn || telemetry.credentialsEncrypted
                                 onClicked: {
-                                    appController.logout()
+                                    telemetry.logout()
                                     root.activeTab = "dashboard"
                                 }
                             }
@@ -2001,6 +2844,29 @@ Kirigami.ApplicationWindow {
                     }
                 }
             }
+        }
+
+        // ==================== TAB 6: DIAGNOSTIC LOGS ====================
+        LogViewerDialog {
+            id: logViewerWindow
+            controller: settings
+            visible: root.activeTab === "logs"
+            Layout.fillWidth: true
+            Layout.fillHeight: true
+            Layout.minimumHeight: 0
+            Layout.preferredHeight: 0
+        }
+
+        // ==================== TAB 7: ABOUT ====================
+        AboutDialog {
+            id: aboutDialogWindow
+            controller: settings
+            telemetry: telemetry
+            visible: root.activeTab === "about"
+            Layout.fillWidth: true
+            Layout.fillHeight: true
+            Layout.minimumHeight: 0
+            Layout.preferredHeight: 0
         }
     }
 }

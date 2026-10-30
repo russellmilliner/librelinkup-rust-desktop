@@ -98,6 +98,9 @@ fn main() {
         .any(|a| matches!(a.as_str(), "--minimized" | "-m" | "--start-minimized" | "--autostart" | "--hidden"));
 
     install_panic_hook();
+    // Health-data vaults (glucose history, medications) are encrypted with the same
+    // DPAPI-protected master key as the credential vault.
+    librelinkup_core::crypto::set_secret_provider(platform::load_or_create_master_secret);
     let Some(_instance) = platform::acquire_single_instance() else {
         return; // existing instance was brought to the front
     };

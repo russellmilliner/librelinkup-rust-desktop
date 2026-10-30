@@ -1,4 +1,5 @@
-/target
+# Build output at any depth (the core crate is a workspace member now).
+target/
 /.flatpak-builder
 /flatpak-build
 /flatpak-repo

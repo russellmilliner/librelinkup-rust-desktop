@@ -20,7 +20,10 @@ fn main() {
             uri: "io.github.librelinkup",
             version_major: 1,
             version_minor: 0,
-            rust_files: &["src/bridge/app_controller.rs"],
+            // Only files that contain a `#[cxx_qt::bridge]` module. The controller
+            // implementations live in telemetry.rs / settings.rs / medications.rs and are
+            // ordinary Rust `impl` blocks.
+            rust_files: &["src/bridge/qobject_bridge.rs"],
             qml_files: &[
                 "src/qml/Main.qml",
                 "src/qml/LogViewerDialog.qml",
@@ -40,9 +43,13 @@ fn main() {
     println!("cargo:rerun-if-changed=src/cpp/tray_manager.h");
     println!("cargo:rerun-if-changed=src/cpp/audio_portal.h");
     println!("cargo:rerun-if-changed=src/cpp/ui_tests.h");
-    println!("cargo:rerun-if-changed=src/bridge/app_controller.rs");
+    println!("cargo:rerun-if-changed=src/bridge/qobject_bridge.rs");
     println!("cargo:rerun-if-changed=src/bridge/autostart.rs");
-    println!("cargo:rerun-if-changed=src/bridge/settings_handlers.rs");
+    println!("cargo:rerun-if-changed=src/bridge/state.rs");
+    println!("cargo:rerun-if-changed=src/bridge/ops.rs");
+    println!("cargo:rerun-if-changed=src/bridge/telemetry.rs");
+    println!("cargo:rerun-if-changed=src/bridge/settings.rs");
+    println!("cargo:rerun-if-changed=src/bridge/medications.rs");
     println!("cargo:rerun-if-changed=src/qml/Main.qml");
     println!("cargo:rerun-if-changed=src/qml/LogViewerDialog.qml");
     println!("cargo:rerun-if-changed=src/qml/OverlayWidget.qml");

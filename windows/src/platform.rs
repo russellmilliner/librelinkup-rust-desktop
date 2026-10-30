@@ -2,9 +2,14 @@
 //! single-instance guard, toast-notification identity (AppUserModelID), console attach
 //! for `--version`, and native window show/hide/flash helpers.
 //!
-//! Non-Windows builds get inert stubs so the crate still type-checks on Linux.
+//! Non-Windows builds get inert stubs so the crate still type-checks on Linux (where the
+//! Windows-only constants below are legitimately unused).
+#![cfg_attr(not(windows), allow(dead_code))]
 
 use std::path::PathBuf;
+
+#[cfg(windows)]
+use librelinkup_core::event_log::log_error;
 
 /// Matches the Linux app id and the AppUserModelID set on the installer's Start Menu shortcut.
 pub const APP_USER_MODEL_ID: &str = "io.github.russellmilliner.LibreLinkUpDesktop";
@@ -31,6 +36,16 @@ pub fn load_or_create_master_secret() -> Result<Vec<u8>, String> {
     let path = dpapi_master_key_path();
     if let Ok(blob) = std::fs::read(&path) {
         return dpapi_unprotect(&blob);
+    }
+    // Fail closed: an existing vault must never be orphaned by rotating the key.
+    if librelinkup_core::paths::credentials_file_path().exists() {
+        return Err(
+            "An encrypted vault exists but its DPAPI master key is missing (the vault was \
+             copied from another machine or user account?). Refusing to create a new key, \
+             which would make the existing credentials permanently unreadable. Sign in again \
+             to replace the vault."
+                .to_string(),
+        );
     }
     let key = librelinkup_core::crypto::generate_random_key()?;
     let blob = dpapi_protect(&key)?;
@@ -233,6 +248,13 @@ pub fn acquire_single_instance() -> Option<SingleInstance> {
     let name = wide(SINGLE_INSTANCE_MUTEX);
     let handle = unsafe { CreateMutexW(std::ptr::null(), 0, name.as_ptr()) };
     if handle.is_null() {
+        // Mutex creation failed (e.g. a restricted desktop): do not silently claim that this
+        // is the only instance. Log and continue - a duplicate window is far less harmful
+        // than an app that refuses to start.
+        log_error(
+            "SYSTEM",
+            "CreateMutexW failed; single-instance guard is disabled for this process.",
+        );
         return Some(SingleInstance { _handle: handle });
     }
     if unsafe { GetLastError() } == ERROR_ALREADY_EXISTS {

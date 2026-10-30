@@ -11,6 +11,7 @@ use librelinkup_core::models::{
     parse_notification_snooze_action, ALERT_NOTIFICATION_SNOOZE_ACTIONS,
 };
 
+#[cfg(target_os = "windows")]
 use crate::platform::APP_USER_MODEL_ID;
 
 /// Plays the alert on a background thread so callers never block.

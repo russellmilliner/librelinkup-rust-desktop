@@ -215,6 +215,7 @@ pub fn config_dir() -> PathBuf {
     );
     let dir = base.join(APP_DIR_NAME);
     let _ = fs::create_dir_all(&dir);
+    restrict_dir_permissions(&dir);
 
     static MIGRATE_ONCE: Once = Once::new();
     MIGRATE_ONCE.call_once(|| {
@@ -230,6 +231,18 @@ pub fn config_dir() -> PathBuf {
     });
     dir
     }
+}
+
+/// Restricts a directory to the current user (`0700`) on Unix. Vault files are `0600`, but
+/// the directory must not be listable/enterable by other local users either.
+pub fn restrict_dir_permissions(dir: &Path) {
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        let _ = fs::set_permissions(dir, fs::Permissions::from_mode(0o700));
+    }
+    #[cfg(not(unix))]
+    let _ = dir;
 }
 
 /// Windows known folder from its environment variable, falling back to
@@ -264,6 +277,7 @@ pub fn data_dir() -> PathBuf {
     );
     let dir = base.join(APP_DIR_NAME);
     let _ = fs::create_dir_all(&dir);
+    restrict_dir_permissions(&dir);
     dir
 }
 
@@ -302,6 +316,27 @@ pub fn default_log_file_path() -> PathBuf {
 /// Generated default alarm sound (see `alert_sound`).
 pub fn default_alert_sound_path() -> PathBuf {
     data_dir().join("default-alert.wav")
+}
+
+/// Persistent 90-day rolling glucose sample history for eA1C / GMI / TIR analytics.
+/// Encrypted at rest (see `analytics`): this is health data, not just a cache.
+pub fn glucose_history_file_path() -> PathBuf {
+    data_dir().join("glucose_history.enc.json")
+}
+
+/// Pre-0.5 plaintext glucose history, migrated into the encrypted vault on first run.
+pub fn legacy_glucose_history_file_path() -> PathBuf {
+    data_dir().join("glucose_history.json")
+}
+
+/// Persistent medication schedule definitions and dose history log (encrypted at rest).
+pub fn medications_file_path() -> PathBuf {
+    config_dir().join("medications.enc.json")
+}
+
+/// Pre-0.5 plaintext medication store, migrated into the encrypted vault on first run.
+pub fn legacy_medications_file_path() -> PathBuf {
+    config_dir().join("medications.json")
 }
 
 /// Host autostart directory. Intentionally NOT XDG_CONFIG_HOME: inside Flatpak that points

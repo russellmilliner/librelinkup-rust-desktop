@@ -7,7 +7,7 @@ use std::sync::OnceLock;
 use cxx_qt_lib::QString;
 
 use crate::alert_sound::default_alert_sound;
-use crate::bridge::app_controller::qobject;
+use crate::bridge::qobject_bridge::qobject;
 use crate::event_log::{log_error, log_info, log_warn};
 use crate::models::AppSettings;
 use crate::paths::{

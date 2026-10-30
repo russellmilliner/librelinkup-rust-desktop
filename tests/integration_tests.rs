@@ -299,6 +299,9 @@ fn test_log_viewer_filtering_and_export() {
 
 #[test]
 fn test_mock_librelinkup_api_server() {
+    // Loopback plaintext endpoints are refused unless explicitly opted into (release builds
+    // and shipped binaries never are).
+    std::env::set_var("LIBRELINKUP_ALLOW_INSECURE_TEST_ENDPOINT", "1");
     assert_eq!(normalize_country_code("ch"), "eu");
     assert_eq!(resolve_base_url("us"), "https://api-us.libreview.io/llu");
     assert_eq!(resolve_base_url("global"), "https://api.libreview.io/llu");
@@ -379,6 +382,7 @@ fn test_mock_librelinkup_api_server() {
 
 #[test]
 fn test_mock_api_regional_redirect_and_error_handling() {
+    std::env::set_var("LIBRELINKUP_ALLOW_INSECURE_TEST_ENDPOINT", "1");
     let listener = TcpListener::bind("127.0.0.1:0").unwrap();
     let addr = listener.local_addr().unwrap();
 
@@ -471,7 +475,16 @@ fn test_all_11_supported_regional_endpoints() {
     }
 }
 
+/// Live probe against Abbott's production API.
+///
+/// Ignored by default: it performs real network I/O against a third-party service and would
+/// make CI flaky and slow. It deliberately does **not** read any real user credentials - it
+/// only checks that anonymous, deliberately-invalid logins are rejected as
+/// `InvalidCredentials` rather than being blocked at the TLS/WAF layer.
+///
+/// Run manually with `cargo test -- --ignored`.
 #[test]
+#[ignore = "live network: probes the real LibreView API; run explicitly with --ignored"]
 fn test_live_libreview_waf_no_403_forbidden() {
     let rt = tokio::runtime::Builder::new_current_thread()
         .enable_all()
@@ -485,33 +498,9 @@ fn test_live_libreview_waf_no_403_forbidden() {
             "invalid_password_123",
         )
         .await;
-        println!("Live probe result: {:?}", res);
+        println!("Live probe result: {res:?}");
         // Must return InvalidCredentials (HTTP 200 with {"status":2}), NEVER ServerError(403, ...)
         assert_eq!(res, Err(ApiError::InvalidCredentials));
-
-        let ldb_dir = librelinkup_kde::paths::legacy_flatpak_leveldb_dir();
-        if let Some(creds) = try_migrate_legacy_leveldb_credentials(&ldb_dir) {
-            println!(
-                "Migrated creds country={} account_id={}",
-                creds.country, creds.account_id
-            );
-            let snap_res =
-                fetch_cgm_snapshot_async(&creds.country, &creds.token, &creds.account_id).await;
-            println!(
-                "Live snapshot result: {:?}",
-                snap_res.as_ref().map(|s| (
-                    s.value_mg_dl,
-                    s.trend_arrow,
-                    &s.first_name,
-                    s.graph_points.len()
-                ))
-            );
-            assert!(
-                snap_res.is_ok(),
-                "Expected live CGM snapshot to succeed, got: {:?}",
-                snap_res
-            );
-        }
     });
 }
 
@@ -524,7 +513,7 @@ fn test_qml_ui_layout_no_box_or_window_overflow() {
     std::env::set_var("LIBRELINKUP_DATA_DIR", &dir);
 
     let report =
-        librelinkup_kde::bridge::app_controller::qobject::librelinkup_run_ui_overflow_tests()
+        librelinkup_kde::bridge::qobject_bridge::qobject::librelinkup_run_ui_overflow_tests()
             .to_string();
     let _ = std::fs::remove_dir_all(&dir);
 
@@ -587,4 +576,47 @@ fn test_security_hardening_regions_opt_in_password_autostart_and_redaction() {
     // 5. XDG autostart Exec= quoting
     let desktop_entry = format_autostart_desktop_entry("/opt/My App/librelinkup-kde", true);
     assert!(desktop_entry.contains("Exec=\"/opt/My App/librelinkup-kde\" --minimized\n"));
+}
+
+#[test]
+fn test_estimated_a1c_and_medication_tracking_lifecycle() {
+    use librelinkup_kde::analytics::{
+        calculate_ea1c_adag, calculate_gmi, GlucoseHistoryStore, StatsWindow,
+    };
+    use librelinkup_kde::medications::{MedicationSchedule, MedicationStore};
+    use librelinkup_kde::session::build_demo_snapshot;
+
+    let now = 1_775_000_000i64;
+    let snap = build_demo_snapshot(now);
+
+    let mut hist = GlucoseHistoryStore::default();
+    let added = hist.ingest_snapshot(&snap, now);
+    assert!(added);
+    let stats = hist.compute_stats(StatsWindow::Hours12, now, 70.0, 180.0, Some(&snap));
+    assert!(stats.has_data());
+    assert!((stats.ea1c_percent - calculate_ea1c_adag(stats.mean_mg_dl)).abs() < 0.01);
+    assert!((stats.gmi_percent - calculate_gmi(stats.mean_mg_dl)).abs() < 0.01);
+    assert!(stats.format_headline().contains("eA1C"));
+    assert!(stats.format_headline().contains("GMI"));
+
+    let mut meds = MedicationStore::default();
+    let med_id = meds
+        .upsert_medication(
+            "",
+            "Metformin ER",
+            "500 mg",
+            MedicationSchedule::TwiceDaily,
+            "08:00,20:00",
+            0,
+            true,
+            "Take with meals",
+        )
+        .expect("upsert medication");
+    let dose = meds
+        .log_dose(&med_id, None, now - 3600, Some(118.0), "With breakfast")
+        .expect("log dose");
+    assert_eq!(dose.medication_name, "Metformin ER");
+    let markers = meds.graph_markers_for_snapshot(&snap, now);
+    assert_eq!(markers.len(), 1);
+    assert_eq!(markers[0].medication_name, "Metformin ER");
 }

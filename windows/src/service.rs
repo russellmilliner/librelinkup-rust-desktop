@@ -4,18 +4,26 @@
 //! It runs on its own thread with a Tokio runtime and never depends on the UI being painted,
 //! so alerts keep firing while the main window is hidden in the tray.
 
+use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
+use librelinkup_core::analytics::{
+    load_default_glucose_history, save_default_glucose_history, GlucoseHistoryStore, StatsWindow,
+};
 use librelinkup_core::api::{authenticate_async, normalize_country_code};
 use librelinkup_core::crypto::{
     clear_credentials_at_path, load_credentials_with_secret, save_credentials_with_secret,
     StoredCredentials,
 };
 use librelinkup_core::event_log::{log_error, log_info, log_warn};
+use librelinkup_core::medications::{
+    build_demo_medication_store, load_default_medications, save_default_medications,
+    MedicationSchedule, MedicationStore,
+};
 use librelinkup_core::models::{
-    clamp_poll_interval, format_glucose_value, load_default_settings, save_default_settings,
-    trend_arrow_symbol, AlertKind, AppSettings, GlucoseSnapshot,
+    clamp_poll_interval, format_glucose_value, jittered_poll_interval, load_default_settings,
+    save_default_settings, trend_arrow_symbol, AlertKind, AppSettings, GlucoseSnapshot,
 };
 use librelinkup_core::paths::credentials_file_path;
 use librelinkup_core::session::{
@@ -40,7 +48,14 @@ pub struct Shared {
     pub status: String,
     pub error: String,
     pub snapshot: GlucoseSnapshot,
+    pub stats_window: StatsWindow,
+    pub glucose_history: GlucoseHistoryStore,
+    pub medication_store: MedicationStore,
     pub last_alert: Option<(AlertKind, i64)>,
+    /// Epoch of the last successful CGM fetch (fail-closed staleness clock).
+    pub last_successful_fetch_epoch: Option<i64>,
+    /// Epoch of the last encrypted-history write (throttles multi-MB vault rewrites).
+    pub last_history_persist_epoch: i64,
     pub vault_ok: bool,
     pub checking_updates: bool,
     pub installing_update: bool,
@@ -63,6 +78,28 @@ pub enum Command {
     LoadDemo,
     CheckUpdates { manual: bool },
     InstallUpdate,
+    SetStatsWindow(StatsWindow),
+    UpsertMedication {
+        id: String,
+        name: String,
+        dosage: String,
+        schedule: MedicationSchedule,
+        scheduled_time: String,
+        weekday: u8,
+        reminder_enabled: bool,
+        notes: String,
+    },
+    RemoveMedication(String),
+    LogMedicationDose {
+        medication_id: String,
+        custom_dosage: String,
+        notes: String,
+    },
+    SkipMedicationDose {
+        medication_id: String,
+        notes: String,
+    },
+    RemoveMedicationDose(String),
 }
 
 /// Callbacks into the UI layer (implemented in `main.rs`).
@@ -89,6 +126,9 @@ pub fn start(notifier: Arc<dyn UiNotifier>) -> (SharedState, UnboundedSender<Com
     settings.autostart_enabled = platform::is_autostart_registered();
     let shared = Arc::new(Mutex::new(Shared {
         settings,
+        stats_window: StatsWindow::Hours12,
+        glucose_history: load_default_glucose_history(),
+        medication_store: load_default_medications(),
         status: "Ready".into(),
         ..Default::default()
     }));
@@ -115,6 +155,7 @@ pub fn start(notifier: Arc<dyn UiNotifier>) -> (SharedState, UnboundedSender<Com
                     notifier,
                     tx: thread_tx,
                     creds: None,
+                    medication_last_notified: HashMap::new(),
                 }
                 .run(rx),
             );
@@ -128,6 +169,7 @@ struct Service {
     notifier: Arc<dyn UiNotifier>,
     tx: UnboundedSender<Command>,
     creds: Option<StoredCredentials>,
+    medication_last_notified: HashMap<String, i64>,
 }
 
 impl Service {
@@ -173,7 +215,8 @@ impl Service {
     }
 
     fn poll_interval(&self) -> Duration {
-        let secs = clamp_poll_interval(lock(&self.shared).settings.poll_interval_seconds);
+        // Jitter (+/-10%) so restarts and multiple instances never poll in lock-step.
+        let secs = jittered_poll_interval(lock(&self.shared).settings.poll_interval_seconds);
         Duration::from_secs(secs as u64)
     }
 
@@ -265,6 +308,7 @@ impl Service {
                     s.username.clear();
                     s.snapshot = GlucoseSnapshot::default();
                     s.last_alert = None;
+                    s.last_successful_fetch_epoch = None;
                     s.error.clear();
                     s.status = "Signed out — encrypted vault cleared.".into();
                 });
@@ -347,11 +391,16 @@ impl Service {
                 false
             }
             Command::LoadDemo => {
-                let snap = build_demo_snapshot(now_epoch());
+                let now = now_epoch();
+                let snap = build_demo_snapshot(now);
                 self.update(|s| {
                     s.demo = true;
                     s.logged_in = true;
                     s.status = "Sample CGM telemetry loaded".into();
+                    s.glucose_history.ingest_snapshot(&snap, now);
+                    if s.medication_store.medications.is_empty() {
+                        s.medication_store = build_demo_medication_store(now);
+                    }
                     s.snapshot = snap;
                 });
                 false
@@ -362,6 +411,100 @@ impl Service {
             }
             Command::InstallUpdate => {
                 self.spawn_install_update();
+                false
+            }
+            Command::SetStatsWindow(win) => {
+                log_info("GLUCOSE", format!("Selected glycemic stats window: {}", win.label()));
+                self.update(|s| s.stats_window = win);
+                false
+            }
+            Command::UpsertMedication {
+                id,
+                name,
+                dosage,
+                schedule,
+                scheduled_time,
+                weekday,
+                reminder_enabled,
+                notes,
+            } => {
+                self.update(|s| {
+                    if s.medication_store
+                        .upsert_medication(
+                            &id,
+                            &name,
+                            &dosage,
+                            schedule,
+                            &scheduled_time,
+                            weekday,
+                            reminder_enabled,
+                            &notes,
+                        )
+                        .is_ok()
+                    {
+                        let _ = save_default_medications(&s.medication_store);
+                        log_info("MEDS", format!("Saved medication '{}' ({})", name.trim(), schedule.label()));
+                    }
+                });
+                false
+            }
+            Command::RemoveMedication(id) => {
+                self.update(|s| {
+                    if s.medication_store.remove_medication(&id) {
+                        let _ = save_default_medications(&s.medication_store);
+                        log_info("MEDS", "Removed scheduled medication.");
+                    }
+                });
+                false
+            }
+            Command::LogMedicationDose {
+                medication_id,
+                custom_dosage,
+                notes,
+            } => {
+                let now = now_epoch();
+                self.update(|s| {
+                    let g = (s.snapshot.value_mg_dl > 0.0).then_some(s.snapshot.value_mg_dl);
+                    let cd = (!custom_dosage.trim().is_empty()).then_some(custom_dosage.as_str());
+                    if let Ok(entry) = s.medication_store.log_dose(&medication_id, cd, now, g, &notes) {
+                        let _ = save_default_medications(&s.medication_store);
+                        log_info(
+                            "MEDS",
+                            format!(
+                                "Logged medication dose: {} ({}) at {}",
+                                entry.medication_name, entry.dosage, entry.taken_at_display
+                            ),
+                        );
+                    }
+                });
+                false
+            }
+            Command::SkipMedicationDose {
+                medication_id,
+                notes,
+            } => {
+                let now = now_epoch();
+                self.update(|s| {
+                    if let Ok(entry) = s.medication_store.skip_dose(&medication_id, now, &notes) {
+                        let _ = save_default_medications(&s.medication_store);
+                        log_info(
+                            "MEDS",
+                            format!(
+                                "Skipped medication dose: {} ({}) at {}",
+                                entry.medication_name, entry.dosage, entry.taken_at_display
+                            ),
+                        );
+                    }
+                });
+                false
+            }
+            Command::RemoveMedicationDose(dose_id) => {
+                self.update(|s| {
+                    if s.medication_store.remove_dose_log(&dose_id) {
+                        let _ = save_default_medications(&s.medication_store);
+                        log_info("MEDS", "Removed logged medication dose entry.");
+                    }
+                });
                 false
             }
         }
@@ -489,6 +632,7 @@ impl Service {
                             release_url: librelinkup_core::updater::GITHUB_RELEASES_PAGE_URL.to_string(),
                             download_url: librelinkup_core::updater::GITHUB_RELEASES_PAGE_URL.to_string(),
                             sha256_url: String::new(),
+                            signature_url: String::new(),
                             release_notes: String::new(),
                             message: err.clone(),
                         });
@@ -590,10 +734,24 @@ impl Service {
                         snap.graph_points.len()
                     ),
                 );
+                let now = now_epoch();
                 self.update(|s| {
                     s.busy = false;
                     s.error.clear();
                     s.demo = false;
+                    s.last_successful_fetch_epoch = Some(now);
+                    if s.glucose_history.ingest_snapshot(&snap, now)
+                        && now - s.last_history_persist_epoch
+                            >= librelinkup_core::analytics::HISTORY_PERSIST_MIN_INTERVAL_SECS
+                    {
+                        match save_default_glucose_history(&s.glucose_history) {
+                            Ok(()) => s.last_history_persist_epoch = now,
+                            Err(e) => log_error(
+                                "CRYPTO",
+                                format!("Failed to persist glucose history vault: {e}"),
+                            ),
+                        }
+                    }
                     s.snapshot = snap;
                     s.status = "Live CGM telemetry active".into();
                 });
@@ -611,16 +769,33 @@ impl Service {
     }
 
     /// Evaluates alert thresholds using `librelinkup_core::session::evaluate_alert_decision`.
-    fn evaluate_alerts(&self) {
-        let (settings, snap, last, logged_in) = {
+    fn evaluate_alerts(&mut self) {
+        let now = now_epoch();
+        let reminders = {
             let s = lock(&self.shared);
-            (s.settings.clone(), s.snapshot.clone(), s.last_alert, s.logged_in)
+            s.medication_store
+                .evaluate_due_reminders(now, &mut self.medication_last_notified)
+        };
+        for r in reminders {
+            log_info("MEDS", format!("{}: {}", r.title, r.body));
+            alerts::show_notification(&r.title, &r.body);
+        }
+
+        let (settings, snap, last, logged_in, last_fetch) = {
+            let s = lock(&self.shared);
+            (
+                s.settings.clone(),
+                s.snapshot.clone(),
+                s.last_alert,
+                s.logged_in,
+                s.last_successful_fetch_epoch,
+            )
         };
         if !logged_in {
             return;
         }
-        let now = now_epoch();
-        let (decision, clear_last) = evaluate_alert_decision(&settings, &snap, last, now);
+        let (decision, clear_last) =
+            evaluate_alert_decision(&settings, &snap, last, now, last_fetch);
         if clear_last {
             log_info("ALERT", "Glucose back within alert thresholds.");
             lock(&self.shared).last_alert = None;

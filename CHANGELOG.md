@@ -2,6 +2,14 @@
 
 All notable changes and bumped dependencies for `russellmilliner/librelinkup-rust-desktop` are documented in this file.
 
+## [v0.5.2](https://github.com/russellmilliner/librelinkup-rust-desktop/releases/tag/v0.5.2) — 2026-10-31
+
+### Highlights
+- Release v0.5.2 of librelinkup-kde.
+
+### Commits
+- feat(ha,ui,docs): add Home Assistant multi-patient selector, status bar connection badge, updated screenshots & documentation (79af1b6)
+
 ## [v0.5.1](https://github.com/russellmilliner/librelinkup-rust-desktop/releases/tag/v0.5.1) — 2026-10-31
 
 ### Highlights

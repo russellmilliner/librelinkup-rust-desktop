@@ -80,13 +80,16 @@ QML Timer(250 ms) ─► telemetry.tick() ────┤ ops::refresh_display /
   access happens on the Qt GUI thread, and a `RefCell` turns any accidental re-entrancy into a
   loud panic instead of a deadlock. **Never touch it from a background thread.**
 * **`bridge/ops.rs`** contains every state transition that is not a property setter:
-  display refresh, analytics recompute, medication view models, history persistence throttle,
-  and `current_settings()` (which *reads the file first* so settings this front-end does not
-  own are preserved).
+  display refresh, analytics recompute, medication view models (with `last_graph_markers_key`
+  caching so `GraphPoint` timestamps are not re-parsed on unchanged 250 ms ticks), event-log
+  refresh gated by `EVENT_LOG_SEQ`, history persistence throttle, and `current_settings()`
+  (which clones `AppState::base_settings` in memory for zero disk I/O per tick, while
+  `persist_settings()` preserves any externally managed fields from `settings.json`).
 * **`bridge/telemetry.rs`** owns all async work (login, refresh, update check/install) and
   funnels results back with `qt_thread().queue(...)`. It is also the object the C++ tray holds
-  a pointer to, so tray actions are dispatched there and delegated into shared state via short
-  one-line wrappers.
+  a pointer to (`m_controller`), so tray actions are dispatched there and delegated into shared
+  state via short one-line wrappers, and tray state (including `overlay_only_mode` via
+  `TrayPayload::flags & 0x40`) is pushed via `TrayPayload`.
 * Cross-controller refresh is **pull-based**: the QML timer calls `sync()` on each controller.
   There is no cross-object signal. If you need a value visible in three places, put it in
   `AppState` and mirror it in each `sync()`.
@@ -171,6 +174,8 @@ High and Stale are not.** Signal loss must not raise an un-dismissable critical 
 | **I-8** | Outbound URLs are allowlisted (LibreView regions, GitHub release assets) | prevents token exfiltration via a spoofed redirect |
 | **I-9** | Background results are generation-tagged before touching state | prevents resurrecting a signed-out session |
 | **I-10** | Polling is clamped to ≥60 s **and** jittered | LibreView rate-limits; lock-step instances trip it |
+| **I-11** | `TrayManager` reads state from `TrayPayload` (never `SettingsController` properties on `m_controller`) | `m_controller` is `TelemetryController`; reading missing properties returns `false` and can trigger queued-invocation feedback loops |
+| **I-12** | `OverlayWidget` tooltips must render in external top-level `librelinkupOverlayTooltipWindow` (never in-scene `QQC2.ToolTip`) | in-scene `QQuickPopup` tooltips clip to the `276×88` overlay window and obscure the action buttons |
 
 ---
 

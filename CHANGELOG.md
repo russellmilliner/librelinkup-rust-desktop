@@ -2,6 +2,28 @@
 
 All notable changes and bumped dependencies for `russellmilliner/librelinkup-rust-desktop` are documented in this file.
 
+## [v0.5.0-deps](https://github.com/russellmilliner/librelinkup-rust-desktop/releases/tag/v0.5.0-deps) — 2026-10-31
+
+### 📦 Bumped Dependencies (15 packages)
+
+| Package | Previous | Updated | Scope |
+| :--- | :--- | :--- | :--- |
+| `encoding_rs` | `0.8.42` | **`0.8.44`** | Lockfile (`windows/Cargo.lock`) |
+| `js-sys` | `0.3.106` | **`0.3.107`** | Lockfile (`windows/Cargo.lock`) |
+| `log` | `0.4.34` | **`0.4.35`** | Lockfile (`windows/Cargo.lock`) |
+| `ron` | `0.12.2` | **`0.12.3`** | Lockfile (`windows/Cargo.lock`) |
+| `rustix` | `1.1.5` | **`1.1.6`** | Lockfile (`windows/Cargo.lock`) |
+| `unicode-width` | `0.2.2` | **`0.2.3`** | Lockfile (`windows/Cargo.lock`) |
+| `utf8_iter` | `1.0.4` | **`1.1.0`** | Lockfile (`windows/Cargo.lock`) |
+| `wasm-bindgen` | `0.2.129` | **`0.2.130`** | Lockfile (`windows/Cargo.lock`) |
+| `wasm-bindgen-futures` | `0.4.79` | **`0.4.80`** | Lockfile (`windows/Cargo.lock`) |
+| `wasm-bindgen-macro` | `0.2.129` | **`0.2.130`** | Lockfile (`windows/Cargo.lock`) |
+| `wasm-bindgen-macro-support` | `0.2.129` | **`0.2.130`** | Lockfile (`windows/Cargo.lock`) |
+| `wasm-bindgen-shared` | `0.2.129` | **`0.2.130`** | Lockfile (`windows/Cargo.lock`) |
+| `web-sys` | `0.3.106` | **`0.3.107`** | Lockfile (`windows/Cargo.lock`) |
+| `webbrowser` | `1.2.5` | **`1.2.6`** | Lockfile (`windows/Cargo.lock`) |
+| `zcheapstr` | `1.1.0` | **`1.2.0`** | Lockfile (`windows/Cargo.lock`) |
+
 ## [v0.5.0](https://github.com/russellmilliner/librelinkup-rust-desktop/releases/tag/v0.5.0) — 2026-10-29
 
 ### Highlights

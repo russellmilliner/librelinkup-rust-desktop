@@ -1153,14 +1153,19 @@ impl qobject::TelemetryController {
     }
 
     pub fn update_overlay_only_mode(mut self: Pin<&mut Self>, only_overlay: bool) {
-        with_state(|s| {
+        let changed = with_state(|s| {
             let effective = only_overlay && s.overlay_visible;
             if s.overlay_only_mode != effective {
                 s.overlay_only_mode = effective;
                 let _ = ops::persist_settings(s);
+                true
+            } else {
+                false
             }
         });
-        self.as_mut().tick();
+        if changed {
+            self.as_mut().tick();
+        }
     }
 
     pub fn update_autostart_enabled(mut self: Pin<&mut Self>, enabled: bool) {
@@ -1504,6 +1509,9 @@ fn build_tray_payload(s: &mut AppState) -> qobject::TrayPayload {
     }
     if s.overlay_on_all_desktops {
         flags |= 0x20;
+    }
+    if s.overlay_only_mode {
+        flags |= 0x40;
     }
 
     qobject::TrayPayload {

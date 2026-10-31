@@ -157,8 +157,11 @@ pub struct AppState {
     pub medications_count: i32,
     pub medication_doses_count: i32,
 
-    // ---- constants ----
+    // ---- constants / caches ----
     pub app_version: String,
+    pub base_settings: crate::models::AppSettings,
+    pub last_event_log_seq: u64,
+    pub last_graph_markers_key: String,
 }
 
 impl Default for AppState {
@@ -316,6 +319,9 @@ impl Default for AppState {
             medication_doses_count: 0,
 
             app_version: env!("CARGO_PKG_VERSION").to_string(),
+            base_settings: settings,
+            last_event_log_seq: 0,
+            last_graph_markers_key: String::new(),
         }
     }
 }

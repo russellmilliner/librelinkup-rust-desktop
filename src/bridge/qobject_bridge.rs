@@ -144,7 +144,8 @@ pub mod qobject {
         range_header: QString,
         tooltip_text: QString,
         /// Bit flags: 0x01 light-on-dark icon, 0x02 show value in icon, 0x04 show tooltip,
-        /// 0x08 autostart, 0x10 overlay visible, 0x20 overlay on all desktops.
+        /// 0x08 autostart, 0x10 overlay visible, 0x20 overlay on all desktops,
+        /// 0x40 overlay-only mode.
         flags: u8,
     }
 

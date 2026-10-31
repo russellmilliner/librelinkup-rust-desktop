@@ -1,5 +1,6 @@
 use std::collections::VecDeque;
 use std::path::Path;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Mutex, OnceLock};
 
 use chrono::Local;
@@ -16,9 +17,14 @@ pub struct EventLogEntry {
 }
 
 static EVENT_LOG_BUFFER: OnceLock<Mutex<VecDeque<EventLogEntry>>> = OnceLock::new();
+static EVENT_LOG_SEQ: AtomicU64 = AtomicU64::new(1);
 
 fn log_buffer() -> &'static Mutex<VecDeque<EventLogEntry>> {
     EVENT_LOG_BUFFER.get_or_init(|| Mutex::new(VecDeque::with_capacity(MAX_LOG_ENTRIES)))
+}
+
+pub fn get_event_seq() -> u64 {
+    EVENT_LOG_SEQ.load(Ordering::Relaxed)
 }
 
 pub fn record_event(level: &str, category: &str, message: impl Into<String>) {
@@ -33,6 +39,7 @@ pub fn record_event(level: &str, category: &str, message: impl Into<String>) {
             guard.pop_front();
         }
         guard.push_back(entry);
+        EVENT_LOG_SEQ.fetch_add(1, Ordering::Relaxed);
     }
 }
 
@@ -104,6 +111,7 @@ pub fn get_event_count() -> usize {
 pub fn clear_events() {
     if let Ok(mut guard) = log_buffer().lock() {
         guard.clear();
+        EVENT_LOG_SEQ.fetch_add(1, Ordering::Relaxed);
     }
 }
 

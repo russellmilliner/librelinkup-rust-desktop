@@ -599,6 +599,19 @@ inline QString librelinkup_run_ui_overflow_tests() {
         if (!settingsCtrl->property("overlayOnlyMode").toBool()) {
             violations.append(QStringLiteral("overlayOnlyMode should be true when main window is hidden while overlay is visible"));
         }
+        // Regression guard: ensure overlay-only mode does not re-queue updateOverlayOnlyMode -> tick() -> sync_tray() in an event loop
+        const int invokeBefore = librelinkup::TrayManager::instance().overlayOnlyModeInvokeCount();
+        for (int i = 0; i < 5; ++i) {
+            QMetaObject::invokeMethod(ctrl, "tick", Qt::DirectConnection);
+            QCoreApplication::processEvents();
+        }
+        const int invokeAfter = librelinkup::TrayManager::instance().overlayOnlyModeInvokeCount();
+        if (invokeAfter != invokeBefore) {
+            violations.append(
+                QStringLiteral("Infinite overlayOnlyMode event loop detected: updateOverlayOnlyMode re-invoked %1 times while idle in overlay-only mode")
+                    .arg(invokeAfter - invokeBefore)
+            );
+        }
 
         // Verify tray icon remains visible when main window is shown again
         QMetaObject::invokeMethod(ctrl, "showMainWindow", Qt::DirectConnection);

@@ -5,7 +5,7 @@
 
 use crate::analytics::{save_default_glucose_history, StatsWindow, HISTORY_PERSIST_MIN_INTERVAL_SECS};
 use crate::bridge::state::AppState;
-use crate::event_log::{get_event_count, get_events_json};
+use crate::event_log::{get_event_count, get_event_seq, get_events_json};
 use crate::models::{
     clamp_poll_interval, format_glucose_value, format_reading_age, format_target_range,
     trend_arrow_description, trend_arrow_symbol, AppSettings, GlucoseRangeStatus, STALE_COLOR_HEX,
@@ -14,11 +14,11 @@ use crate::session::{effective_reading_age_minutes, format_snooze_until};
 
 /// Builds the persisted settings from the live state.
 ///
-/// Fields the KDE front-end does not own (`ui_text_scale`, `tray_icon_theme`, and any field
-/// added in a future version) are read back from disk and preserved, so toggling one setting
-/// can never silently reset another.
+/// Fields the KDE front-end does not own (`tray_icon_theme` and any field added in a future
+/// version) are preserved from `state.base_settings` in memory without reading from disk on
+/// every UI tick.
 pub fn current_settings(state: &AppState) -> AppSettings {
-    let mut s = crate::models::load_default_settings();
+    let mut s = state.base_settings.clone();
     s.theme_mode = state.theme_mode.clone();
     s.ui_text_scale = crate::models::clamp_ui_zoom_percent(state.ui_zoom_percent);
     s.high_contrast_mode = state.high_contrast_mode;
@@ -74,7 +74,12 @@ pub fn current_settings(state: &AppState) -> AppSettings {
 
 /// Persists the live state's settings to disk.
 pub fn persist_settings(state: &AppState) -> Result<(), String> {
-    crate::models::save_default_settings(&current_settings(state))
+    let disk = crate::models::load_default_settings();
+    let mut s = current_settings(state);
+    if !disk.tray_icon_theme.is_empty() {
+        s.tray_icon_theme = disk.tray_icon_theme;
+    }
+    crate::models::save_default_settings(&s)
 }
 
 /// Recomputes every snapshot-derived string: glucose display, trend, range status, targets,
@@ -192,10 +197,27 @@ pub fn refresh_medication_views(state: &mut AppState) {
     state.medications_json = serde_json::to_string(&items).unwrap_or_else(|_| "[]".to_string());
     state.medication_doses_json = serde_json::to_string(&state.medication_store.dose_logs)
         .unwrap_or_else(|_| "[]".to_string());
-    let markers = state
+    let first_dose_sig = state
         .medication_store
-        .graph_markers_for_snapshot(&state.snapshot, now);
-    state.graph_doses_json = serde_json::to_string(&markers).unwrap_or_else(|_| "[]".to_string());
+        .dose_logs
+        .first()
+        .map(|d| (d.id.as_str(), d.taken_at_epoch, d.skipped));
+    let markers_key = format!(
+        "{}|{}|{}|{:?}|{}",
+        state.snapshot.timestamp,
+        state.snapshot.graph_points.len(),
+        state.medication_store.dose_logs.len(),
+        first_dose_sig,
+        now / 60
+    );
+    if state.last_graph_markers_key != markers_key {
+        let markers = state
+            .medication_store
+            .graph_markers_for_snapshot(&state.snapshot, now);
+        state.graph_doses_json =
+            serde_json::to_string(&markers).unwrap_or_else(|_| "[]".to_string());
+        state.last_graph_markers_key = markers_key;
+    }
     state.medications_summary = state.medication_store.summary_line(now);
     state.medications_count = items.len() as i32;
     state.medication_doses_count = state.medication_store.dose_logs.len() as i32;
@@ -203,8 +225,12 @@ pub fn refresh_medication_views(state: &mut AppState) {
 
 /// Mirrors the in-memory event log into the state (used by the log viewer).
 pub fn refresh_logs(state: &mut AppState) {
-    state.event_log_json = get_events_json();
-    state.event_log_count = get_event_count() as i32;
+    let seq = get_event_seq();
+    if state.last_event_log_seq != seq {
+        state.event_log_json = get_events_json();
+        state.event_log_count = get_event_count() as i32;
+        state.last_event_log_seq = seq;
+    }
 }
 
 /// Persists the glucose history vault at most once per [`HISTORY_PERSIST_MIN_INTERVAL_SECS`]

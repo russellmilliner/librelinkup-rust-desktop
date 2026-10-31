@@ -50,6 +50,10 @@ public:
         return m_tray && m_tray->isVisible();
     }
 
+    int overlayOnlyModeInvokeCount() const {
+        return m_overlayOnlyModeInvokeCount;
+    }
+
     void popupMenuAtCursor() {
         ensureInitialized();
         if (m_menu) {
@@ -164,16 +168,15 @@ public:
         const bool ovShown = m_overlayVisible || (ovWin && ovWin->isVisible());
         const bool onlyOverlayShowing = ovShown && !shown;
 
-        if (m_controller) {
-            const bool curOnly = m_controller->property("overlayOnlyMode").toBool();
-            if (curOnly != onlyOverlayShowing) {
-                QMetaObject::invokeMethod(
-                    m_controller,
-                    "updateOverlayOnlyMode",
-                    Qt::QueuedConnection,
-                    Q_ARG(bool, onlyOverlayShowing)
-                );
-            }
+        if (m_controller && m_overlayOnlyMode != onlyOverlayShowing) {
+            m_overlayOnlyMode = onlyOverlayShowing;
+            ++m_overlayOnlyModeInvokeCount;
+            QMetaObject::invokeMethod(
+                m_controller,
+                "updateOverlayOnlyMode",
+                Qt::QueuedConnection,
+                Q_ARG(bool, onlyOverlayShowing)
+            );
         }
 
         if (m_tray && !m_tray->isVisible()) {
@@ -189,6 +192,7 @@ public:
         bool autostartEnabled,
         bool overlayVisible,
         bool overlayOnAllDesktops,
+        bool overlayOnlyMode,
         const QString& appThemeMode,
         const QString& badgeText,
         const QString& trendSymbol,
@@ -199,6 +203,7 @@ public:
     ) {
         m_controller = controller;
         m_overlayVisible = overlayVisible;
+        m_overlayOnlyMode = overlayOnlyMode;
         ensureInitialized();
         if (!m_tray) {
             return;
@@ -228,12 +233,17 @@ public:
             }
         }
 
-        m_tray->setToolTip(tooltipText);
+        if (m_lastTooltipText != tooltipText) {
+            m_lastTooltipText = tooltipText;
+            m_tray->setToolTip(tooltipText);
+        }
 
-        if (m_statusAction) {
+        if (m_statusAction && m_lastStatusHeader != statusHeader) {
+            m_lastStatusHeader = statusHeader;
             m_statusAction->setText(statusHeader);
         }
-        if (m_rangeAction) {
+        if (m_rangeAction && m_lastRangeHeader != rangeHeader) {
+            m_lastRangeHeader = rangeHeader;
             m_rangeAction->setText(rangeHeader);
         }
         if (m_showInIconAction) {
@@ -532,6 +542,8 @@ private:
 
     bool m_initialized = false;
     bool m_overlayVisible = false;
+    bool m_overlayOnlyMode = false;
+    int m_overlayOnlyModeInvokeCount = 0;
     QPointer<QObject> m_controller;
     QPointer<QSystemTrayIcon> m_tray;
     QMenu* m_menu = nullptr;
@@ -548,6 +560,9 @@ private:
     QAction* m_showAction = nullptr;
     QAction* m_hideAction = nullptr;
     QString m_lastIconKey;
+    QString m_lastTooltipText;
+    QString m_lastStatusHeader;
+    QString m_lastRangeHeader;
     QPointer<NotificationActionWatcher> m_notifWatcher;
     QSet<uint> m_activeAlertNotificationIds;
     uint m_lastAlertNotificationId = 0;
@@ -672,6 +687,7 @@ inline void librelinkup_sync_tray(ControllerT& controller, PayloadT payload) {
     const bool autostartEnabled = (payload.flags & 0x08u) != 0u;
     const bool overlayVisible = (payload.flags & 0x10u) != 0u;
     const bool overlayOnAllDesktops = (payload.flags & 0x20u) != 0u;
+    const bool overlayOnlyMode = (payload.flags & 0x40u) != 0u;
 
     librelinkup::TrayManager::instance().sync(
         &controller,
@@ -681,6 +697,7 @@ inline void librelinkup_sync_tray(ControllerT& controller, PayloadT payload) {
         autostartEnabled,
         overlayVisible,
         overlayOnAllDesktops,
+        overlayOnlyMode,
         payload.theme_mode,
         payload.badge_text,
         payload.trend_symbol,

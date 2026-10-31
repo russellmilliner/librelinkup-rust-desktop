@@ -21,25 +21,32 @@ Item {
         policy: size < 1.0 ? QQC2.ScrollBar.AlwaysOn : QQC2.ScrollBar.AsNeeded
         interactive: true
         minimumSize: 0.14
-        implicitWidth: orientation === Qt.Vertical ? 12 : parent ? parent.width : 100
-        implicitHeight: orientation === Qt.Horizontal ? 12 : parent ? parent.height : 100
+        implicitWidth: orientation === Qt.Vertical ? 12 : (parent ? parent.width : 100)
+        implicitHeight: orientation === Qt.Horizontal ? 12 : (parent ? parent.height : 100)
+        x: orientation === Qt.Vertical ? (parent ? parent.width - width : 0) : 0
+        y: orientation === Qt.Horizontal ? (parent ? parent.height - height : 0) : 0
+        width: orientation === Qt.Vertical ? 12 : (parent ? parent.width : implicitWidth)
+        height: orientation === Qt.Horizontal ? 12 : (parent ? parent.height : implicitHeight)
+        z: 50
         padding: 2
 
         background: Rectangle {
+            objectName: "highContrastScrollBarTrack"
             implicitWidth: hcScrollBar.orientation === Qt.Vertical ? 12 : 100
             implicitHeight: hcScrollBar.orientation === Qt.Horizontal ? 12 : 100
             radius: 6
             color: Qt.alpha(Kirigami.Theme.textColor, 0.16)
             border.width: 1
             border.color: Qt.alpha(Kirigami.Theme.textColor, 0.32)
-            visible: hcScrollBar.size < 1.0
+            visible: hcScrollBar.size < 1.0 || hcScrollBar.policy === QQC2.ScrollBar.AlwaysOn
         }
 
         contentItem: Rectangle {
+            objectName: "highContrastScrollBarThumb"
             implicitWidth: hcScrollBar.orientation === Qt.Vertical ? 8 : 48
             implicitHeight: hcScrollBar.orientation === Qt.Horizontal ? 8 : 48
             radius: 4
-            visible: hcScrollBar.size < 1.0
+            visible: hcScrollBar.size < 1.0 || hcScrollBar.policy === QQC2.ScrollBar.AlwaysOn
             color: hcScrollBar.pressed
                 ? Kirigami.Theme.highlightColor
                 : (hcScrollBar.hovered
@@ -54,7 +61,7 @@ Item {
         anchors.fill: parent
         spacing: 10
 
-        QQC2.ScrollView {
+        Flickable {
             id: aboutScroll
             objectName: "aboutScrollView"
             implicitHeight: 0
@@ -63,16 +70,25 @@ Item {
             Layout.minimumHeight: 0
             Layout.preferredHeight: 0
             clip: true
-            contentWidth: availableWidth
+            contentWidth: width
             contentHeight: aboutContentColumn.implicitHeight + 16
+            boundsBehavior: Flickable.StopAtBounds
+            flickableDirection: Flickable.VerticalFlick
             QQC2.ScrollBar.vertical: HighContrastScrollBar {
                 id: aboutVerticalScrollBar
                 objectName: "aboutVerticalScrollBar"
+                parent: aboutScroll
+                anchors.top: aboutScroll.top
+                anchors.right: aboutScroll.right
+                anchors.bottom: aboutScroll.bottom
+                policy: aboutScroll.contentHeight > aboutScroll.height
+                    ? QQC2.ScrollBar.AlwaysOn
+                    : QQC2.ScrollBar.AsNeeded
             }
 
             ColumnLayout {
                 id: aboutContentColumn
-                width: Math.min(Math.max(120, aboutScroll.availableWidth - 16), 760)
+                width: Math.min(Math.max(120, aboutScroll.width - 18), 760)
                 spacing: 14
 
                 Rectangle {

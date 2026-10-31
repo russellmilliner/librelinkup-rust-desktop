@@ -704,15 +704,34 @@ inline QString librelinkup_run_ui_overflow_tests() {
             }
         }
 
-        // Test 1: Ploopy micro-step wheel scrolling on medicationsScrollView (780x540)
+        // Test 1: Ploopy micro-step wheel scrolling & visible scrollbar on medicationsScrollView (780x540)
         mainWin->setProperty("activeTab", QStringLiteral("medications"));
         sync_all();
         librelinkup_uitest::pump_events(40);
         if (QQuickItem* medScroll = mainWin->findChild<QQuickItem*>(QStringLiteral("medicationsScrollView"))) {
-            QQuickItem* medFlick = qobject_cast<QQuickItem*>(medScroll->property("contentItem").value<QObject*>());
+            QQuickItem* medFlick = medScroll->inherits("QQuickFlickable")
+                ? medScroll
+                : qobject_cast<QQuickItem*>(medScroll->property("contentItem").value<QObject*>());
             if (!medFlick) {
-                violations.append(QStringLiteral("medicationsScrollView contentItem is not a QQuickFlickable"));
+                violations.append(QStringLiteral("medicationsScrollView is not a QQuickFlickable"));
             } else {
+                if (QQuickItem* medSb = mainWin->findChild<QQuickItem*>(QStringLiteral("medicationsVerticalScrollBar"))) {
+                    const qreal sbSize = medSb->property("size").toReal();
+                    QQuickItem* sbBg = qobject_cast<QQuickItem*>(medSb->property("background").value<QObject*>());
+                    QQuickItem* sbThumb = qobject_cast<QQuickItem*>(medSb->property("contentItem").value<QObject*>());
+                    if (!medSb->isVisible() || medSb->width() < 11.5 || medSb->height() < 100.0 || sbSize >= 1.0) {
+                        violations.append(
+                            QStringLiteral("medicationsVerticalScrollBar must be visible with width>=12, height>=100, size<1.0 (got vis=%1, w=%2, h=%3, size=%4)")
+                                .arg(medSb->isVisible() ? 1 : 0)
+                                .arg(medSb->width(), 0, 'f', 1)
+                                .arg(medSb->height(), 0, 'f', 1)
+                                .arg(sbSize, 0, 'f', 3)
+                        );
+                    }
+                    if (!sbBg || !sbBg->isVisible() || !sbThumb || !sbThumb->isVisible()) {
+                        violations.append(QStringLiteral("medicationsVerticalScrollBar track and thumb must be visible when content overflows"));
+                    }
+                }
                 medFlick->setProperty("contentY", 0.0);
                 librelinkup_uitest::pump_events(20);
                 const QPointF centerScene = medScroll->mapToScene(QPointF(medScroll->width() * 0.5, medScroll->height() * 0.5));

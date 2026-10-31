@@ -2,6 +2,40 @@
 
 All notable changes and bumped dependencies for `russellmilliner/librelinkup-rust-desktop` are documented in this file.
 
+## [v0.5.1](https://github.com/russellmilliner/librelinkup-rust-desktop/releases/tag/v0.5.1) — 2026-10-31
+
+### Highlights
+- Ploopy hi-res wheel scrolling, wide high-contrast scrollbars across all tabs, primary-screen centering & window placement persistence, header overflow fix on tray restore, and Medications documentation
+
+### Commits
+- fix(ui): use Flickable with right-anchored HighContrastScrollBar so scrollbars are always visible when scrollable (4e9533e)
+- fix(ui): add Ploopy hi-res wheel scroll filter and wide HighContrastScrollBar across all views (85ead55)
+- fix(windows): disable tray-icon default libappindicator/gtk3 feature to drop unsound glib 0.18.5 (RUSTSEC-2024-0429) (9ef3606)
+- chore(deps): update dependencies (encoding_rs 0.8.44, js-sys 0.3.107, log 0.4.35, ron 0.12.3, rustix 1.1.6, unicode-width 0.2.3 (+9 more)) (f00233e)
+- fix(ui): prevent minimize-to-tray header overflow on restore and center window on primary screen when no saved position exists (f72ebd2)
+- docs: add Medications tab user guide, zero-tracking/zero-ads guarantee, and updated screenshots (5838679)
+- chore(flathub): pin manifest to v0.5.0 (b67740eac93d6fed8696e3522d43c1af3eab9e61) (ddfd643)
+
+### 📦 Bumped Dependencies (15 packages)
+
+| Package | Previous | Updated | Scope |
+| :--- | :--- | :--- | :--- |
+| `encoding_rs` | `0.8.42` | **`0.8.44`** | Lockfile (`windows/Cargo.lock`) |
+| `js-sys` | `0.3.106` | **`0.3.107`** | Lockfile (`windows/Cargo.lock`) |
+| `log` | `0.4.34` | **`0.4.35`** | Lockfile (`windows/Cargo.lock`) |
+| `ron` | `0.12.2` | **`0.12.3`** | Lockfile (`windows/Cargo.lock`) |
+| `rustix` | `1.1.5` | **`1.1.6`** | Lockfile (`windows/Cargo.lock`) |
+| `unicode-width` | `0.2.2` | **`0.2.3`** | Lockfile (`windows/Cargo.lock`) |
+| `utf8_iter` | `1.0.4` | **`1.1.0`** | Lockfile (`windows/Cargo.lock`) |
+| `wasm-bindgen` | `0.2.129` | **`0.2.130`** | Lockfile (`windows/Cargo.lock`) |
+| `wasm-bindgen-futures` | `0.4.79` | **`0.4.80`** | Lockfile (`windows/Cargo.lock`) |
+| `wasm-bindgen-macro` | `0.2.129` | **`0.2.130`** | Lockfile (`windows/Cargo.lock`) |
+| `wasm-bindgen-macro-support` | `0.2.129` | **`0.2.130`** | Lockfile (`windows/Cargo.lock`) |
+| `wasm-bindgen-shared` | `0.2.129` | **`0.2.130`** | Lockfile (`windows/Cargo.lock`) |
+| `web-sys` | `0.3.106` | **`0.3.107`** | Lockfile (`windows/Cargo.lock`) |
+| `webbrowser` | `1.2.5` | **`1.2.6`** | Lockfile (`windows/Cargo.lock`) |
+| `zcheapstr` | `1.1.0` | **`1.2.0`** | Lockfile (`windows/Cargo.lock`) |
+
 ## [v0.5.0-deps](https://github.com/russellmilliner/librelinkup-rust-desktop/releases/tag/v0.5.0-deps) — 2026-10-31
 
 ### 📦 Bumped Dependencies (15 packages)

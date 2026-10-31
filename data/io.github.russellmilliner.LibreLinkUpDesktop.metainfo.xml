@@ -50,6 +50,11 @@
   <url type="donation">https://ko-fi.com/russellmilliner</url>
   <content_rating type="oars-1.1" />
   <releases>
+    <release version="0.5.1" date="2026-10-31">
+      <description>
+        <p>Ploopy hi-res wheel scrolling, wide high-contrast scrollbars across all tabs, primary-screen centering &amp; window placement persistence, header overflow fix on tray restore, and Medications documentation</p>
+      </description>
+    </release>
     <release version="0.5.0" date="2026-10-30">
       <description>
         <p>Security hardening release: signed auto-updates (minisign), encryption at rest for

@@ -1,8 +1,8 @@
 # LibreLinkUp Rust Desktop
 
-[![Version v0.5.0](https://img.shields.io/badge/Version-v0.5.0-0284c7?style=for-the-badge&logo=github)](https://github.com/russellmilliner/librelinkup-rust-desktop/releases/tag/v0.5.0)
-[![Windows Installer](https://img.shields.io/badge/Windows-Installer_v0.5.0-0078d4?style=for-the-badge&logo=windows&logoColor=white)](https://github.com/russellmilliner/librelinkup-rust-desktop/releases/download/v0.5.0/LibreLinkUp-Setup-0.5.0-x64.exe)
-[![Flatpak Bundle](https://img.shields.io/badge/Flatpak-Download_v0.5.0-4a90d9?style=for-the-badge&logo=flatpak&logoColor=white)](https://github.com/russellmilliner/librelinkup-rust-desktop/releases/download/v0.5.0/librelinkup-rust-desktop-v0.5.0-x86_64.flatpak)
+[![Version v0.5.1](https://img.shields.io/badge/Version-v0.5.1-0284c7?style=for-the-badge&logo=github)](https://github.com/russellmilliner/librelinkup-rust-desktop/releases/tag/v0.5.1)
+[![Windows Installer](https://img.shields.io/badge/Windows-Installer_v0.5.1-0078d4?style=for-the-badge&logo=windows&logoColor=white)](https://github.com/russellmilliner/librelinkup-rust-desktop/releases/download/v0.5.1/LibreLinkUp-Setup-0.5.1-x64.exe)
+[![Flatpak Bundle](https://img.shields.io/badge/Flatpak-Download_v0.5.1-4a90d9?style=for-the-badge&logo=flatpak&logoColor=white)](https://github.com/russellmilliner/librelinkup-rust-desktop/releases/download/v0.5.1/librelinkup-rust-desktop-v0.5.1-x86_64.flatpak)
 [![Platform: Linux x86_64](https://img.shields.io/badge/Platform-Linux%20x86__64-fcc624?style=for-the-badge&logo=linux&logoColor=black)](https://www.kernel.org/)
 [![Platform: Windows 10/11 x64](https://img.shields.io/badge/Platform-Windows%2010%2F11%20x64-0078d4?style=for-the-badge&logo=windows&logoColor=white)](windows/README.md)
 [![Desktop: KDE Plasma 6](https://img.shields.io/badge/KDE-Plasma%206%20%2F%20Kirigami-1d99f3?style=for-the-badge&logo=kde&logoColor=white)](https://kde.org/plasma-desktop/)
@@ -20,11 +20,11 @@ Native **Rust** desktop applications for monitoring continuous blood glucose rea
 
 | Item | Link / Details |
 | :--- | :--- |
-| **Current Version** | [**v0.5.0** (GitHub Release)](https://github.com/russellmilliner/librelinkup-rust-desktop/releases/tag/v0.5.0) • [All Releases](https://github.com/russellmilliner/librelinkup-rust-desktop/releases) |
-| **Windows Installer (`x64`)** | [**`LibreLinkUp-Setup-0.5.0-x64.exe`**](https://github.com/russellmilliner/librelinkup-rust-desktop/releases/download/v0.5.0/LibreLinkUp-Setup-0.5.0-x64.exe) ([SHA-256](https://github.com/russellmilliner/librelinkup-rust-desktop/releases/download/v0.5.0/LibreLinkUp-Setup-0.5.0-x64.exe.sha256)) |
-| **Windows Portable (`x64`)** | [**`LibreLinkUp-0.5.0-windows-x64-portable.zip`**](https://github.com/russellmilliner/librelinkup-rust-desktop/releases/download/v0.5.0/LibreLinkUp-0.5.0-windows-x64-portable.zip) ([SHA-256](https://github.com/russellmilliner/librelinkup-rust-desktop/releases/download/v0.5.0/LibreLinkUp-0.5.0-windows-x64-portable.zip.sha256)) |
+| **Current Version** | [**v0.5.1** (GitHub Release)](https://github.com/russellmilliner/librelinkup-rust-desktop/releases/tag/v0.5.1) • [All Releases](https://github.com/russellmilliner/librelinkup-rust-desktop/releases) |
+| **Windows Installer (`x64`)** | [**`LibreLinkUp-Setup-0.5.1-x64.exe`**](https://github.com/russellmilliner/librelinkup-rust-desktop/releases/download/v0.5.1/LibreLinkUp-Setup-0.5.1-x64.exe) ([SHA-256](https://github.com/russellmilliner/librelinkup-rust-desktop/releases/download/v0.5.1/LibreLinkUp-Setup-0.5.1-x64.exe.sha256)) |
+| **Windows Portable (`x64`)** | [**`LibreLinkUp-0.5.1-windows-x64-portable.zip`**](https://github.com/russellmilliner/librelinkup-rust-desktop/releases/download/v0.5.1/LibreLinkUp-0.5.1-windows-x64-portable.zip) ([SHA-256](https://github.com/russellmilliner/librelinkup-rust-desktop/releases/download/v0.5.1/LibreLinkUp-0.5.1-windows-x64-portable.zip.sha256)) |
 | **Windows Documentation** | [**`windows/README.md`**](windows/README.md) — Full Windows installation, overlay controls, DPAPI security & build guide |
-| **Linux Flatpak Bundle (`x86_64`)** | [**`librelinkup-rust-desktop-v0.5.0-x86_64.flatpak`**](https://github.com/russellmilliner/librelinkup-rust-desktop/releases/download/v0.5.0/librelinkup-rust-desktop-v0.5.0-x86_64.flatpak) ([SHA-256](https://github.com/russellmilliner/librelinkup-rust-desktop/releases/download/v0.5.0/librelinkup-rust-desktop-v0.5.0-x86_64.flatpak.sha256)) |
+| **Linux Flatpak Bundle (`x86_64`)** | [**`librelinkup-rust-desktop-v0.5.1-x86_64.flatpak`**](https://github.com/russellmilliner/librelinkup-rust-desktop/releases/download/v0.5.1/librelinkup-rust-desktop-v0.5.1-x86_64.flatpak) ([SHA-256](https://github.com/russellmilliner/librelinkup-rust-desktop/releases/download/v0.5.1/librelinkup-rust-desktop-v0.5.1-x86_64.flatpak.sha256)) |
 | **Flatpak Runtime** | [`org.kde.Platform//6.11`](https://flathub.org/) via [Flatpak](https://flatpak.org/) |
 | **Supported Platforms** | [Linux (`x86_64`)](https://www.kernel.org/) ([KDE Plasma 6](https://kde.org/plasma-desktop/) / [Kirigami](https://develop.kde.org/frameworks/kirigami/) / [Qt 6](https://www.qt.io/)) • [**Windows 10/11 (`x64`)**](windows/README.md) ([egui](https://github.com/emilk/egui) / [eframe](https://github.com/emilk/egui/tree/master/crates/eframe)) |
 | **Core Stack** | [Rust](https://www.rust-lang.org/) (`librelinkup-core`) + [KDAB CXX-Qt](https://github.com/KDAB/cxx-qt) (Linux) + [eframe/egui](https://github.com/emilk/egui) (Windows) + [Ring (AES-256-GCM)](https://github.com/briansmith/ring) |
@@ -32,18 +32,18 @@ Native **Rust** desktop applications for monitoring continuous blood glucose rea
 ### Quick Flatpak Install (Linux)
 
 ```bash
-curl -LO https://github.com/russellmilliner/librelinkup-rust-desktop/releases/download/v0.5.0/librelinkup-rust-desktop-v0.5.0-x86_64.flatpak
-flatpak install --user -y librelinkup-rust-desktop-v0.5.0-x86_64.flatpak
+curl -LO https://github.com/russellmilliner/librelinkup-rust-desktop/releases/download/v0.5.1/librelinkup-rust-desktop-v0.5.1-x86_64.flatpak
+flatpak install --user -y librelinkup-rust-desktop-v0.5.1-x86_64.flatpak
 flatpak run io.github.russellmilliner.LibreLinkUpDesktop
 ```
 
 ### Quick Windows 10 / 11 Install
 
-Download and run [**`LibreLinkUp-Setup-0.5.0-x64.exe`**](https://github.com/russellmilliner/librelinkup-rust-desktop/releases/download/v0.5.0/LibreLinkUp-Setup-0.5.0-x64.exe) (or extract the [**portable zip**](https://github.com/russellmilliner/librelinkup-rust-desktop/releases/download/v0.5.0/LibreLinkUp-0.5.0-windows-x64-portable.zip)):
+Download and run [**`LibreLinkUp-Setup-0.5.1-x64.exe`**](https://github.com/russellmilliner/librelinkup-rust-desktop/releases/download/v0.5.1/LibreLinkUp-Setup-0.5.1-x64.exe) (or extract the [**portable zip**](https://github.com/russellmilliner/librelinkup-rust-desktop/releases/download/v0.5.1/LibreLinkUp-0.5.1-windows-x64-portable.zip)):
 
 ```powershell
-Invoke-WebRequest -Uri "https://github.com/russellmilliner/librelinkup-rust-desktop/releases/download/v0.5.0/LibreLinkUp-Setup-0.5.0-x64.exe" -OutFile "$env:TEMP\LibreLinkUp-Setup-0.5.0-x64.exe"
-Start-Process -FilePath "$env:TEMP\LibreLinkUp-Setup-0.5.0-x64.exe"
+Invoke-WebRequest -Uri "https://github.com/russellmilliner/librelinkup-rust-desktop/releases/download/v0.5.1/LibreLinkUp-Setup-0.5.1-x64.exe" -OutFile "$env:TEMP\LibreLinkUp-Setup-0.5.1-x64.exe"
+Start-Process -FilePath "$env:TEMP\LibreLinkUp-Setup-0.5.1-x64.exe"
 ```
 
 - **Per-user install**: No administrator prompt is required. Creates a Start Menu shortcut (with Toast notification `AppUserModelID`) and an optional task to launch at Windows sign-in (`--minimized` to the system tray).
@@ -126,10 +126,15 @@ The **Medications** tab (available in the top navigation bar on both Linux KDE P
   - **Shared Core (`crates/librelinkup-core`)**: Unified LibreView API client (12 allowlisted regional endpoints + automatic validated regional redirect), shared session/polling state machine (`session.rs`), AES-256-GCM credential vault envelope (`crypto.rs`), settings model (`settings.rs`), staleness evaluator (`staleness.rs`), alert state machine (`alerts.rs`), and synthesized alarm generator (`audio.rs`).
 - **Light, Dark & System Theme Support**:
   - Dynamically switches between Light, Dark, or your system's color scheme at runtime (`KColorSchemeManager` on KDE Plasma; `egui::Visuals` + dark/light Windows registry detection on Windows).
-- **Single System Tray Icon & Task-Manager-Free Minimized Mode**:
+- **Single System Tray Icon, Primary-Screen Centering & Persistent Window Placement**:
   - Uses KDE's `StatusNotifierWatcher` on Linux and the Windows notification area (`tray-icon`) on Windows.
+  - On first launch (when no saved screen position exists), the main window automatically centers on your primary monitor; thereafter, its screen, position, and size are persisted across restarts and tray restores (`window_screen_name`, `window_x`, `window_y`, `window_width`, `window_height`).
+  - Adaptive header bar automatically collapses button text to icons on narrower windows and re-verifies layout geometry when restored from the system tray so the **Minimize to Tray** button never overflows the window edge.
   - Hides the main window cleanly when minimized or closed to tray so no Task Manager / Taskbar entry remains when only the floating overlay or tray icon is active.
   - Supports `--minimized` / `--autostart` / `START_MINIMIZED=1` to launch silently in the tray at sign-in (via the XDG Background portal / autostart desktop entry on Linux, and `HKCU\Software\Microsoft\Windows\CurrentVersion\Run` on Windows).
+- **Ploopy High-Resolution Wheel Scrolling & Wide High-Contrast Scrollbars**:
+  - **Zero-Deadzone Micro-Step Scrolling (`LibreLinkUpWheelScrollFilter`)**: Converts `REL_WHEEL_HI_RES` v120 micro-steps (`angleDelta * 0.50`) linearly with zero velocity deadzone and suppresses hover/tooltip re-evaluations during active wheel gestures so high-resolution scroll devices (Ploopy Trackball / Ploopy Knob) scroll smoothly at 60+ FPS.
+  - **Wide High-Contrast Scrollbars (`HighContrastScrollBar`)**: Attaches a wide (`12px` track / `8px` thumb), high-contrast scrollbar (`minimumSize: 0.14`) across all scrollable views (**Medications**, **Logs**, **General Settings**, **Alerts**, **Account**, **About**, and **Sign In**), and preserves scroll position in the **Log Viewer** when new background log entries arrive while scrolled up.
 - **Tray Glucose Badge & Hover Tooltip**:
   - **Show Glucose Level in Tray Icon**: Dynamically renders a high-contrast color-coded glucose badge directly on the system tray icon.
   - **Show Glucose Details in Tray Hover Tooltip**: Displays patient name, current reading (`mg/dL` or `mmol/L`), trend arrow, range status, and reading age when hovering the tray icon.

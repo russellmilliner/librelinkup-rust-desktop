@@ -562,6 +562,68 @@ inline QString librelinkup_run_ui_overflow_tests() {
             violations.append(QStringLiteral("OverlayWidget must have null transientParent so it stays independent of MainWindow"));
         }
 
+        // Verify external overlay tooltip window (`librelinkupOverlayTooltipWindow`):
+        // hovering each of the 5 overlay buttons must show a top-level tooltip outside `ovWin`
+        // that never gets cropped and never intersects `ovWin` (never blocks the buttons).
+        QQuickWindow* ovTooltipWin = ovWin->findChild<QQuickWindow*>(QStringLiteral("librelinkupOverlayTooltipWindow"));
+        if (!ovTooltipWin) {
+            violations.append(QStringLiteral("Missing librelinkupOverlayTooltipWindow on OverlayWidget"));
+        } else {
+            const QStringList overlayButtons = {
+                QStringLiteral("overlayThemeToggleBtn"),
+                QStringLiteral("overlayAllDesktopsBtn"),
+                QStringLiteral("overlayRestoreBtn"),
+                QStringLiteral("overlayMenuBtn"),
+                QStringLiteral("overlayCloseBtn")
+            };
+            for (const QString& btnName : overlayButtons) {
+                QQuickItem* btn = ovWin->findChild<QQuickItem*>(btnName);
+                if (!btn) {
+                    violations.append(QStringLiteral("Missing overlay button '%1'").arg(btnName));
+                    continue;
+                }
+                const QPointF centerScene = btn->mapToScene(QPointF(btn->width() * 0.5, btn->height() * 0.5));
+                const QPointF centerGlobal = ovWin->mapToGlobal(centerScene);
+                QHoverEvent hoverMove(QEvent::HoverMove, centerScene, centerGlobal, QPointF(-10.0, -10.0));
+                QCoreApplication::sendEvent(ovWin, &hoverMove);
+                librelinkup_uitest::pump_events(20);
+
+                if (!ovTooltipWin->isVisible()) {
+                    violations.append(
+                        QStringLiteral("Overlay tooltip window did not appear when hovering '%1'").arg(btnName)
+                    );
+                } else {
+                    QQuickItem* tipLabel = ovTooltipWin->findChild<QQuickItem*>(QStringLiteral("overlayTooltipText"));
+                    if (!tipLabel || tipLabel->property("text").toString().trimmed().isEmpty()) {
+                        violations.append(
+                            QStringLiteral("Overlay tooltip text is empty when hovering '%1'").arg(btnName)
+                        );
+                    } else if (ovTooltipWin->width() + 0.5 < tipLabel->implicitWidth() + 16.0 ||
+                               ovTooltipWin->height() + 0.5 < tipLabel->implicitHeight() + 8.0) {
+                        violations.append(
+                            QStringLiteral("Overlay tooltip window (%1x%2) crops label implicit size (%3x%4) on '%5'")
+                                .arg(ovTooltipWin->width())
+                                .arg(ovTooltipWin->height())
+                                .arg(tipLabel->implicitWidth(), 0, 'f', 1)
+                                .arg(tipLabel->implicitHeight(), 0, 'f', 1)
+                                .arg(btnName)
+                        );
+                    }
+                    if (ovTooltipWin->geometry().intersects(ovWin->geometry())) {
+                        violations.append(
+                            QStringLiteral("Overlay tooltip window (%1,%2 %3x%4) overlaps OverlayWidget (%5,%6 %7x%8) when hovering '%9'")
+                                .arg(ovTooltipWin->x()).arg(ovTooltipWin->y()).arg(ovTooltipWin->width()).arg(ovTooltipWin->height())
+                                .arg(ovWin->x()).arg(ovWin->y()).arg(ovWin->width()).arg(ovWin->height())
+                                .arg(btnName)
+                        );
+                    }
+                }
+            }
+            QHoverEvent hoverLeave(QEvent::HoverLeave, QPointF(-50.0, -50.0), QPointF(-50.0, -50.0), QPointF(10.0, 10.0));
+            QCoreApplication::sendEvent(ovWin, &hoverLeave);
+            librelinkup_uitest::pump_events(20);
+        }
+
         // Verify On All Desktops toggle updates window flags and title
         QMetaObject::invokeMethod(ctrl, "updateOverlayOnAllDesktops", Qt::DirectConnection, Q_ARG(bool, false));
         sync_all();

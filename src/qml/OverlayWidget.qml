@@ -34,6 +34,80 @@ Window {
     readonly property color statusAccentColor: Qt.color(telemetry ? telemetry.rangeColorHex : "#22c55e")
     readonly property color lightOverlayBgColor: Qt.darker(statusAccentColor, 1.42)
     readonly property color lightOverlayBorderColor: Qt.darker(statusAccentColor, 1.95)
+    readonly property string hoveredTooltipText: {
+        if (!overlayWindow.visible || dragMouseArea.dragging) {
+            return ""
+        }
+        if (themeBtnMouse.containsMouse) {
+            return overlayWindow.isDarkOverlay
+                ? qsTr("Theme: Dark Slate (click for Color Fill • wheel: %1% opacity)").arg(overlayWindow.opacityPercent)
+                : qsTr("Theme: Color Fill (click for Dark Slate • wheel: %1% opacity)").arg(overlayWindow.opacityPercent)
+        }
+        if (allDeskBtnMouse.containsMouse) {
+            return overlayWindow.onAllDesktops
+                ? qsTr("All Desktops: ON (click for current desktop only)")
+                : qsTr("All Desktops: OFF (click to pin on all desktops)")
+        }
+        if (restoreBtnMouse.containsMouse) {
+            return qsTr("Open Main Window (or double-click overlay)")
+        }
+        if (menuBtnMouse.containsMouse) {
+            return qsTr("Open Context Menu (or right-click overlay)")
+        }
+        if (closeBtnMouse.containsMouse) {
+            return qsTr("Hide Desktop Overlay")
+        }
+        return ""
+    }
+
+    // External top-level tooltip window positioned outside overlayWindow so tooltips are
+    // never cropped by the 276x88 overlay bounds and never block the overlay buttons.
+    Window {
+        id: overlayTooltipWindow
+        objectName: "librelinkupOverlayTooltipWindow"
+        flags: Qt.ToolTip
+            | Qt.FramelessWindowHint
+            | Qt.WindowStaysOnTopHint
+            | Qt.WindowTransparentForInput
+            | Qt.WindowDoesNotAcceptFocus
+            | Qt.BypassWindowManagerHint
+        color: "transparent"
+        visible: overlayWindow.visible && overlayWindow.hoveredTooltipText.length > 0
+        width: Math.max(80, Math.ceil(overlayTooltipText.implicitWidth) + 20)
+        height: Math.max(26, Math.ceil(overlayTooltipText.implicitHeight) + 12)
+        x: {
+            const scX = overlayWindow.screen ? overlayWindow.screen.virtualX : 0
+            const scW = overlayWindow.screen && overlayWindow.screen.width > 0 ? overlayWindow.screen.width : 1920
+            const idealX = overlayWindow.x + overlayWindow.width - width
+            return Math.max(scX + 6, Math.min(scX + scW - width - 6, idealX))
+        }
+        y: {
+            const scY = overlayWindow.screen ? overlayWindow.screen.virtualY : 0
+            const scH = overlayWindow.screen && overlayWindow.screen.height > 0 ? overlayWindow.screen.height : 1080
+            const belowY = overlayWindow.y + overlayWindow.height + 6
+            const aboveY = overlayWindow.y - height - 6
+            return (belowY + height + 8 <= scY + scH) ? belowY : Math.max(scY + 6, aboveY)
+        }
+
+        Rectangle {
+            objectName: "overlayTooltipBubble"
+            anchors.fill: parent
+            radius: 7
+            color: Qt.rgba(0.06, 0.09, 0.16, 0.96)
+            border.color: overlayWindow.statusAccentColor
+            border.width: 1.2
+
+            QQC2.Label {
+                id: overlayTooltipText
+                objectName: "overlayTooltipText"
+                anchors.centerIn: parent
+                text: overlayWindow.hoveredTooltipText
+                font.pointSize: 9.0
+                font.bold: true
+                color: "#f8fafc"
+            }
+        }
+    }
 
     Rectangle {
         id: overlayPill
@@ -284,11 +358,6 @@ Window {
                                 }
                             }
                         }
-
-                        QQC2.ToolTip.visible: themeBtnMouse.containsMouse
-                        QQC2.ToolTip.text: overlayWindow.isDarkOverlay
-                            ? qsTr("Overlay Dark Theme ON (Click for Color Fill • Scroll wheel adjusts %1% opacity)").arg(overlayWindow.opacityPercent)
-                            : qsTr("Overlay Color Fill ON (Click for Dark Theme • Scroll wheel adjusts %1% opacity)").arg(overlayWindow.opacityPercent)
                     }
 
                     // 2. Toggle Show on All Virtual Desktops
@@ -368,11 +437,6 @@ Window {
                                 }
                             }
                         }
-
-                        QQC2.ToolTip.visible: allDeskBtnMouse.containsMouse
-                        QQC2.ToolTip.text: overlayWindow.onAllDesktops
-                            ? qsTr("On All Desktops: ON (Visible across all virtual desktops • Click for current desktop only)")
-                            : qsTr("On All Desktops: OFF (Current virtual desktop only • Click to show on all desktops)")
                     }
 
                     // 3. Open Main Window
@@ -416,9 +480,6 @@ Window {
                                 }
                             }
                         }
-
-                        QQC2.ToolTip.visible: restoreBtnMouse.containsMouse
-                        QQC2.ToolTip.text: qsTr("Open LibreLinkUp Rust Desktop")
                     }
                 }
 
@@ -466,9 +527,6 @@ Window {
                                 }
                             }
                         }
-
-                        QQC2.ToolTip.visible: menuBtnMouse.containsMouse
-                        QQC2.ToolTip.text: qsTr("Open Menu (or right-click anywhere on overlay)")
                     }
 
                     // 5. Hide Overlay
@@ -512,9 +570,6 @@ Window {
                                 }
                             }
                         }
-
-                        QQC2.ToolTip.visible: closeBtnMouse.containsMouse
-                        QQC2.ToolTip.text: qsTr("Hide Overlay")
                     }
                 }
             }

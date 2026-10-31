@@ -2,6 +2,15 @@
 
 All notable changes and bumped dependencies for `russellmilliner/librelinkup-rust-desktop` are documented in this file.
 
+## [v0.5.4](https://github.com/russellmilliner/librelinkup-rust-desktop/releases/tag/v0.5.4) — 2026-10-31
+
+### Highlights
+- Render desktop overlay tooltips in an external top-level window so they never get cropped by the 276x88 overlay bounds or cover the overlay buttons
+
+### Commits
+- docs(architecture): document external overlay tooltip window and tray/tick invariants (6489137)
+- fix(overlay): render overlay button tooltips in external top-level Window so they never crop or block buttons (2e39d23)
+
 ## [v0.5.3](https://github.com/russellmilliner/librelinkup-rust-desktop/releases/tag/v0.5.3) — 2026-10-31
 
 ### Highlights

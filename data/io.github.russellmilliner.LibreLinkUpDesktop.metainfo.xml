@@ -56,6 +56,11 @@
   <url type="donation">https://ko-fi.com/russellmilliner</url>
   <content_rating type="oars-1.1" />
   <releases>
+    <release version="0.5.4" date="2026-10-31">
+      <description>
+        <p>Render desktop overlay tooltips in an external top-level window so they never get cropped by the 276x88 overlay bounds or cover the overlay buttons</p>
+      </description>
+    </release>
     <release version="0.5.3" date="2026-10-31">
       <description>
         <p>Fix infinite overlayOnlyMode event loop and 100% CPU lockup when main window is closed with desktop overlay visible; eliminate per-tick disk reads and redundant JSON/D-Bus updates</p>

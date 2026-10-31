@@ -5,7 +5,10 @@ use std::sync::{Mutex, OnceLock};
 
 use chrono::{Duration as ChronoDuration, Local, TimeZone};
 
-use crate::api::{authenticate_async, fetch_cgm_snapshot_async, ApiError};
+use crate::api::{
+    authenticate_async, fetch_cgm_snapshot_async, fetch_ha_cgm_snapshot_and_states_async,
+    fetch_ha_states_array_async, ApiError,
+};
 use crate::crypto::StoredCredentials;
 use crate::event_log::{log_info, log_warn};
 use crate::models::{
@@ -18,6 +21,9 @@ pub struct RefreshOutcome {
     pub snapshot: GlucoseSnapshot,
     /// Present when credentials were updated (e.g. token refreshed after 401 or patient metadata populated).
     pub updated_credentials: Option<StoredCredentials>,
+    /// Optional Home Assistant `/api/states` array fetched during this poll cycle for two-way
+    /// medication & cross-device alert snooze synchronization.
+    pub ha_states: Option<Vec<serde_json::Value>>,
 }
 
 // ---------------------------------------------------------------------------
@@ -151,7 +157,48 @@ pub async fn fetch_snapshot_with_reauth_async(
     Ok(RefreshOutcome {
         snapshot,
         updated_credentials,
+        ha_states: None,
     })
+}
+
+/// Fetches the latest CGM snapshot from either the Home Assistant LibreLink integration
+/// (`data_source == "home_assistant"`) or the LibreLinkUp cloud API (`"librelinkup"`).
+pub async fn fetch_snapshot_for_source_async(
+    data_source: &str,
+    ha_url: &str,
+    ha_sensor_entity_id: &str,
+    creds: &StoredCredentials,
+) -> Result<RefreshOutcome, ApiError> {
+    if data_source.trim().eq_ignore_ascii_case("home_assistant") {
+        let (snapshot, states) =
+            fetch_ha_cgm_snapshot_and_states_async(ha_url, &creds.ha_token, ha_sensor_entity_id)
+                .await?;
+        let mut active_creds = creds.clone();
+        let mut updated_credentials = None;
+        if active_creds.patient_id != snapshot.patient_id
+            || (!snapshot.first_name.is_empty() && active_creds.first_name != snapshot.first_name)
+        {
+            active_creds.patient_id = snapshot.patient_id.clone();
+            if !snapshot.first_name.is_empty() {
+                active_creds.first_name = snapshot.first_name.clone();
+            }
+            if !snapshot.last_name.is_empty() {
+                active_creds.last_name = snapshot.last_name.clone();
+            }
+            updated_credentials = Some(active_creds);
+        }
+        Ok(RefreshOutcome {
+            snapshot,
+            updated_credentials,
+            ha_states: Some(states),
+        })
+    } else {
+        let mut outcome = fetch_snapshot_with_reauth_async(creds).await?;
+        if !ha_url.trim().is_empty() && !creds.ha_token.trim().is_empty() {
+            outcome.ha_states = fetch_ha_states_array_async(ha_url, &creds.ha_token).await.ok();
+        }
+        Ok(outcome)
+    }
 }
 
 /// Effective age of the displayed reading in whole minutes.
@@ -298,6 +345,7 @@ pub fn build_demo_snapshot(now_epoch: i64) -> GlucoseSnapshot {
         })
         .collect();
 
+    let activated = now_epoch - 2 * 86_400 - 6 * 3600;
     GlucoseSnapshot {
         value_mg_dl: 112.0,
         trend_arrow: 3,
@@ -309,6 +357,11 @@ pub fn build_demo_snapshot(now_epoch: i64) -> GlucoseSnapshot {
         last_name: "Sensor".to_string(),
         graph_points,
         measured_at_epoch: Some(now_epoch),
+        sensor_serial: "40TUAM8CTE0".to_string(),
+        sensor_activated_at_epoch: Some(activated),
+        sensor_expires_at_epoch: Some(activated + 15 * 86_400),
+        sensor_lifespan_days: 15,
+        sensor_plus_model: true,
     }
 }
 

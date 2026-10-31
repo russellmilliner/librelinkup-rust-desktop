@@ -39,6 +39,7 @@ fn test_full_encryption_lifecycle_and_security() {
         patient_id: "patient-123456".to_string(),
         first_name: "Jane".to_string(),
         last_name: "Doe".to_string(),
+        ha_token: String::new(),
     };
 
     save_credentials_to_path(&creds, &vault_path, &key_path).expect("Vault save should succeed");
@@ -150,6 +151,7 @@ fn test_tray_icon_and_hover_tooltip_modes() {
         last_name: "Smith".to_string(),
         graph_points: vec![],
         measured_at_epoch: None,
+        ..Default::default()
     };
 
     // Case 1: Both tray icon glucose badge and hover info enabled
@@ -554,6 +556,7 @@ fn test_security_hardening_regions_opt_in_password_autostart_and_redaction() {
         patient_id: "pat-123".to_string(),
         first_name: "Jane".to_string(),
         last_name: "Doe".to_string(),
+        ha_token: String::new(),
     };
     let sanitized = full_creds.sanitized_for_storage(false);
     assert!(sanitized.password.is_empty());

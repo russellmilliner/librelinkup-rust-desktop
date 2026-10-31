@@ -118,6 +118,7 @@ impl qobject::MedicationsController {
                     "MEDS",
                     format!("Saved medication '{clean_name}' ({})", sched.label()),
                 );
+                ops::spawn_ha_medications_push(None);
                 self.as_mut().sync();
                 true
             }
@@ -139,6 +140,7 @@ impl qobject::MedicationsController {
         });
         if removed {
             log_info("MEDS", "Removed scheduled medication.");
+            ops::spawn_ha_medications_push(None);
             self.as_mut().sync();
         }
         removed
@@ -181,6 +183,7 @@ impl qobject::MedicationsController {
                         e.medication_name, e.dosage, e.taken_at_display
                     ),
                 );
+                ops::spawn_ha_medications_push(Some(e));
                 self.as_mut().sync();
                 true
             }
@@ -216,6 +219,7 @@ impl qobject::MedicationsController {
                         e.medication_name, e.dosage, e.taken_at_display
                     ),
                 );
+                ops::spawn_ha_medications_push(Some(e));
                 self.as_mut().sync();
                 true
             }
@@ -237,6 +241,7 @@ impl qobject::MedicationsController {
         });
         if removed {
             log_info("MEDS", "Removed logged medication dose entry.");
+            ops::spawn_ha_medications_push(None);
             self.as_mut().sync();
         }
         removed

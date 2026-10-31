@@ -12,10 +12,10 @@ use librelinkup_core::api::normalize_country_code;
 use librelinkup_core::event_log::{clear_events, export_events_to_path, get_all_events};
 use librelinkup_core::medications::{weekday_full_name, MedicationSchedule};
 use librelinkup_core::models::{
-    convert_mg_dl_to_unit, format_glucose_value, format_reading_age, format_target_range,
-    parse_libreview_timestamp, reading_age_minutes, trend_arrow_description, trend_arrow_symbol,
-    AppSettings, GlucoseRangeStatus, MAX_POLL_INTERVAL_SECONDS, MIN_POLL_INTERVAL_SECONDS,
-    STALE_COLOR_HEX,
+    accessible_glucose_announcement, clamp_ui_zoom_percent, convert_mg_dl_to_unit,
+    format_glucose_value, format_reading_age, format_target_range, parse_libreview_timestamp,
+    reading_age_minutes, trend_arrow_description, trend_arrow_symbol, AppSettings,
+    GlucoseRangeStatus, MAX_POLL_INTERVAL_SECONDS, MIN_POLL_INTERVAL_SECONDS, STALE_COLOR_HEX,
 };
 use librelinkup_core::paths::credentials_file_path;
 use librelinkup_core::session::format_snooze_until;
@@ -104,6 +104,9 @@ pub struct LibreLinkUpApp {
     login_email: String,
     login_password: String,
     login_region: String,
+    ha_url_input: String,
+    ha_token_input: String,
+    ha_entity_input: String,
     med_editing_id: String,
     med_name: String,
     med_dosage: String,
@@ -117,10 +120,16 @@ pub struct LibreLinkUpApp {
 
 impl LibreLinkUpApp {
     pub fn new(shared: SharedState, tx: UnboundedSender<Command>, ui_handle: Arc<UiHandle>) -> Self {
-        let region = shared
+        let (region, ha_url, ha_entity) = shared
             .lock()
-            .map(|s| normalize_country_code(&s.settings.country))
-            .unwrap_or_else(|_| "us".into());
+            .map(|s| {
+                (
+                    normalize_country_code(&s.settings.country),
+                    s.settings.ha_url.clone(),
+                    s.settings.ha_sensor_entity_id.clone(),
+                )
+            })
+            .unwrap_or_else(|_| ("us".into(), String::new(), String::new()));
         Self {
             shared,
             tx,
@@ -129,6 +138,9 @@ impl LibreLinkUpApp {
             login_email: String::new(),
             login_password: String::new(),
             login_region: if region.is_empty() { "us".into() } else { region },
+            ha_url_input: ha_url,
+            ha_token_input: String::new(),
+            ha_entity_input: ha_entity,
             med_editing_id: String::new(),
             med_name: String::new(),
             med_dosage: String::new(),
@@ -287,9 +299,16 @@ impl eframe::App for LibreLinkUpApp {
 
     fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
         let state = self.snapshot();
-        apply_theme(ui.ctx(), &state.settings.theme_mode);
+        apply_theme(
+            ui.ctx(),
+            &state.settings.theme_mode,
+            state.settings.ui_text_scale,
+            state.settings.high_contrast_mode,
+        );
+        self.handle_keyboard_shortcuts(ui.ctx(), &state);
 
         egui::Panel::top("header").show(ui, |ui| self.header(ui, &state));
+        egui::Panel::bottom("footer").show(ui, |ui| self.footer(ui, &state));
 
         egui::CentralPanel::default_margins().show(ui, |ui| {
             if !state.error.is_empty() {
@@ -356,27 +375,175 @@ impl eframe::App for LibreLinkUpApp {
     }
 }
 
-fn apply_theme(ctx: &egui::Context, mode: &str) {
+pub fn darken_color(c: Color32, factor: f32) -> Color32 {
+    let f = factor.max(1.0);
+    Color32::from_rgb(
+        ((c.r() as f32) / f).round().clamp(0.0, 255.0) as u8,
+        ((c.g() as f32) / f).round().clamp(0.0, 255.0) as u8,
+        ((c.b() as f32) / f).round().clamp(0.0, 255.0) as u8,
+    )
+}
+
+fn apply_theme(ctx: &egui::Context, mode: &str, ui_text_scale: i32, high_contrast: bool) {
     let pref = match mode {
         "dark" => egui::ThemePreference::Dark,
         "light" => egui::ThemePreference::Light,
         _ => egui::ThemePreference::System,
     };
     ctx.set_theme(pref);
+    let zoom = (clamp_ui_zoom_percent(ui_text_scale) as f32) / 100.0;
+    if (ctx.zoom_factor() - zoom).abs() > 0.005 {
+        ctx.set_zoom_factor(zoom);
+    }
     ctx.all_styles_mut(|style| {
-        style.spacing.scroll.bar_width = 10.0;
+        style.spacing.scroll.bar_width = 12.0;
         style.spacing.scroll.floating = false;
         style.spacing.scroll.foreground_color = true;
-        style.spacing.scroll.dormant_background_opacity = 0.45;
-        style.spacing.scroll.active_background_opacity = 0.75;
-        style.spacing.scroll.interact_background_opacity = 0.85;
-        style.spacing.scroll.dormant_handle_opacity = 0.80;
-        style.spacing.scroll.active_handle_opacity = 0.95;
+        style.spacing.scroll.dormant_background_opacity = 0.55;
+        style.spacing.scroll.active_background_opacity = 0.80;
+        style.spacing.scroll.interact_background_opacity = 0.90;
+        style.spacing.scroll.dormant_handle_opacity = 0.85;
+        style.spacing.scroll.active_handle_opacity = 0.98;
         style.spacing.scroll.interact_handle_opacity = 1.0;
+        if !style.visuals.dark_mode {
+            style.visuals.panel_fill = Color32::from_rgb(221, 229, 240);
+            style.visuals.window_fill = Color32::from_rgb(255, 255, 255);
+            style.visuals.faint_bg_color = Color32::from_rgb(237, 242, 247);
+            style.visuals.extreme_bg_color = Color32::from_rgb(248, 250, 252);
+            style.visuals.widgets.noninteractive.bg_stroke = Stroke::new(
+                if high_contrast { 2.0 } else { 1.5 },
+                if high_contrast {
+                    Color32::from_rgb(15, 23, 42)
+                } else {
+                    Color32::from_rgb(100, 116, 139)
+                },
+            );
+            style.visuals.widgets.noninteractive.fg_stroke =
+                Stroke::new(1.0, Color32::from_rgb(15, 23, 42));
+            style.visuals.widgets.inactive.bg_fill = Color32::from_rgb(226, 232, 240);
+            style.visuals.widgets.inactive.bg_stroke = Stroke::new(
+                if high_contrast { 2.0 } else { 1.0 },
+                if high_contrast {
+                    Color32::from_rgb(15, 23, 42)
+                } else {
+                    Color32::from_rgb(100, 116, 139)
+                },
+            );
+            style.visuals.widgets.inactive.fg_stroke =
+                Stroke::new(1.0, Color32::from_rgb(15, 23, 42));
+        } else if high_contrast {
+            style.visuals.widgets.noninteractive.bg_stroke =
+                Stroke::new(2.0, Color32::from_rgb(226, 232, 240));
+            style.visuals.widgets.inactive.bg_stroke =
+                Stroke::new(1.5, Color32::from_rgb(203, 213, 225));
+        }
     });
 }
 
 impl LibreLinkUpApp {
+    fn handle_keyboard_shortcuts(&mut self, ctx: &egui::Context, state: &Shared) {
+        let mut new_zoom: Option<i32> = None;
+        let mut refresh_now = false;
+        let mut switch_tab: Option<Tab> = None;
+        let cur_zoom = clamp_ui_zoom_percent(state.settings.ui_text_scale);
+        ctx.input(|i| {
+            if i.modifiers.ctrl {
+                if i.key_pressed(egui::Key::Plus) || i.key_pressed(egui::Key::Equals) {
+                    new_zoom = Some(clamp_ui_zoom_percent(cur_zoom + 10));
+                } else if i.key_pressed(egui::Key::Minus) {
+                    new_zoom = Some(clamp_ui_zoom_percent(cur_zoom - 10));
+                } else if i.key_pressed(egui::Key::Num0) {
+                    new_zoom = Some(100);
+                } else if i.key_pressed(egui::Key::R) {
+                    refresh_now = true;
+                }
+            }
+            if i.key_pressed(egui::Key::F5) {
+                refresh_now = true;
+            }
+            if i.modifiers.alt && !i.modifiers.ctrl {
+                if i.key_pressed(egui::Key::Num1) {
+                    switch_tab = Some(Tab::Dashboard);
+                } else if i.key_pressed(egui::Key::Num2) {
+                    switch_tab = Some(Tab::Medications);
+                } else if i.key_pressed(egui::Key::Num3) {
+                    switch_tab = Some(Tab::Settings);
+                } else if i.key_pressed(egui::Key::Num4) {
+                    switch_tab = Some(Tab::Alerts);
+                } else if i.key_pressed(egui::Key::Num5) {
+                    switch_tab = Some(Tab::Account);
+                } else if i.key_pressed(egui::Key::Num6) {
+                    switch_tab = Some(Tab::Logs);
+                } else if i.key_pressed(egui::Key::Num7) {
+                    switch_tab = Some(Tab::About);
+                }
+            }
+        });
+        if let Some(z) = new_zoom {
+            let mut ns = state.settings.clone();
+            ns.ui_text_scale = z;
+            self.save_settings(ns);
+        }
+        if refresh_now && state.logged_in && !state.busy && !state.demo {
+            self.send(Command::RefreshNow);
+        }
+        if let Some(t) = switch_tab {
+            self.tab = t;
+        }
+    }
+
+    fn footer(&mut self, ui: &mut egui::Ui, state: &Shared) {
+        let (_, _, stale, age_text) = reading_status(state);
+        let summary = accessible_glucose_announcement(
+            &state.snapshot,
+            &state.settings,
+            stale,
+            &age_text,
+        );
+        let cur_zoom = clamp_ui_zoom_percent(state.settings.ui_text_scale);
+        ui.horizontal(|ui| {
+            ui.label(RichText::new(&summary).small());
+            ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+                if ui
+                    .add_enabled(cur_zoom < 175, egui::Button::new("+").small())
+                    .on_hover_text("Zoom in (Ctrl++)")
+                    .clicked()
+                {
+                    let mut ns = state.settings.clone();
+                    ns.ui_text_scale = clamp_ui_zoom_percent(cur_zoom + 10);
+                    self.save_settings(ns);
+                }
+                if ui
+                    .button(RichText::new(format!("{cur_zoom}%")).small().strong())
+                    .on_hover_text("Reset UI zoom to 100% (Ctrl+0)")
+                    .clicked()
+                {
+                    let mut ns = state.settings.clone();
+                    ns.ui_text_scale = 100;
+                    self.save_settings(ns);
+                }
+                if ui
+                    .add_enabled(cur_zoom > 75, egui::Button::new("−").small())
+                    .on_hover_text("Zoom out (Ctrl+-)")
+                    .clicked()
+                {
+                    let mut ns = state.settings.clone();
+                    ns.ui_text_scale = clamp_ui_zoom_percent(cur_zoom - 10);
+                    self.save_settings(ns);
+                }
+                let mut hc = state.settings.high_contrast_mode;
+                if ui
+                    .toggle_value(&mut hc, RichText::new("◐ High Contrast").small())
+                    .on_hover_text("Toggle High Contrast accessibility borders and badges")
+                    .changed()
+                {
+                    let mut ns = state.settings.clone();
+                    ns.high_contrast_mode = hc;
+                    self.save_settings(ns);
+                }
+            });
+        });
+    }
     fn header(&mut self, ui: &mut egui::Ui, state: &Shared) {
         ui.horizontal_wrapped(|ui| {
             let (badge, color) = if state.demo {
@@ -415,50 +582,148 @@ impl LibreLinkUpApp {
     }
 
     fn login_view(&mut self, ui: &mut egui::Ui, state: &Shared) {
+        let is_ha = state.settings.data_source == "home_assistant";
         ui.vertical_centered(|ui| {
-            ui.add_space(24.0);
-            ui.heading("Sign in to LibreLinkUp");
-            ui.label("Use the email and password of your LibreLinkUp follower account.");
+            ui.add_space(20.0);
+            ui.heading(if is_ha {
+                "Connect to Home Assistant LibreLink"
+            } else {
+                "Sign in to LibreLinkUp"
+            });
+            ui.label(if is_ha {
+                "Pull live CGM readings, trend arrows, and 12-hour history from your Home Assistant LibreLink integration."
+            } else {
+                "Use the email and password of your LibreLinkUp follower account."
+            });
             ui.add_space(12.0);
             egui::Frame::group(ui.style()).inner_margin(16).show(ui, |ui| {
-                ui.set_max_width(420.0);
-                egui::Grid::new("login").num_columns(2).spacing([12.0, 10.0]).show(ui, |ui| {
-                    ui.label("Email");
-                    ui.add(egui::TextEdit::singleline(&mut self.login_email).hint_text("you@example.com").desired_width(260.0));
-                    ui.end_row();
-                    ui.label("Password");
-                    let pw = ui.add(egui::TextEdit::singleline(&mut self.login_password).password(true).desired_width(260.0));
-                    ui.end_row();
-                    ui.label("Region");
-                    region_combo(ui, &mut self.login_region);
-                    ui.end_row();
-                    if pw.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter)) {
-                        self.submit_login();
-                    }
-                });
-                ui.add_space(6.0);
-                let mut remember = state.settings.remember_password;
-                if ui
-                    .checkbox(
-                        &mut remember,
-                        "Remember password in encrypted vault (auto-renew expired tokens)",
-                    )
-                    .changed()
-                {
-                    let mut ns = state.settings.clone();
-                    ns.remember_password = remember;
-                    self.save_settings(ns);
-                }
-                ui.add_space(10.0);
+                ui.set_max_width(450.0);
                 ui.horizontal(|ui| {
-                    let label = if state.busy { "Signing in..." } else { "Sign In" };
-                    if ui.add_enabled(!state.busy, egui::Button::new(label)).clicked() {
-                        self.submit_login();
-                    }
-                    if ui.button("Sample Data").clicked() {
-                        self.send(Command::LoadDemo);
+                    ui.label(RichText::new("Data Source:").strong());
+                    let mut src = state.settings.data_source.clone();
+                    if ui
+                        .selectable_value(&mut src, "librelinkup".to_string(), "LibreLinkUp Cloud")
+                        .clicked()
+                        || ui
+                            .selectable_value(
+                                &mut src,
+                                "home_assistant".to_string(),
+                                "Home Assistant (LibreLink)",
+                            )
+                            .clicked()
+                    {
+                        let mut ns = state.settings.clone();
+                        ns.data_source = src;
+                        self.save_settings(ns);
                     }
                 });
+                ui.separator();
+
+                if !is_ha {
+                    egui::Grid::new("login").num_columns(2).spacing([12.0, 10.0]).show(ui, |ui| {
+                        ui.label("Email");
+                        ui.add(
+                            egui::TextEdit::singleline(&mut self.login_email)
+                                .hint_text("you@example.com")
+                                .desired_width(260.0),
+                        );
+                        ui.end_row();
+                        ui.label("Password");
+                        let pw = ui.add(
+                            egui::TextEdit::singleline(&mut self.login_password)
+                                .password(true)
+                                .desired_width(260.0),
+                        );
+                        ui.end_row();
+                        ui.label("Region");
+                        region_combo(ui, &mut self.login_region);
+                        ui.end_row();
+                        if pw.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter)) {
+                            self.submit_login();
+                        }
+                    });
+                    ui.add_space(6.0);
+                    let mut remember = state.settings.remember_password;
+                    if ui
+                        .checkbox(
+                            &mut remember,
+                            "Remember password in encrypted vault (auto-renew expired tokens)",
+                        )
+                        .changed()
+                    {
+                        let mut ns = state.settings.clone();
+                        ns.remember_password = remember;
+                        self.save_settings(ns);
+                    }
+                    ui.add_space(10.0);
+                    ui.horizontal(|ui| {
+                        let label = if state.busy { "Signing in..." } else { "Sign In" };
+                        if ui.add_enabled(!state.busy, egui::Button::new(label)).clicked() {
+                            self.submit_login();
+                        }
+                        if ui.button("Sample Data").clicked() {
+                            self.send(Command::LoadDemo);
+                        }
+                    });
+                } else {
+                    if self.ha_url_input.is_empty() && !state.settings.ha_url.is_empty() {
+                        self.ha_url_input = state.settings.ha_url.clone();
+                    }
+                    if self.ha_entity_input.is_empty() && !state.settings.ha_sensor_entity_id.is_empty() {
+                        self.ha_entity_input = state.settings.ha_sensor_entity_id.clone();
+                    }
+                    egui::Grid::new("login_ha").num_columns(2).spacing([12.0, 10.0]).show(ui, |ui| {
+                        ui.label("HA URL");
+                        ui.add(
+                            egui::TextEdit::singleline(&mut self.ha_url_input)
+                                .hint_text("https://haos.dingo-dory.ts.net")
+                                .desired_width(280.0),
+                        );
+                        ui.end_row();
+                        ui.label("Access Token");
+                        ui.add(
+                            egui::TextEdit::singleline(&mut self.ha_token_input)
+                                .password(true)
+                                .hint_text(if state.ha_token_configured {
+                                    "Stored in DPAPI vault (leave blank to keep)"
+                                } else {
+                                    "Paste Long-Lived Access Token"
+                                })
+                                .desired_width(280.0),
+                        );
+                        ui.end_row();
+                        ui.label("Sensor Entity ID");
+                        ui.add(
+                            egui::TextEdit::singleline(&mut self.ha_entity_input)
+                                .hint_text("Auto-discover (e.g. sensor.russell_milliner_measurement)")
+                                .desired_width(280.0),
+                        );
+                        ui.end_row();
+                    });
+                    ui.add_space(10.0);
+                    ui.horizontal(|ui| {
+                        let label = if state.busy {
+                            "Connecting..."
+                        } else {
+                            "Connect Home Assistant"
+                        };
+                        if ui.add_enabled(!state.busy, egui::Button::new(label)).clicked() {
+                            let tok = std::mem::take(&mut self.ha_token_input);
+                            self.send(Command::SaveHomeAssistantConfig {
+                                data_source: "home_assistant".into(),
+                                ha_url: self.ha_url_input.clone(),
+                                ha_token: tok,
+                                ha_sensor_entity_id: self.ha_entity_input.clone(),
+                            });
+                        }
+                        if ui.button("Auto-Fill Env").clicked() {
+                            self.send(Command::AutoFillHomeAssistantFromEnv);
+                        }
+                        if ui.button("Sample Data").clicked() {
+                            self.send(Command::LoadDemo);
+                        }
+                    });
+                }
             });
             ui.add_space(12.0);
             ui.label(RichText::new(&state.status).weak());
@@ -484,20 +749,37 @@ impl LibreLinkUpApp {
         let s = &state.settings;
         let snap = &state.snapshot;
         let (label, color_hex, stale, age_text) = reading_status(state);
-        let color = hex_color(color_hex);
+        let raw_color = hex_color(color_hex);
+        let is_light_ui = !ui.visuals().dark_mode;
+        let color = if is_light_ui {
+            darken_color(raw_color, 1.42)
+        } else {
+            darken_color(raw_color, 1.15)
+        };
+        let hero_border = if is_light_ui {
+            Stroke::new(2.0, darken_color(raw_color, 1.95))
+        } else {
+            Stroke::new(1.5, Color32::from_white_alpha(110))
+        };
         let value = format_glucose_value(snap.value_mg_dl, &s.result_unit);
 
         ui.columns(2, |cols| {
             let ui = &mut cols[0];
             // Hero card
-            egui::Frame::new().fill(color).corner_radius(12).inner_margin(16).show(ui, |ui| {
+            egui::Frame::new()
+                .fill(color)
+                .stroke(hero_border)
+                .corner_radius(12)
+                .inner_margin(16)
+                .show(ui, |ui| {
                 ui.set_width(ui.available_width());
                 ui.set_min_height(170.0);
                 ui.horizontal(|ui| {
                     ui.label(RichText::new("CURRENT GLUCOSE").small().strong().color(Color32::WHITE));
                     ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
                         egui::Frame::new()
-                            .fill(Color32::from_black_alpha(60))
+                            .fill(Color32::from_black_alpha(90))
+                            .stroke(Stroke::new(1.0, Color32::from_white_alpha(115)))
                             .corner_radius(6)
                             .inner_margin(egui::Margin::symmetric(8, 2))
                             .show(ui, |ui| ui.label(RichText::new(label).small().strong().color(Color32::WHITE)));
@@ -560,6 +842,16 @@ impl LibreLinkUpApp {
                     let name = format!("{} {}", snap.first_name, snap.last_name).trim().to_string();
                     ui.label("Patient");
                     ui.label(if name.is_empty() { "—".to_string() } else { name });
+                    ui.end_row();
+                    ui.label("Sensor");
+                    let sensor_txt = snap.format_sensor_status(now);
+                    let sensor_warn = snap.is_sensor_in_warmup(now)
+                        || snap.is_sensor_expiring_soon(now, s.sensor_expiry_alert_hours);
+                    if sensor_warn {
+                        ui.label(RichText::new(sensor_txt).strong().color(Color32::from_rgb(234, 179, 8)));
+                    } else {
+                        ui.label(sensor_txt);
+                    }
                     ui.end_row();
                     ui.label("Region");
                     ui.label(s.country.to_uppercase());
@@ -910,6 +1202,21 @@ impl LibreLinkUpApp {
                     ui.selectable_value(&mut s.theme_mode, "dark".to_string(), "Dark");
                 });
                 ui.end_row();
+                ui.label("UI Zoom (75%–175%)");
+                ui.horizontal(|ui| {
+                    let cur_z = clamp_ui_zoom_percent(s.ui_text_scale);
+                    if ui.add_enabled(cur_z > 75, egui::Button::new("−")).clicked() {
+                        s.ui_text_scale = clamp_ui_zoom_percent(cur_z - 10);
+                    }
+                    if ui.button(format!("{cur_z}%")).on_hover_text("Reset UI zoom to 100%").clicked() {
+                        s.ui_text_scale = 100;
+                    }
+                    if ui.add_enabled(cur_z < 175, egui::Button::new("+")).clicked() {
+                        s.ui_text_scale = clamp_ui_zoom_percent(cur_z + 10);
+                    }
+                    ui.checkbox(&mut s.high_contrast_mode, "High Contrast Mode");
+                });
+                ui.end_row();
                 ui.label("Glucose unit");
                 ui.horizontal(|ui| {
                     ui.selectable_value(&mut s.result_unit, "mg/dL".to_string(), "mg/dL");
@@ -955,41 +1262,125 @@ impl LibreLinkUpApp {
                 &mut s.check_updates_on_startup,
                 "Automatically check GitHub Releases for updates (on startup & every 6 hours)",
             );
-            ui.horizontal(|ui| {
-                let btn_label = if state.checking_updates {
-                    "Checking..."
-                } else {
-                    "🔄 Check for Updates Now"
-                };
-                if ui
-                    .add_enabled(!state.checking_updates, egui::Button::new(btn_label))
-                    .clicked()
-                {
-                    self.send(Command::CheckUpdates { manual: true });
-                }
-                if let Some(ref upd) = state.update_info {
-                    let color = if upd.update_available {
-                        Color32::from_rgb(56, 189, 248)
+                ui.horizontal(|ui| {
+                    let btn_label = if state.checking_updates {
+                        "Checking..."
                     } else {
-                        ui.visuals().text_color()
+                        "🔄 Check for Updates Now"
                     };
-                    ui.label(RichText::new(&upd.message).color(color));
-                    if upd.update_available {
-                        let inst_label = if state.installing_update {
-                            "Installing...".to_string()
-                        } else {
-                            format!("⬇ Install {}", upd.latest_version)
-                        };
-                        if ui
-                            .add_enabled(!state.installing_update, egui::Button::new(inst_label))
-                            .clicked()
-                        {
-                            self.send(Command::InstallUpdate);
-                        }
-                        ui.hyperlink_to("Release Notes", &upd.release_url);
+                    if ui
+                        .add_enabled(!state.checking_updates, egui::Button::new(btn_label))
+                        .clicked()
+                    {
+                        self.send(Command::CheckUpdates { manual: true });
                     }
-                } else {
-                    ui.label(RichText::new(format!("Current version: v{}", env!("CARGO_PKG_VERSION"))).weak());
+                    if let Some(ref upd) = state.update_info {
+                        let color = if upd.update_available {
+                            Color32::from_rgb(56, 189, 248)
+                        } else {
+                            ui.visuals().text_color()
+                        };
+                        ui.label(RichText::new(&upd.message).color(color));
+                        if upd.update_available {
+                            let inst_label = if state.installing_update {
+                                "Installing...".to_string()
+                            } else {
+                                format!("⬇ Install {}", upd.latest_version)
+                            };
+                            if ui
+                                .add_enabled(!state.installing_update, egui::Button::new(inst_label))
+                                .clicked()
+                            {
+                                self.send(Command::InstallUpdate);
+                            }
+                            ui.hyperlink_to("Release Notes", &upd.release_url);
+                        }
+                    } else {
+                        ui.label(RichText::new(format!("Current version: v{}", env!("CARGO_PKG_VERSION"))).weak());
+                    }
+                });
+            });
+        ui.add_space(8.0);
+        egui::Frame::group(ui.style()).inner_margin(12).show(ui, |ui| {
+            ui.label(RichText::new("Data Source & Home Assistant LibreLink Integration").strong());
+            ui.label(
+                RichText::new(
+                    "Choose whether to poll Abbott LibreLinkUp Cloud directly or pull CGM readings and 12-hour history from your Home Assistant LibreLink integration.",
+                )
+                .small()
+                .weak(),
+            );
+            if self.ha_url_input.is_empty() && !s.ha_url.is_empty() {
+                self.ha_url_input = s.ha_url.clone();
+            }
+            if self.ha_entity_input.is_empty() && !s.ha_sensor_entity_id.is_empty() {
+                self.ha_entity_input = s.ha_sensor_entity_id.clone();
+            }
+            egui::Grid::new("ha_settings_grid")
+                .num_columns(2)
+                .spacing([16.0, 8.0])
+                .show(ui, |ui| {
+                    ui.label("Telemetry source");
+                    ui.horizontal(|ui| {
+                        ui.selectable_value(
+                            &mut s.data_source,
+                            "librelinkup".to_string(),
+                            "LibreLinkUp Cloud API",
+                        );
+                        ui.selectable_value(
+                            &mut s.data_source,
+                            "home_assistant".to_string(),
+                            "Home Assistant (LibreLink)",
+                        );
+                    });
+                    ui.end_row();
+                    ui.label("Home Assistant URL");
+                    ui.add(
+                        egui::TextEdit::singleline(&mut self.ha_url_input)
+                            .hint_text("https://haos.dingo-dory.ts.net")
+                            .desired_width(300.0),
+                    );
+                    ui.end_row();
+                    ui.label("Long-Lived Access Token");
+                    ui.add(
+                        egui::TextEdit::singleline(&mut self.ha_token_input)
+                            .password(true)
+                            .hint_text(if state.ha_token_configured {
+                                "Stored in DPAPI vault (leave blank to keep)"
+                            } else {
+                                "Paste Home Assistant Long-Lived Access Token"
+                            })
+                            .desired_width(300.0),
+                    );
+                    ui.end_row();
+                    ui.label("Sensor Entity ID (optional)");
+                    ui.add(
+                        egui::TextEdit::singleline(&mut self.ha_entity_input)
+                            .hint_text("Auto-discover (e.g. sensor.russell_milliner_measurement)")
+                            .desired_width(300.0),
+                    );
+                    ui.end_row();
+                });
+            ui.checkbox(
+                &mut s.ha_sync_medications,
+                "Two-way Medication & Dose Sync with Home Assistant (sensor.librelinkup_medications)",
+            );
+            ui.checkbox(
+                &mut s.ha_sync_snooze,
+                "Cross-Device Alert Snooze Synchronization via Home Assistant (sensor.librelinkup_alert_snooze)",
+            );
+            ui.horizontal(|ui| {
+                if ui.button("💾 Save & Connect Home Assistant").clicked() {
+                    let tok = std::mem::take(&mut self.ha_token_input);
+                    self.send(Command::SaveHomeAssistantConfig {
+                        data_source: s.data_source.clone(),
+                        ha_url: self.ha_url_input.clone(),
+                        ha_token: tok,
+                        ha_sensor_entity_id: self.ha_entity_input.clone(),
+                    });
+                }
+                if ui.button("📥 Import ~/.config/home-assistant.env").clicked() {
+                    self.send(Command::AutoFillHomeAssistantFromEnv);
                 }
             });
         });
@@ -1042,6 +1433,9 @@ impl LibreLinkUpApp {
                 ui.end_row();
                 ui.checkbox(&mut s.alert_on_stale, "Alert when no new reading for");
                 ui.add(egui::DragValue::new(&mut s.stale_after_minutes).range(5..=120).suffix(" min"));
+                ui.end_row();
+                ui.label("Sensor expiry warning (0 = off)");
+                ui.add(egui::DragValue::new(&mut s.sensor_expiry_alert_hours).range(0..=168).suffix(" h"));
                 ui.end_row();
             });
             ui.label(RichText::new("Urgent low alerts repeat at least every 5 minutes and cannot be snoozed.").small().weak());
@@ -1475,15 +1869,22 @@ fn overlay_ui(ui: &mut egui::Ui, shared: &SharedState, tx: &UnboundedSender<Comm
 
     let alpha = (current_opacity as f32 / 100.0 * 255.0) as u8;
     let status_color = hex_color(color_hex);
+    let light_fill = darken_color(status_color, 1.42);
+    let light_border = darken_color(status_color, 1.95);
     let bg = if s.overlay_dark_theme {
         Color32::from_rgba_unmultiplied(15, 23, 42, alpha)
     } else {
-        Color32::from_rgba_unmultiplied(status_color.r(), status_color.g(), status_color.b(), alpha)
+        Color32::from_rgba_unmultiplied(light_fill.r(), light_fill.g(), light_fill.b(), alpha)
     };
 
     let painter = ui.painter();
     painter.rect_filled(rect, CornerRadius::same(12), bg);
-    painter.rect_stroke(rect, CornerRadius::same(12), Stroke::new(1.0, Color32::from_white_alpha(35)), egui::StrokeKind::Inside);
+    let stroke_col = if s.overlay_dark_theme {
+        Color32::from_white_alpha(65)
+    } else {
+        light_border
+    };
+    painter.rect_stroke(rect, CornerRadius::same(12), Stroke::new(2.0, stroke_col), egui::StrokeKind::Inside);
     if s.overlay_dark_theme {
         painter.rect_filled(Rect::from_min_size(rect.min, Vec2::new(6.0, rect.height())), CornerRadius::same(3), status_color);
     }
@@ -1658,17 +2059,17 @@ fn draw_overlay_button(
     let hovered = resp.hovered();
     let bg = if hovered {
         if is_close {
-            Color32::from_rgba_unmultiplied(239, 68, 68, 170)
+            Color32::from_rgba_unmultiplied(239, 68, 68, 190)
         } else {
-            Color32::from_white_alpha(70)
+            Color32::from_black_alpha(130)
         }
     } else {
-        Color32::from_white_alpha(35)
+        Color32::from_black_alpha(86)
     };
     let border = if hovered {
-        Color32::from_white_alpha(120)
+        Color32::from_white_alpha(200)
     } else {
-        Color32::from_white_alpha(65)
+        Color32::from_white_alpha(150)
     };
     painter.rect_filled(rect, CornerRadius::same(6), bg);
     painter.rect_stroke(rect, CornerRadius::same(6), Stroke::new(1.0, border), egui::StrokeKind::Inside);
@@ -1694,21 +2095,21 @@ fn draw_overlay_all_desktops_button(
     let hovered = resp.hovered();
     let bg = if on_all_desktops {
         if hovered {
-            Color32::from_rgba_unmultiplied(56, 189, 248, 95)
+            Color32::from_rgba_unmultiplied(56, 189, 248, 120)
         } else {
-            Color32::from_rgba_unmultiplied(56, 189, 248, 60)
+            Color32::from_rgba_unmultiplied(56, 189, 248, 85)
         }
     } else if hovered {
-        Color32::from_white_alpha(70)
+        Color32::from_black_alpha(130)
     } else {
-        Color32::from_white_alpha(35)
+        Color32::from_black_alpha(86)
     };
     let border = if on_all_desktops {
         Color32::from_rgb(56, 189, 248)
     } else if hovered {
-        Color32::from_white_alpha(120)
+        Color32::from_white_alpha(200)
     } else {
-        Color32::from_white_alpha(65)
+        Color32::from_white_alpha(150)
     };
     painter.rect_filled(rect, CornerRadius::same(6), bg);
     painter.rect_stroke(

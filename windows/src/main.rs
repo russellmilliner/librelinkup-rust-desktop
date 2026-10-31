@@ -320,6 +320,7 @@ fn self_test() -> i32 {
             patient_id: String::new(),
             first_name: String::new(),
             last_name: String::new(),
+            ha_token: String::new(),
         };
         save_credentials_with_secret(&creds, &path, &secret)?;
         let loaded = load_credentials_with_secret(&path, &secret)?.ok_or("vault missing")?;

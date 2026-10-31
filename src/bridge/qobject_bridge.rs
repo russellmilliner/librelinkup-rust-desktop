@@ -52,11 +52,18 @@ pub struct TelemetryControllerRust {
     pub ea1c_display: QString,
     pub gmi_display: QString,
     pub tir_display: QString,
+    pub accessible_summary: QString,
+    pub sensor_status_display: QString,
+    pub sensor_serial: QString,
+    pub sensor_in_warmup: bool,
+    pub sensor_expiring_soon: bool,
 }
 
 /// Property storage for `SettingsController` (one field per `#[qproperty]`).
 pub struct SettingsControllerRust {
     pub theme_mode: QString,
+    pub ui_zoom_percent: i32,
+    pub high_contrast_mode: bool,
     pub country: QString,
     pub language: QString,
     pub window_mode: QString,
@@ -90,6 +97,13 @@ pub struct SettingsControllerRust {
     pub custom_target_high: f64,
     pub remember_password: bool,
     pub credentials_vault_path: QString,
+    pub data_source: QString,
+    pub ha_url: QString,
+    pub ha_sensor_entity_id: QString,
+    pub ha_token_configured: bool,
+    pub ha_sync_medications: bool,
+    pub ha_sync_snooze: bool,
+    pub sensor_expiry_alert_hours: i32,
     pub urgent_low_mg_dl: f64,
     pub alert_repeat_minutes: i32,
     pub stale_after_minutes: i32,
@@ -219,6 +233,11 @@ pub mod qobject {
         #[qproperty(QString, ea1c_display)]
         #[qproperty(QString, gmi_display)]
         #[qproperty(QString, tir_display)]
+        #[qproperty(QString, accessible_summary)]
+        #[qproperty(QString, sensor_status_display)]
+        #[qproperty(QString, sensor_serial)]
+        #[qproperty(bool, sensor_in_warmup)]
+        #[qproperty(bool, sensor_expiring_soon)]
         type TelemetryController = super::TelemetryControllerRust;
 
         #[qinvokable]
@@ -241,6 +260,18 @@ pub mod qobject {
 
         #[qinvokable]
         fn logout(self: Pin<&mut TelemetryController>);
+
+        #[qinvokable]
+        fn save_home_assistant_config(
+            self: Pin<&mut TelemetryController>,
+            data_source: QString,
+            ha_url: QString,
+            ha_token: QString,
+            ha_sensor_entity_id: QString,
+        ) -> bool;
+
+        #[qinvokable]
+        fn auto_fill_home_assistant_from_env(self: Pin<&mut TelemetryController>) -> bool;
 
         #[qinvokable]
         fn refresh_glucose_now(self: Pin<&mut TelemetryController>);
@@ -322,6 +353,8 @@ pub mod qobject {
         #[qobject]
         #[qml_element]
         #[qproperty(QString, theme_mode)]
+        #[qproperty(i32, ui_zoom_percent)]
+        #[qproperty(bool, high_contrast_mode)]
         #[qproperty(QString, country)]
         #[qproperty(QString, language)]
         #[qproperty(QString, window_mode)]
@@ -355,6 +388,13 @@ pub mod qobject {
         #[qproperty(f64, custom_target_high)]
         #[qproperty(bool, remember_password)]
         #[qproperty(QString, credentials_vault_path)]
+        #[qproperty(QString, data_source)]
+        #[qproperty(QString, ha_url)]
+        #[qproperty(QString, ha_sensor_entity_id)]
+        #[qproperty(bool, ha_token_configured)]
+        #[qproperty(bool, ha_sync_medications)]
+        #[qproperty(bool, ha_sync_snooze)]
+        #[qproperty(i32, sensor_expiry_alert_hours)]
         #[qproperty(f64, urgent_low_mg_dl)]
         #[qproperty(i32, alert_repeat_minutes)]
         #[qproperty(i32, stale_after_minutes)]
@@ -380,6 +420,33 @@ pub mod qobject {
 
         #[qinvokable]
         fn update_theme_mode(self: Pin<&mut SettingsController>, mode: QString);
+
+        #[qinvokable]
+        fn update_ui_zoom_percent(self: Pin<&mut SettingsController>, zoom_percent: i32);
+
+        #[qinvokable]
+        fn zoom_in(self: Pin<&mut SettingsController>);
+
+        #[qinvokable]
+        fn zoom_out(self: Pin<&mut SettingsController>);
+
+        #[qinvokable]
+        fn reset_zoom(self: Pin<&mut SettingsController>);
+
+        #[qinvokable]
+        fn update_high_contrast_mode(self: Pin<&mut SettingsController>, enabled: bool);
+
+        #[qinvokable]
+        fn update_data_source(self: Pin<&mut SettingsController>, data_source: QString);
+
+        #[qinvokable]
+        fn update_ha_sync_medications(self: Pin<&mut SettingsController>, enabled: bool);
+
+        #[qinvokable]
+        fn update_ha_sync_snooze(self: Pin<&mut SettingsController>, enabled: bool);
+
+        #[qinvokable]
+        fn update_sensor_expiry_alert_hours(self: Pin<&mut SettingsController>, hours: i32);
 
         #[qinvokable]
         fn update_result_unit(self: Pin<&mut SettingsController>, unit: QString);

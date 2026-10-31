@@ -9,6 +9,11 @@ Item {
     objectName: "librelinkupLogViewerView"
 
     property var controller: null
+    readonly property real zoomScale: Math.max(0.75, Math.min(1.75, (controller ? controller.uiZoomPercent : 100) / 100.0))
+    readonly property real osBaseFontPt: Kirigami.Theme.defaultFont.pointSize > 0 ? Kirigami.Theme.defaultFont.pointSize : 10.0
+    readonly property real fontSmallPt: osBaseFontPt * 0.85 * zoomScale
+    readonly property real fontCompactPt: osBaseFontPt * 0.90 * zoomScale
+    readonly property real fontBodyPt: osBaseFontPt * 1.00 * zoomScale
     property bool isLightTheme: (0.2126 * Kirigami.Theme.backgroundColor.r + 0.7152 * Kirigami.Theme.backgroundColor.g + 0.0722 * Kirigami.Theme.backgroundColor.b) > 0.45
     property string categoryFilter: "ALL"
     property string levelFilter: "ALL"
@@ -90,9 +95,13 @@ Item {
             implicitWidth: hcScrollBar.orientation === Qt.Vertical ? 12 : 100
             implicitHeight: hcScrollBar.orientation === Qt.Horizontal ? 12 : 100
             radius: 6
-            color: Qt.alpha(Kirigami.Theme.textColor, 0.16)
+            color: logViewerDialog.isLightTheme
+                ? "#cbd5e1"
+                : Qt.alpha(Kirigami.Theme.textColor, 0.16)
             border.width: 1
-            border.color: Qt.alpha(Kirigami.Theme.textColor, 0.32)
+            border.color: logViewerDialog.isLightTheme
+                ? "#475569"
+                : Qt.alpha(Kirigami.Theme.textColor, 0.32)
             visible: hcScrollBar.size < 1.0 || hcScrollBar.policy === QQC2.ScrollBar.AlwaysOn
         }
 
@@ -106,9 +115,11 @@ Item {
                 ? Kirigami.Theme.highlightColor
                 : (hcScrollBar.hovered
                     ? Qt.lighter(Kirigami.Theme.highlightColor, 1.15)
-                    : Qt.alpha(Kirigami.Theme.textColor, 0.68))
+                    : (logViewerDialog.isLightTheme ? "#334155" : Qt.alpha(Kirigami.Theme.textColor, 0.68)))
             border.width: 1
-            border.color: Qt.alpha(Kirigami.Theme.backgroundColor, 0.55)
+            border.color: logViewerDialog.isLightTheme
+                ? "#0f172a"
+                : Qt.alpha(Kirigami.Theme.backgroundColor, 0.55)
         }
     }
 
@@ -223,11 +234,12 @@ Item {
                 border.color: Qt.alpha(Kirigami.Theme.highlightColor, 0.45)
                 border.width: 1
                 readonly property real badgeW: countLabel.implicitWidth + 16
+                readonly property real badgeH: Math.max(24, countLabel.implicitHeight + 8)
                 implicitWidth: badgeW
-                implicitHeight: 24
+                implicitHeight: badgeH
                 Layout.preferredWidth: badgeW
                 Layout.minimumWidth: badgeW
-                Layout.preferredHeight: 24
+                Layout.preferredHeight: badgeH
 
                 QQC2.Label {
                     id: countLabel
@@ -284,6 +296,7 @@ Item {
                 model: logViewerDialog.categories
                 Layout.preferredWidth: 130
                 Layout.minimumWidth: 105
+                Accessible.name: qsTr("Filter diagnostic logs by category")
                 onActivated: {
                     logViewerDialog.categoryFilter = currentText
                     logViewerDialog.refreshModel()
@@ -301,6 +314,7 @@ Item {
                 model: logViewerDialog.levels
                 Layout.preferredWidth: 100
                 Layout.minimumWidth: 85
+                Accessible.name: qsTr("Filter diagnostic logs by severity level")
                 onActivated: {
                     logViewerDialog.levelFilter = currentText
                     logViewerDialog.refreshModel()
@@ -313,6 +327,7 @@ Item {
                 Layout.fillWidth: true
                 Layout.minimumWidth: 120
                 placeholderText: qsTr("Search timestamps, categories, or messages...")
+                Accessible.name: qsTr("Search diagnostic log messages")
                 onTextChanged: {
                     logViewerDialog.searchQuery = text
                     logViewerDialog.refreshModel()
@@ -337,9 +352,13 @@ Item {
             Layout.fillWidth: true
             Layout.fillHeight: true
             radius: 8
-            color: Qt.alpha(Kirigami.Theme.alternateBackgroundColor, 0.85)
-            border.color: Qt.alpha(Kirigami.Theme.textColor, 0.2)
-            border.width: 1
+            color: logViewerDialog.isLightTheme
+                ? "#ffffff"
+                : Qt.alpha(Kirigami.Theme.alternateBackgroundColor, 0.85)
+            border.color: logViewerDialog.isLightTheme
+                ? "#64748b"
+                : Qt.alpha(Kirigami.Theme.textColor, 0.2)
+            border.width: logViewerDialog.isLightTheme ? 1.5 : 1
             clip: true
 
             ListView {
@@ -377,10 +396,14 @@ Item {
                     implicitHeight: height
                     radius: 6
                     clip: true
-                    color: index % 2 === 0
-                        ? Qt.alpha(Kirigami.Theme.backgroundColor, 0.65)
-                        : Qt.alpha(Kirigami.Theme.alternateBackgroundColor, 0.45)
-                    border.color: Qt.alpha(Kirigami.Theme.textColor, 0.08)
+                    color: logViewerDialog.isLightTheme
+                        ? (index % 2 === 0 ? "#f1f5f9" : "#e2e8f0")
+                        : (index % 2 === 0
+                            ? Qt.alpha(Kirigami.Theme.backgroundColor, 0.65)
+                            : Qt.alpha(Kirigami.Theme.alternateBackgroundColor, 0.45))
+                    border.color: logViewerDialog.isLightTheme
+                        ? "#94a3b8"
+                        : Qt.alpha(Kirigami.Theme.textColor, 0.08)
                     border.width: 1
 
                     Row {
@@ -390,7 +413,7 @@ Item {
                         anchors.leftMargin: 8
                         anchors.top: parent.top
                         anchors.topMargin: 6
-                        height: 20
+                        height: Math.max(20, timestampLabel.implicitHeight + 4, levelBadge.height)
                         spacing: 8
 
                         QQC2.Label {
@@ -399,7 +422,7 @@ Item {
                             anchors.verticalCenter: parent.verticalCenter
                             text: model.timestamp
                             font.family: "monospace"
-                            font.pointSize: 9
+                            font.pointSize: logViewerDialog.fontCompactPt
                             opacity: 0.82
                             color: Kirigami.Theme.textColor
                             width: Math.ceil(implicitWidth) + 2
@@ -414,16 +437,16 @@ Item {
                             border.color: logViewerDialog.levelBadgeColor(model.level)
                             border.width: 1
                             width: Math.max(54, Math.ceil(levelBadgeLabel.implicitWidth) + 12)
-                            height: 20
+                            height: Math.max(20, Math.ceil(levelBadgeLabel.implicitHeight) + 6)
                             implicitWidth: width
-                            implicitHeight: 20
+                            implicitHeight: height
 
                             QQC2.Label {
                                 id: levelBadgeLabel
                                 anchors.centerIn: parent
                                 text: model.level
                                 font.bold: true
-                                font.pointSize: 8.5
+                                font.pointSize: logViewerDialog.fontSmallPt
                                 color: logViewerDialog.levelBadgeColor(model.level)
                             }
                         }
@@ -437,16 +460,16 @@ Item {
                             border.color: logViewerDialog.categoryBadgeColor(model.category)
                             border.width: 1
                             width: Math.max(74, Math.ceil(categoryBadgeLabel.implicitWidth) + 12)
-                            height: 20
+                            height: Math.max(20, Math.ceil(categoryBadgeLabel.implicitHeight) + 6)
                             implicitWidth: width
-                            implicitHeight: 20
+                            implicitHeight: height
 
                             QQC2.Label {
                                 id: categoryBadgeLabel
                                 anchors.centerIn: parent
                                 text: model.category
                                 font.bold: true
-                                font.pointSize: 8.5
+                                font.pointSize: logViewerDialog.fontSmallPt
                                 color: logViewerDialog.categoryBadgeColor(model.category)
                             }
                         }
@@ -462,6 +485,7 @@ Item {
                         anchors.top: parent.top
                         anchors.topMargin: 6
                         text: model.message
+                        font.pointSize: logViewerDialog.fontBodyPt
                         wrapMode: Text.Wrap
                         color: Kirigami.Theme.textColor
                     }

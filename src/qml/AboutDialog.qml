@@ -8,6 +8,11 @@ Item {
     objectName: "librelinkupAboutView"
 
     property var controller: null
+    readonly property real zoomScale: Math.max(0.75, Math.min(1.75, (controller ? controller.uiZoomPercent : 100) / 100.0))
+    readonly property real osBaseFontPt: Kirigami.Theme.defaultFont.pointSize > 0 ? Kirigami.Theme.defaultFont.pointSize : 10.0
+    readonly property real fontSubbodyPt: osBaseFontPt * 0.95 * zoomScale
+    readonly property real fontSubheadingPt: osBaseFontPt * 1.05 * zoomScale
+    readonly property real fontTitlePt: osBaseFontPt * 1.25 * zoomScale
     readonly property bool isLightTheme: (0.2126 * Kirigami.Theme.backgroundColor.r + 0.7152 * Kirigami.Theme.backgroundColor.g + 0.0722 * Kirigami.Theme.backgroundColor.b) > 0.45
     property var telemetry: null
     readonly property string versionText: telemetry ? String(telemetry.appVersion || "0.4.5") : "0.4.5"
@@ -35,9 +40,13 @@ Item {
             implicitWidth: hcScrollBar.orientation === Qt.Vertical ? 12 : 100
             implicitHeight: hcScrollBar.orientation === Qt.Horizontal ? 12 : 100
             radius: 6
-            color: Qt.alpha(Kirigami.Theme.textColor, 0.16)
+            color: aboutWindow.isLightTheme
+                ? "#cbd5e1"
+                : Qt.alpha(Kirigami.Theme.textColor, 0.16)
             border.width: 1
-            border.color: Qt.alpha(Kirigami.Theme.textColor, 0.32)
+            border.color: aboutWindow.isLightTheme
+                ? "#475569"
+                : Qt.alpha(Kirigami.Theme.textColor, 0.32)
             visible: hcScrollBar.size < 1.0 || hcScrollBar.policy === QQC2.ScrollBar.AlwaysOn
         }
 
@@ -51,9 +60,11 @@ Item {
                 ? Kirigami.Theme.highlightColor
                 : (hcScrollBar.hovered
                     ? Qt.lighter(Kirigami.Theme.highlightColor, 1.15)
-                    : Qt.alpha(Kirigami.Theme.textColor, 0.68))
+                    : (aboutWindow.isLightTheme ? "#334155" : Qt.alpha(Kirigami.Theme.textColor, 0.68)))
             border.width: 1
-            border.color: Qt.alpha(Kirigami.Theme.backgroundColor, 0.55)
+            border.color: aboutWindow.isLightTheme
+                ? "#0f172a"
+                : Qt.alpha(Kirigami.Theme.backgroundColor, 0.55)
         }
     }
 
@@ -88,7 +99,7 @@ Item {
 
             ColumnLayout {
                 id: aboutContentColumn
-                width: Math.min(Math.max(120, aboutScroll.width - 18), 760)
+                width: Math.min(Math.max(120, aboutScroll.width - 18), Math.round(760 * Math.max(1.0, aboutWindow.zoomScale)))
                 spacing: 14
 
                 Rectangle {
@@ -96,9 +107,9 @@ Item {
                     Layout.fillWidth: true
                     implicitHeight: headerCol.implicitHeight + 24
                     radius: 10
-                    color: Kirigami.Theme.alternateBackgroundColor
-                    border.color: Qt.alpha(Kirigami.Theme.textColor, 0.16)
-                    border.width: 1
+                    color: aboutWindow.isLightTheme ? "#ffffff" : Kirigami.Theme.alternateBackgroundColor
+                    border.color: aboutWindow.isLightTheme ? "#64748b" : Qt.alpha(Kirigami.Theme.textColor, 0.16)
+                    border.width: aboutWindow.isLightTheme ? 1.5 : 1
 
                     ColumnLayout {
                         id: headerCol
@@ -118,6 +129,7 @@ Item {
 
                                 Kirigami.Heading {
                                     level: 2
+                                    font.pointSize: aboutWindow.fontTitlePt
                                     text: qsTr("LibreLinkUp Rust Desktop")
                                     font.bold: true
                                     color: Kirigami.Theme.textColor
@@ -140,11 +152,16 @@ Item {
                                 id: dialogKofiBtn
                                 objectName: "dialogKofiBtn"
                                 radius: 15
-                                color: dialogKofiMouse.containsMouse ? "#c81e1e" : "#d93834"
-                                border.color: "#ffffff33"
-                                border.width: 1
+                                color: dialogKofiMouse.containsMouse || activeFocus ? "#c81e1e" : "#d93834"
+                                border.color: activeFocus ? "#ffffff" : "#ffffff33"
+                                border.width: activeFocus ? 2 : 1
                                 implicitWidth: dialogKofiRow.implicitWidth + 20
-                                implicitHeight: 32
+                                implicitHeight: Math.max(32, dialogKofiRow.implicitHeight + 10)
+                                activeFocusOnTab: true
+                                Accessible.role: Accessible.Button
+                                Accessible.name: qsTr("Buy Russell Milliner a coffee on Ko-fi")
+                                Keys.onReturnPressed: Qt.openUrlExternally("https://ko-fi.com/russellmilliner")
+                                Keys.onSpacePressed: Qt.openUrlExternally("https://ko-fi.com/russellmilliner")
 
                                 RowLayout {
                                     id: dialogKofiRow
@@ -153,13 +170,13 @@ Item {
 
                                     QQC2.Label {
                                         text: "☕"
-                                        font.pointSize: 10.5
+                                        font.pointSize: aboutWindow.fontSubheadingPt
                                     }
 
                                     QQC2.Label {
                                         text: qsTr("Buy Me a Coffee")
                                         font.bold: true
-                                        font.pointSize: 9.5
+                                        font.pointSize: aboutWindow.fontSubbodyPt
                                         color: "#ffffff"
                                     }
                                 }
@@ -242,9 +259,9 @@ Item {
                     Layout.fillWidth: true
                     implicitHeight: linksCol.implicitHeight + 24
                     radius: 10
-                    color: Kirigami.Theme.alternateBackgroundColor
-                    border.color: Qt.alpha(Kirigami.Theme.textColor, 0.16)
-                    border.width: 1
+                    color: aboutWindow.isLightTheme ? "#ffffff" : Kirigami.Theme.alternateBackgroundColor
+                    border.color: aboutWindow.isLightTheme ? "#64748b" : Qt.alpha(Kirigami.Theme.textColor, 0.16)
+                    border.width: aboutWindow.isLightTheme ? 1.5 : 1
 
                     ColumnLayout {
                         id: linksCol
@@ -261,7 +278,8 @@ Item {
                                 text: qsTr("Author:")
                                 font.bold: true
                                 color: Kirigami.Theme.textColor
-                                Layout.preferredWidth: 130
+                                Layout.minimumWidth: Math.max(140, implicitWidth)
+                                Layout.preferredWidth: Math.max(140, implicitWidth)
                             }
                             QQC2.Label {
                                 text: "Russell Milliner (https://github.com/russellmilliner)"
@@ -287,7 +305,8 @@ Item {
                                 text: qsTr("GitHub Repository:")
                                 font.bold: true
                                 color: Kirigami.Theme.textColor
-                                Layout.preferredWidth: 130
+                                Layout.minimumWidth: Math.max(140, implicitWidth)
+                                Layout.preferredWidth: Math.max(140, implicitWidth)
                             }
                             QQC2.Label {
                                 text: "https://github.com/russellmilliner/librelinkup-rust-desktop"
@@ -313,7 +332,8 @@ Item {
                                 text: qsTr("Ko-fi Support:")
                                 font.bold: true
                                 color: Kirigami.Theme.textColor
-                                Layout.preferredWidth: 130
+                                Layout.minimumWidth: Math.max(140, implicitWidth)
+                                Layout.preferredWidth: Math.max(140, implicitWidth)
                             }
                             QQC2.Label {
                                 text: "https://ko-fi.com/russellmilliner"
@@ -339,7 +359,8 @@ Item {
                                 text: qsTr("License:")
                                 font.bold: true
                                 color: Kirigami.Theme.textColor
-                                Layout.preferredWidth: 130
+                                Layout.minimumWidth: Math.max(140, implicitWidth)
+                                Layout.preferredWidth: Math.max(140, implicitWidth)
                             }
                             QQC2.Label {
                                 text: "Apache License 2.0 (https://www.apache.org/licenses/LICENSE-2.0)"
@@ -365,7 +386,8 @@ Item {
                                 text: qsTr("Attribution:")
                                 font.bold: true
                                 color: Kirigami.Theme.textColor
-                                Layout.preferredWidth: 130
+                                Layout.minimumWidth: Math.max(140, implicitWidth)
+                                Layout.preferredWidth: Math.max(140, implicitWidth)
                             }
                             QQC2.Label {
                                 text: "Based on Crazy-Marvin/LibreLinkUpDesktop (Apache-2.0)"

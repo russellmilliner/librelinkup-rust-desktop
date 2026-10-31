@@ -11,15 +11,19 @@ use std::time::Duration;
 use librelinkup_core::analytics::{
     load_default_glucose_history, save_default_glucose_history, GlucoseHistoryStore, StatsWindow,
 };
-use librelinkup_core::api::{authenticate_async, normalize_country_code};
+use librelinkup_core::api::{
+    authenticate_async, fetch_ha_states_array_async, normalize_country_code,
+    parse_ha_remote_snooze, publish_ha_medications_state_async, publish_ha_snooze_state_async,
+    validate_ha_base_url,
+};
 use librelinkup_core::crypto::{
     clear_credentials_at_path, load_credentials_with_secret, save_credentials_with_secret,
-    StoredCredentials,
+    try_load_host_ha_env, StoredCredentials,
 };
 use librelinkup_core::event_log::{log_error, log_info, log_warn};
 use librelinkup_core::medications::{
     build_demo_medication_store, load_default_medications, save_default_medications,
-    MedicationSchedule, MedicationStore,
+    MedicationDoseLog, MedicationSchedule, MedicationStore,
 };
 use librelinkup_core::models::{
     clamp_poll_interval, format_glucose_value, jittered_poll_interval, load_default_settings,
@@ -27,7 +31,7 @@ use librelinkup_core::models::{
 };
 use librelinkup_core::paths::credentials_file_path;
 use librelinkup_core::session::{
-    build_demo_snapshot, evaluate_alert_decision, fetch_snapshot_with_reauth_async,
+    build_demo_snapshot, evaluate_alert_decision, fetch_snapshot_for_source_async,
 };
 use librelinkup_core::updater::{
     check_for_updates_async, download_and_install_update_async, UpdateCheckResult,
@@ -57,6 +61,7 @@ pub struct Shared {
     /// Epoch of the last encrypted-history write (throttles multi-MB vault rewrites).
     pub last_history_persist_epoch: i64,
     pub vault_ok: bool,
+    pub ha_token_configured: bool,
     pub checking_updates: bool,
     pub installing_update: bool,
     pub last_notified_update_version: String,
@@ -68,6 +73,13 @@ pub type SharedState = Arc<Mutex<Shared>>;
 #[derive(Debug)]
 pub enum Command {
     Login { username: String, password: String, country: String },
+    SaveHomeAssistantConfig {
+        data_source: String,
+        ha_url: String,
+        ha_token: String,
+        ha_sensor_entity_id: String,
+    },
+    AutoFillHomeAssistantFromEnv,
     Logout,
     RefreshNow,
     /// Persist new settings (and re-evaluate alerts / tray).
@@ -156,6 +168,7 @@ pub fn start(notifier: Arc<dyn UiNotifier>) -> (SharedState, UnboundedSender<Com
                     tx: thread_tx,
                     creds: None,
                     medication_last_notified: HashMap::new(),
+                    sensor_expiry_last_notified_epoch: 0,
                 }
                 .run(rx),
             );
@@ -170,6 +183,7 @@ struct Service {
     tx: UnboundedSender<Command>,
     creds: Option<StoredCredentials>,
     medication_last_notified: HashMap<String, i64>,
+    sensor_expiry_last_notified_epoch: i64,
 }
 
 impl Service {
@@ -188,7 +202,14 @@ impl Service {
         let mut update_check_timer = tokio::time::interval(Duration::from_secs(6 * 3600));
         update_check_timer.tick().await; // consume initial immediate tick
         loop {
-            let polling = self.creds.as_ref().is_some_and(|c| c.has_valid_session());
+            let (data_source, ha_url) = {
+                let s = lock(&self.shared);
+                (s.settings.data_source.clone(), s.settings.ha_url.clone())
+            };
+            let polling = self
+                .creds
+                .as_ref()
+                .is_some_and(|c| c.has_valid_session_for(&data_source, &ha_url));
             tokio::select! {
                 cmd = rx.recv() => {
                     let Some(cmd) = cmd else { break };
@@ -234,8 +255,12 @@ impl Service {
                 return;
             }
         };
+        let (data_source, ha_url) = {
+            let s = lock(&self.shared);
+            (s.settings.data_source.clone(), s.settings.ha_url.clone())
+        };
         match load_credentials_with_secret(&credentials_file_path(), &secret) {
-            Ok(Some(mut creds)) if creds.has_valid_session() => {
+            Ok(Some(mut creds)) if creds.has_valid_session_for(&data_source, &ha_url) => {
                 let normalized_country = normalize_country_code(&creds.country);
                 if normalized_country != creds.country {
                     log_info(
@@ -250,22 +275,46 @@ impl Service {
                 }
                 log_info(
                     "CRYPTO",
-                    format!("Loaded DPAPI-protected credentials (region '{}').", creds.country),
+                    format!(
+                        "Loaded DPAPI-protected credentials (source '{}', region '{}').",
+                        data_source, creds.country
+                    ),
                 );
                 let username = creds.username.clone();
                 let active_country = creds.country.clone();
+                let has_ha_tok = creds.has_valid_ha_session();
                 self.creds = Some(creds);
                 self.update(|s| {
                     s.logged_in = true;
                     s.vault_ok = true;
+                    s.ha_token_configured = has_ha_tok;
                     s.username = username;
                     s.settings.country = active_country;
-                    s.status = "Signed in — fetching glucose data...".into();
+                    s.status = if s.settings.data_source == "home_assistant" {
+                        "Connected to Home Assistant — fetching glucose data...".into()
+                    } else {
+                        "Signed in — fetching glucose data...".into()
+                    };
                 });
                 let settings = lock(&self.shared).settings.clone();
                 let _ = save_default_settings(&settings);
             }
-            Ok(_) => {
+            Ok(Some(creds)) => {
+                let has_ha_tok = creds.has_valid_ha_session();
+                let has_any = creds.has_valid_llu_session() || has_ha_tok;
+                self.creds = Some(creds);
+                log_info("AUTH", "No active session for current source — awaiting configuration.");
+                self.update(|s| {
+                    s.vault_ok = has_any;
+                    s.ha_token_configured = has_ha_tok;
+                    s.status = if s.settings.data_source == "home_assistant" {
+                        "Configure Home Assistant URL and Long-Lived Access Token".into()
+                    } else {
+                        "Please sign in to LibreLinkUp".into()
+                    };
+                });
+            }
+            Ok(None) => {
                 log_info("AUTH", "No stored session — awaiting sign-in.");
                 self.update(|s| s.status = "Please sign in to LibreLinkUp".into());
             }
@@ -297,6 +346,13 @@ impl Service {
             Command::Login { username, password, country } => {
                 self.login(username, password, country).await
             }
+            Command::SaveHomeAssistantConfig {
+                data_source,
+                ha_url,
+                ha_token,
+                ha_sensor_entity_id,
+            } => self.save_ha_config(data_source, ha_url, ha_token, ha_sensor_entity_id),
+            Command::AutoFillHomeAssistantFromEnv => self.auto_fill_ha_env(),
             Command::Logout => {
                 let _ = clear_credentials_at_path(&credentials_file_path());
                 self.creds = None;
@@ -305,6 +361,7 @@ impl Service {
                     s.logged_in = false;
                     s.demo = false;
                     s.vault_ok = false;
+                    s.ha_token_configured = false;
                     s.username.clear();
                     s.snapshot = GlucoseSnapshot::default();
                     s.last_alert = None;
@@ -360,16 +417,19 @@ impl Service {
                 country_changed
             }
             Command::Snooze(minutes) => {
-                let until = if minutes > 0 { now_epoch() + i64::from(minutes.min(1440)) * 60 } else { 0 };
+                let now = now_epoch();
+                let until = if minutes > 0 { now + i64::from(minutes.min(1440)) * 60 } else { 0 };
                 let settings = {
                     let mut s = lock(&self.shared);
                     s.settings.snooze_until_epoch = until;
+                    s.settings.snooze_updated_at_epoch = now;
                     if until == 0 {
                         s.last_alert = None; // re-arm
                     }
                     s.settings.clone()
                 };
                 let _ = save_default_settings(&settings);
+                self.spawn_ha_snooze_push(until, now);
                 if until > 0 {
                     log_info("ALERT", format!("Alerts snoozed for {minutes} min (urgent low still alerts)."));
                 } else {
@@ -428,6 +488,7 @@ impl Service {
                 reminder_enabled,
                 notes,
             } => {
+                let mut changed = false;
                 self.update(|s| {
                     if s.medication_store
                         .upsert_medication(
@@ -444,17 +505,26 @@ impl Service {
                     {
                         let _ = save_default_medications(&s.medication_store);
                         log_info("MEDS", format!("Saved medication '{}' ({})", name.trim(), schedule.label()));
+                        changed = true;
                     }
                 });
+                if changed {
+                    self.spawn_ha_medications_push(None);
+                }
                 false
             }
             Command::RemoveMedication(id) => {
+                let mut changed = false;
                 self.update(|s| {
                     if s.medication_store.remove_medication(&id) {
                         let _ = save_default_medications(&s.medication_store);
                         log_info("MEDS", "Removed scheduled medication.");
+                        changed = true;
                     }
                 });
+                if changed {
+                    self.spawn_ha_medications_push(None);
+                }
                 false
             }
             Command::LogMedicationDose {
@@ -463,6 +533,7 @@ impl Service {
                 notes,
             } => {
                 let now = now_epoch();
+                let mut logged_entry: Option<MedicationDoseLog> = None;
                 self.update(|s| {
                     let g = (s.snapshot.value_mg_dl > 0.0).then_some(s.snapshot.value_mg_dl);
                     let cd = (!custom_dosage.trim().is_empty()).then_some(custom_dosage.as_str());
@@ -475,8 +546,12 @@ impl Service {
                                 entry.medication_name, entry.dosage, entry.taken_at_display
                             ),
                         );
+                        logged_entry = Some(entry);
                     }
                 });
+                if logged_entry.is_some() {
+                    self.spawn_ha_medications_push(logged_entry);
+                }
                 false
             }
             Command::SkipMedicationDose {
@@ -484,6 +559,7 @@ impl Service {
                 notes,
             } => {
                 let now = now_epoch();
+                let mut skipped_entry: Option<MedicationDoseLog> = None;
                 self.update(|s| {
                     if let Ok(entry) = s.medication_store.skip_dose(&medication_id, now, &notes) {
                         let _ = save_default_medications(&s.medication_store);
@@ -494,17 +570,26 @@ impl Service {
                                 entry.medication_name, entry.dosage, entry.taken_at_display
                             ),
                         );
+                        skipped_entry = Some(entry);
                     }
                 });
+                if skipped_entry.is_some() {
+                    self.spawn_ha_medications_push(skipped_entry);
+                }
                 false
             }
             Command::RemoveMedicationDose(dose_id) => {
+                let mut changed = false;
                 self.update(|s| {
                     if s.medication_store.remove_dose_log(&dose_id) {
                         let _ = save_default_medications(&s.medication_store);
                         log_info("MEDS", "Removed logged medication dose entry.");
+                        changed = true;
                     }
                 });
+                if changed {
+                    self.spawn_ha_medications_push(None);
+                }
                 false
             }
         }
@@ -667,6 +752,11 @@ impl Service {
         match result {
             Ok(auth) => {
                 let remember_pw = lock(&self.shared).settings.remember_password;
+                let existing_ha_token = self
+                    .creds
+                    .as_ref()
+                    .map(|c| c.ha_token.clone())
+                    .unwrap_or_default();
                 let creds = StoredCredentials {
                     username: username.clone(),
                     password,
@@ -677,8 +767,10 @@ impl Service {
                     patient_id: String::new(),
                     first_name: auth.first_name,
                     last_name: auth.last_name,
+                    ha_token: existing_ha_token,
                 }
                 .sanitized_for_storage(remember_pw);
+                let has_ha_tok = creds.has_valid_ha_session();
                 self.save_vault(&creds);
                 self.creds = Some(creds);
                 log_info("AUTH", format!("Login succeeded (region '{}').", auth.country));
@@ -688,7 +780,9 @@ impl Service {
                     s.logged_in = true;
                     s.demo = false;
                     s.vault_ok = true;
+                    s.ha_token_configured = has_ha_tok;
                     s.username = username;
+                    s.settings.data_source = "librelinkup".into();
                     s.settings.country = country_for_settings;
                     s.status = "Signed in — fetching glucose data...".into();
                 });
@@ -709,20 +803,195 @@ impl Service {
         }
     }
 
+    fn save_ha_config(
+        &mut self,
+        data_source: String,
+        ha_url: String,
+        ha_token: String,
+        ha_sensor_entity_id: String,
+    ) -> bool {
+        let clean_source = if data_source.trim().eq_ignore_ascii_case("home_assistant") {
+            "home_assistant".to_string()
+        } else {
+            "librelinkup".to_string()
+        };
+        let clean_url = ha_url.trim().trim_end_matches('/').to_string();
+        let clean_entity = ha_sensor_entity_id.trim().to_string();
+        let clean_token = ha_token.trim().to_string();
+
+        if clean_source == "home_assistant" && !clean_url.is_empty() {
+            if let Err(e) = validate_ha_base_url(&clean_url) {
+                self.update(|s| s.error = e.to_string());
+                return false;
+            }
+        }
+
+        let mut creds = self.creds.clone().unwrap_or_default();
+        if !clean_token.is_empty() {
+            creds.ha_token = clean_token;
+        }
+        let has_ha_tok = creds.has_valid_ha_session();
+        if clean_source == "home_assistant" && (clean_url.is_empty() || !has_ha_tok) {
+            self.update(|s| {
+                s.settings.data_source = clean_source.clone();
+                s.settings.ha_url = clean_url.clone();
+                s.settings.ha_sensor_entity_id = clean_entity.clone();
+                s.error =
+                    "Please enter both your Home Assistant URL and Long-Lived Access Token.".into();
+            });
+            return false;
+        }
+
+        self.save_vault(&creds);
+        let valid_for_source = creds.has_valid_session_for(&clean_source, &clean_url);
+        let has_any = creds.has_valid_llu_session() || has_ha_tok;
+        self.creds = Some(creds);
+
+        let settings = {
+            let mut s = lock(&self.shared);
+            s.settings.data_source = clean_source.clone();
+            s.settings.ha_url = clean_url;
+            s.settings.ha_sensor_entity_id = clean_entity;
+            s.ha_token_configured = has_ha_tok;
+            s.vault_ok = has_any;
+            s.logged_in = valid_for_source;
+            s.demo = false;
+            s.error.clear();
+            s.status = if clean_source == "home_assistant" {
+                "Connected to Home Assistant — fetching LibreLink telemetry...".into()
+            } else if valid_for_source {
+                "LibreLinkUp Cloud active".into()
+            } else {
+                "Please sign in to LibreLinkUp".into()
+            };
+            s.settings.clone()
+        };
+        let _ = save_default_settings(&settings);
+        self.notifier.state_changed();
+        valid_for_source
+    }
+
+    fn auto_fill_ha_env(&mut self) -> bool {
+        let Some((env_url, env_token)) = try_load_host_ha_env() else {
+            self.update(|s| {
+                s.error =
+                    "Could not find HA_URL and HA_TOKEN in ~/.config/home-assistant.env".into();
+            });
+            return false;
+        };
+        let entity = lock(&self.shared).settings.ha_sensor_entity_id.clone();
+        log_info(
+            "SYSTEM",
+            format!("Imported Home Assistant URL ({env_url}) and token from ~/.config/home-assistant.env"),
+        );
+        self.save_ha_config("home_assistant".into(), env_url, env_token, entity)
+    }
+
+    fn spawn_ha_medications_push(&self, last_logged_dose: Option<MedicationDoseLog>) {
+        let Some(creds) = self.creds.clone() else { return };
+        if !creds.has_valid_ha_session() {
+            return;
+        }
+        let (ha_url, sync_enabled, store) = {
+            let s = lock(&self.shared);
+            (
+                s.settings.ha_url.trim().to_string(),
+                s.settings.ha_sync_medications,
+                s.medication_store.clone(),
+            )
+        };
+        if !sync_enabled || ha_url.is_empty() {
+            return;
+        }
+        tokio::spawn(async move {
+            if let Err(err) = publish_ha_medications_state_async(
+                &ha_url,
+                &creds.ha_token,
+                &store,
+                last_logged_dose.as_ref(),
+            )
+            .await
+            {
+                log_warn(
+                    "MEDS",
+                    format!("Failed to sync medications to Home Assistant: {err}"),
+                );
+            } else {
+                log_info("MEDS", "Synced medication schedule & dose log to Home Assistant");
+            }
+        });
+    }
+
+    fn spawn_ha_snooze_push(&self, snooze_until_epoch: i64, updated_at_epoch: i64) {
+        let Some(creds) = self.creds.clone() else { return };
+        if !creds.has_valid_ha_session() {
+            return;
+        }
+        let (ha_url, sync_enabled) = {
+            let s = lock(&self.shared);
+            (
+                s.settings.ha_url.trim().to_string(),
+                s.settings.ha_sync_snooze,
+            )
+        };
+        if !sync_enabled || ha_url.is_empty() {
+            return;
+        }
+        tokio::spawn(async move {
+            if let Err(err) = publish_ha_snooze_state_async(
+                &ha_url,
+                &creds.ha_token,
+                snooze_until_epoch,
+                updated_at_epoch,
+            )
+            .await
+            {
+                log_warn(
+                    "ALERT",
+                    format!("Failed to sync alert snooze to Home Assistant: {err}"),
+                );
+            } else {
+                log_info(
+                    "ALERT",
+                    format!("Synced alert snooze state to Home Assistant (until={snooze_until_epoch})"),
+                );
+            }
+        });
+    }
+
     async fn refresh(&mut self) {
         let Some(creds) = self.creds.clone() else { return };
-        if !creds.has_valid_session() {
+        let (data_source, ha_url, ha_entity_id, sync_meds, sync_snooze) = {
+            let s = lock(&self.shared);
+            (
+                s.settings.data_source.clone(),
+                s.settings.ha_url.clone(),
+                s.settings.ha_sensor_entity_id.clone(),
+                s.settings.ha_sync_medications,
+                s.settings.ha_sync_snooze,
+            )
+        };
+        if !creds.has_valid_session_for(&data_source, &ha_url) {
             return;
         }
         self.update(|s| s.busy = true);
 
-        match fetch_snapshot_with_reauth_async(&creds).await {
-            Ok(outcome) => {
-                if let Some(updated_creds) = outcome.updated_credentials {
+        match fetch_snapshot_for_source_async(&data_source, &ha_url, &ha_entity_id, &creds).await {
+            Ok(mut outcome) => {
+                if let Some(updated_creds) = outcome.updated_credentials.take() {
                     self.save_vault(&updated_creds);
                     self.creds = Some(updated_creds);
                 }
+                if outcome.ha_states.is_none()
+                    && (sync_meds || sync_snooze)
+                    && !ha_url.trim().is_empty()
+                    && creds.has_valid_ha_session()
+                {
+                    outcome.ha_states =
+                        fetch_ha_states_array_async(&ha_url, &creds.ha_token).await.ok();
+                }
                 let snap = outcome.snapshot;
+                let ha_states = outcome.ha_states;
                 let unit = lock(&self.shared).settings.result_unit.clone();
                 log_info(
                     "GLUCOSE",
@@ -735,6 +1004,7 @@ impl Service {
                     ),
                 );
                 let now = now_epoch();
+                let mut push_meds = false;
                 self.update(|s| {
                     s.busy = false;
                     s.error.clear();
@@ -752,9 +1022,48 @@ impl Service {
                             ),
                         }
                     }
+                    if let Some(ref states) = ha_states {
+                        if s.settings.ha_sync_medications {
+                            if s.medication_store.merge_from_ha_states(states) {
+                                let _ = save_default_medications(&s.medication_store);
+                                log_info(
+                                    "MEDS",
+                                    "Merged remote medication schedule/dose updates from Home Assistant",
+                                );
+                            }
+                            push_meds = true;
+                        }
+                        if s.settings.ha_sync_snooze {
+                            if let Some((remote_until, remote_updated_at)) =
+                                parse_ha_remote_snooze(states, now)
+                            {
+                                if remote_updated_at > s.settings.snooze_updated_at_epoch
+                                    && remote_until != s.settings.snooze_until_epoch
+                                {
+                                    s.settings.snooze_until_epoch =
+                                        if remote_until > now { remote_until } else { 0 };
+                                    s.settings.snooze_updated_at_epoch = remote_updated_at;
+                                    if s.settings.snooze_until_epoch == 0 {
+                                        s.last_alert = None;
+                                    }
+                                    let _ = save_default_settings(&s.settings);
+                                    log_info(
+                                        "ALERT",
+                                        format!(
+                                            "Applied cross-device alert snooze from Home Assistant (until={})",
+                                            s.settings.snooze_until_epoch
+                                        ),
+                                    );
+                                }
+                            }
+                        }
+                    }
                     s.snapshot = snap;
                     s.status = "Live CGM telemetry active".into();
                 });
+                if push_meds {
+                    self.spawn_ha_medications_push(None);
+                }
             }
             Err(err) => {
                 let msg = err.to_string();
@@ -793,6 +1102,17 @@ impl Service {
         };
         if !logged_in {
             return;
+        }
+        if snap.is_sensor_expiring_soon(now, settings.sensor_expiry_alert_hours)
+            && now - self.sensor_expiry_last_notified_epoch >= 6 * 3600
+        {
+            self.sensor_expiry_last_notified_epoch = now;
+            let body = format!(
+                "CGM Sensor {} — prepare a replacement sensor.",
+                snap.format_sensor_status(now)
+            );
+            log_warn("ALERT", format!("CGM Sensor Expiring Soon: {body}"));
+            alerts::show_notification("CGM Sensor Expiring Soon", &body);
         }
         let (decision, clear_last) =
             evaluate_alert_decision(&settings, &snap, last, now, last_fetch);

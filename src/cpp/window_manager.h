@@ -11,6 +11,7 @@
 #include <QFileDevice>
 #include <QGuiApplication>
 #include <QHoverEvent>
+#include <QKeyEvent>
 #include <QMetaObject>
 #include <QMouseEvent>
 #include <QObject>
@@ -791,6 +792,69 @@ protected:
             }
         }
 
+        if (et == QEvent::KeyPress) {
+            auto* quickWin = qobject_cast<QQuickWindow*>(watched);
+            if (quickWin && quickWin->objectName() == QStringLiteral("librelinkupMainWindow")) {
+                auto* ke = static_cast<QKeyEvent*>(event);
+                const Qt::KeyboardModifiers mods = ke->modifiers();
+                const int key = ke->key();
+                QObject* settingsCtrl = quickWin->findChild<QObject*>(QStringLiteral("librelinkupSettingsController"));
+                QObject* appCtrl = quickWin->findChild<QObject*>(QStringLiteral("librelinkupAppController"));
+
+                if ((mods & Qt::ControlModifier) != 0 && (mods & Qt::AltModifier) == 0) {
+                    if (key == Qt::Key_Plus || key == Qt::Key_Equal) {
+                        if (settingsCtrl) {
+                            QMetaObject::invokeMethod(settingsCtrl, "zoomIn", Qt::DirectConnection);
+                            ke->accept();
+                            return true;
+                        }
+                    } else if (key == Qt::Key_Minus || key == Qt::Key_Underscore) {
+                        if (settingsCtrl) {
+                            QMetaObject::invokeMethod(settingsCtrl, "zoomOut", Qt::DirectConnection);
+                            ke->accept();
+                            return true;
+                        }
+                    } else if (key == Qt::Key_0 || key == Qt::Key_ParenRight) {
+                        if (settingsCtrl) {
+                            QMetaObject::invokeMethod(settingsCtrl, "resetZoom", Qt::DirectConnection);
+                            ke->accept();
+                            return true;
+                        }
+                    } else if (key == Qt::Key_R) {
+                        if (appCtrl) {
+                            QMetaObject::invokeMethod(appCtrl, "refreshGlucoseNow", Qt::DirectConnection);
+                            ke->accept();
+                            return true;
+                        }
+                    }
+                } else if (mods == Qt::NoModifier && key == Qt::Key_F5) {
+                    if (appCtrl) {
+                        QMetaObject::invokeMethod(appCtrl, "refreshGlucoseNow", Qt::DirectConnection);
+                        ke->accept();
+                        return true;
+                    }
+                } else if ((mods & Qt::AltModifier) != 0 && (mods & (Qt::ControlModifier | Qt::MetaModifier)) == 0) {
+                    QString targetTab;
+                    switch (key) {
+                        case Qt::Key_1: targetTab = QStringLiteral("dashboard"); break;
+                        case Qt::Key_2: targetTab = QStringLiteral("medications"); break;
+                        case Qt::Key_3: targetTab = QStringLiteral("general"); break;
+                        case Qt::Key_4: targetTab = QStringLiteral("alerts"); break;
+                        case Qt::Key_5: targetTab = QStringLiteral("account"); break;
+                        case Qt::Key_6: targetTab = QStringLiteral("logs"); break;
+                        case Qt::Key_7: targetTab = QStringLiteral("about"); break;
+                        default: break;
+                    }
+                    if (!targetTab.isEmpty()) {
+                        quickWin->setProperty("activeTab", targetTab);
+                        ke->accept();
+                        return true;
+                    }
+                }
+            }
+            return QObject::eventFilter(watched, event);
+        }
+
         if (et != QEvent::Wheel) {
             return QObject::eventFilter(watched, event);
         }
@@ -808,6 +872,20 @@ protected:
 
         auto* we = static_cast<QWheelEvent*>(event);
         if ((we->modifiers() & Qt::ControlModifier) != 0) {
+            if (quickWin->objectName() == QStringLiteral("librelinkupMainWindow")) {
+                if (QObject* settingsCtrl = quickWin->findChild<QObject*>(QStringLiteral("librelinkupSettingsController"))) {
+                    const int dy = !we->angleDelta().isNull() ? we->angleDelta().y() : we->pixelDelta().y();
+                    if (dy > 0) {
+                        QMetaObject::invokeMethod(settingsCtrl, "zoomIn", Qt::DirectConnection);
+                        we->accept();
+                        return true;
+                    } else if (dy < 0) {
+                        QMetaObject::invokeMethod(settingsCtrl, "zoomOut", Qt::DirectConnection);
+                        we->accept();
+                        return true;
+                    }
+                }
+            }
             return QObject::eventFilter(watched, event);
         }
 

@@ -17,7 +17,8 @@ use crate::bridge::ops;
 use crate::bridge::qobject_bridge::{qobject, TelemetryControllerRust};
 use crate::bridge::state::{with_state, AppState};
 use crate::crypto::{
-    clear_default_credentials, load_default_credentials, save_default_credentials, StoredCredentials,
+    clear_default_credentials, load_default_credentials, save_default_credentials,
+    try_load_host_ha_env, StoredCredentials,
 };
 use crate::event_log::{log_error, log_info, log_warn, mask_email};
 use crate::models::{
@@ -25,7 +26,7 @@ use crate::models::{
     DEFAULT_TARGET_HIGH_MG_DL, DEFAULT_TARGET_LOW_MG_DL,
 };
 use crate::session::{
-    build_demo_snapshot, evaluate_alert_decision, fetch_snapshot_with_reauth_async,
+    build_demo_snapshot, evaluate_alert_decision, fetch_snapshot_for_source_async,
     record_reauth_success, reset_reauth_backoff, RefreshOutcome,
 };
 use crate::updater::{check_for_updates_async, download_and_install_update_async, UpdateCheckResult};
@@ -89,6 +90,11 @@ impl Default for TelemetryControllerRust {
             ea1c_display: QString::from("--%"),
             gmi_display: QString::from("--%"),
             tir_display: QString::from("--%"),
+            accessible_summary: QString::from("Waiting for glucose reading."),
+            sensor_status_display: QString::from("—"),
+            sensor_serial: QString::default(),
+            sensor_in_warmup: false,
+            sensor_expiring_soon: false,
         }
     }
 }
@@ -204,23 +210,45 @@ impl qobject::TelemetryController {
                 let username = creds.username.clone();
                 let country = creds.country.clone();
                 let language = creds.language.clone();
+                let has_ha_tok = creds.has_valid_ha_session();
                 let full_name = format!("{} {}", creds.first_name.trim(), creds.last_name.trim())
                     .trim()
                     .to_string();
-                with_state(|s| {
-                    s.logged_in = true;
+                let should_refresh = with_state(|s| {
+                    s.ha_token_configured = has_ha_tok;
                     s.credentials_encrypted = true;
-                    s.username = username;
-                    s.country = country;
-                    s.language = language;
+                    if !username.is_empty() {
+                        s.username = username;
+                    } else if s.data_source == "home_assistant" && !s.ha_url.is_empty() {
+                        s.username = s.ha_url.clone();
+                    }
+                    if !country.is_empty() {
+                        s.country = country;
+                    }
+                    if !language.is_empty() {
+                        s.language = language;
+                    }
                     if !full_name.is_empty() {
                         s.patient_name = full_name;
                     }
-                    s.status_message = "Authenticated (AES-256-GCM Vault)".to_string();
+                    let valid_active = creds.has_valid_session_for(&s.data_source, &s.ha_url);
+                    s.logged_in = valid_active;
+                    s.status_message = if valid_active {
+                        if s.data_source == "home_assistant" {
+                            "Connected to Home Assistant (AES-256-GCM Vault)".to_string()
+                        } else {
+                            "Authenticated (AES-256-GCM Vault)".to_string()
+                        }
+                    } else {
+                        "Please sign in or configure Home Assistant".to_string()
+                    };
                     s.creds = Some(creds);
+                    valid_active
                 });
                 let _ = with_state(|s| ops::persist_settings(s));
-                self.as_mut().refresh_glucose_now();
+                if should_refresh {
+                    self.as_mut().refresh_glucose_now();
+                }
             }
             Ok(_) => {
                 log_info(
@@ -366,6 +394,25 @@ impl qobject::TelemetryController {
         sync_str!(self, set_ea1c_display, ea1c_display, ea1c_display);
         sync_str!(self, set_gmi_display, gmi_display, gmi_display);
         sync_str!(self, set_tir_display, tir_display, tir_display);
+        let (acc, sensor_status, sensor_sn, warmup, exp_soon) = with_state(|s| {
+            (
+                s.accessible_summary.clone(),
+                s.sensor_status_display.clone(),
+                s.sensor_serial.clone(),
+                s.sensor_in_warmup,
+                s.sensor_expiring_soon,
+            )
+        });
+        sync_str!(self, set_accessible_summary, accessible_summary, acc);
+        sync_str!(
+            self,
+            set_sensor_status_display,
+            sensor_status_display,
+            sensor_status
+        );
+        sync_str!(self, set_sensor_serial, sensor_serial, sensor_sn);
+        sync_val!(self, set_sensor_in_warmup, sensor_in_warmup, warmup);
+        sync_val!(self, set_sensor_expiring_soon, sensor_expiring_soon, exp_soon);
     }
 
     /// The single periodic entry point: apply derived state, refresh the tray, evaluate alerts.
@@ -489,6 +536,12 @@ impl qobject::TelemetryController {
 
         match auth_res {
             Ok(auth) => {
+                let existing_ha_token = with_state(|s| {
+                    s.creds
+                        .as_ref()
+                        .map(|c| c.ha_token.clone())
+                        .unwrap_or_default()
+                });
                 let stored = StoredCredentials {
                     username: user_str.clone(),
                     password: pass_str,
@@ -499,6 +552,7 @@ impl qobject::TelemetryController {
                     patient_id: String::new(),
                     first_name: auth.first_name.clone(),
                     last_name: auth.last_name.clone(),
+                    ha_token: existing_ha_token,
                 };
                 let remember_pw = with_state(|s| s.remember_password);
                 match save_default_credentials(&stored.sanitized_for_storage(remember_pw)) {
@@ -513,6 +567,7 @@ impl qobject::TelemetryController {
                 }
 
                 with_state(|s| {
+                    s.data_source = "librelinkup".to_string();
                     s.username = user_str;
                     s.country = auth.country.clone();
                     s.language = lang_str;
@@ -555,6 +610,7 @@ impl qobject::TelemetryController {
             s.last_successful_fetch_epoch = None;
             s.logged_in = false;
             s.credentials_encrypted = false;
+            s.ha_token_configured = false;
             s.patient_name.clear();
             s.patient_id.clear();
             s.error_message.clear();
@@ -569,15 +625,150 @@ impl qobject::TelemetryController {
         self.as_mut().sync_tray();
     }
 
+    /// Saves Home Assistant LibreLink integration settings and Long-Lived Access Token into the
+    /// AES-256-GCM encrypted vault, switches data source if requested, and triggers an immediate poll.
+    pub fn save_home_assistant_config(
+        mut self: Pin<&mut Self>,
+        data_source: QString,
+        ha_url: QString,
+        ha_token: QString,
+        ha_sensor_entity_id: QString,
+    ) -> bool {
+        let src_clean = if data_source
+            .to_string()
+            .trim()
+            .eq_ignore_ascii_case("home_assistant")
+        {
+            "home_assistant".to_string()
+        } else {
+            "librelinkup".to_string()
+        };
+        let raw_url = ha_url.to_string().trim().to_string();
+        let clean_url = if raw_url.is_empty() {
+            String::new()
+        } else {
+            match crate::api::validate_ha_base_url(&raw_url) {
+                Ok(u) => u,
+                Err(e) => {
+                    let msg = e.to_string();
+                    log_warn("API", format!("Invalid Home Assistant URL: {msg}"));
+                    with_state(|s| s.error_message = msg);
+                    self.as_mut().sync();
+                    return false;
+                }
+            }
+        };
+        let clean_entity = ha_sensor_entity_id.to_string().trim().to_string();
+        let new_tok = ha_token.to_string().trim().to_string();
+
+        let (mut creds, remember_pw) = with_state(|s| {
+            (
+                s.creds.clone().unwrap_or_else(|| {
+                    let mut c = StoredCredentials::default();
+                    c.country = s.country.clone();
+                    c.language = s.language.clone();
+                    c
+                }),
+                s.remember_password,
+            )
+        });
+        if !new_tok.is_empty() {
+            creds.ha_token = new_tok;
+        }
+
+        if src_clean == "home_assistant" && (clean_url.is_empty() || !creds.has_valid_ha_session())
+        {
+            let msg = "Please enter both your Home Assistant URL and Long-Lived Access Token.";
+            with_state(|s| s.error_message = msg.to_string());
+            log_warn("API", msg);
+            self.as_mut().sync();
+            return false;
+        }
+
+        if creds.has_valid_session() {
+            if let Err(e) = save_default_credentials(&creds.sanitized_for_storage(remember_pw)) {
+                log_error("CRYPTO", format!("Failed to save encrypted credentials: {e}"));
+            }
+        }
+
+        let valid_active = creds.has_valid_session_for(&src_clean, &clean_url);
+        let has_ha_tok = creds.has_valid_ha_session();
+        with_state(|s| {
+            s.session_generation = s.session_generation.wrapping_add(1);
+            s.active_refresh = None;
+            s.data_source = src_clean.clone();
+            s.ha_url = clean_url.clone();
+            s.ha_sensor_entity_id = clean_entity.clone();
+            s.ha_token_configured = has_ha_tok;
+            s.credentials_encrypted = creds.has_valid_session();
+            s.creds = Some(creds);
+            s.logged_in = valid_active;
+            s.error_message.clear();
+            if src_clean == "home_assistant" && valid_active {
+                s.username = clean_url.clone();
+                s.status_message = "Connecting to Home Assistant LibreLink...".to_string();
+            } else if valid_active {
+                s.status_message = "Authenticated (LibreLinkUp Cloud)".to_string();
+            }
+        });
+        let _ = with_state(|s| ops::persist_settings(s));
+        log_info(
+            "API",
+            format!(
+                "Saved data source configuration: source='{src_clean}', ha_url='{clean_url}', entity='{}'",
+                if clean_entity.is_empty() {
+                    "auto-discover"
+                } else {
+                    &clean_entity
+                }
+            ),
+        );
+        self.as_mut().sync();
+        if valid_active {
+            self.as_mut().refresh_glucose_now();
+        }
+        true
+    }
+
+    /// Reads `HA_URL` and `HA_TOKEN` from `~/.config/home-assistant.env` on the local machine
+    /// and connects to the Home Assistant LibreLink integration immediately.
+    pub fn auto_fill_home_assistant_from_env(mut self: Pin<&mut Self>) -> bool {
+        let Some((url, token)) = try_load_host_ha_env() else {
+            let msg = "Could not find HA_URL and HA_TOKEN in ~/.config/home-assistant.env";
+            log_warn("API", msg);
+            with_state(|s| s.error_message = msg.to_string());
+            self.as_mut().sync();
+            return false;
+        };
+        let entity = with_state(|s| s.ha_sensor_entity_id.clone());
+        log_info(
+            "API",
+            format!("Loaded Home Assistant URL '{url}' and token from ~/.config/home-assistant.env"),
+        );
+        self.as_mut().save_home_assistant_config(
+            QString::from("home_assistant"),
+            QString::from(url.as_str()),
+            QString::from(token.as_str()),
+            QString::from(entity.as_str()),
+        )
+    }
+
     /// Starts an asynchronous CGM refresh (no-op if one is already running).
     pub fn refresh_glucose_now(mut self: Pin<&mut Self>) {
         if with_state(|s| s.active_refresh.is_some() || s.login_in_flight) {
             return;
         }
-        let Some(creds) = with_state(|s| s.creds.clone()) else {
+        let (Some(creds), data_source, ha_url, ha_entity) = with_state(|s| {
+            (
+                s.creds.clone(),
+                s.data_source.clone(),
+                s.ha_url.clone(),
+                s.ha_sensor_entity_id.clone(),
+            )
+        }) else {
             return;
         };
-        if !creds.has_valid_session() {
+        if !creds.has_valid_session_for(&data_source, &ha_url) {
             return;
         }
         let Some(runtime) = background_runtime() else {
@@ -596,7 +787,8 @@ impl qobject::TelemetryController {
 
         let qt_thread = self.qt_thread();
         runtime.spawn(async move {
-            let outcome = fetch_snapshot_with_reauth_async(&creds).await;
+            let outcome =
+                fetch_snapshot_for_source_async(&data_source, &ha_url, &ha_entity, &creds).await;
             let queued = qt_thread.queue(move |qobject| {
                 qobject.apply_refresh_outcome(generation, seq, outcome);
             });
@@ -651,6 +843,7 @@ impl qobject::TelemetryController {
                 }
 
                 let snap = outcome.snapshot;
+                let ha_states = outcome.ha_states;
                 let unit = with_state(|s| s.result_unit.clone());
                 log_info(
                     "GLUCOSE",
@@ -663,13 +856,59 @@ impl qobject::TelemetryController {
                     ),
                 );
 
+                let mut push_initial_ha_meds = false;
                 with_state(|s| {
                     s.last_successful_fetch_epoch = Some(now_epoch());
                     ops::ingest_history(s, &snap);
                     s.snapshot = snap;
                     s.status_message = "Live CGM telemetry active".to_string();
+                    if let Some(ref states_arr) = ha_states {
+                        if s.ha_sync_medications {
+                            let has_ha_meds_entity = states_arr.iter().any(|e| {
+                                e.get("entity_id")
+                                    .and_then(|v| v.as_str())
+                                    .is_some_and(|id| id == "sensor.librelinkup_medications")
+                            });
+                            if s.medication_store.merge_from_ha_states(states_arr) {
+                                let _ = crate::medications::save_default_medications(
+                                    &s.medication_store,
+                                );
+                                ops::refresh_medication_views(s);
+                                log_info(
+                                    "MEDS",
+                                    "Synchronized remote medications/doses from Home Assistant.",
+                                );
+                            } else if !has_ha_meds_entity && !s.medication_store.medications.is_empty() {
+                                push_initial_ha_meds = true;
+                            }
+                        }
+                        if s.ha_sync_snooze {
+                            if let Some((remote_until, remote_updated)) =
+                                crate::api::parse_ha_remote_snooze(
+                                    states_arr,
+                                    s.snooze_updated_at_epoch,
+                                )
+                            {
+                                if s.snooze_until_epoch != remote_until {
+                                    s.snooze_until_epoch = remote_until;
+                                    s.snooze_updated_at_epoch = remote_updated;
+                                    if remote_until == 0 {
+                                        s.last_alert = None;
+                                    }
+                                    let _ = ops::persist_settings(s);
+                                    log_info(
+                                        "ALERT",
+                                        "Synchronized cross-device alert snooze state from Home Assistant.",
+                                    );
+                                }
+                            }
+                        }
+                    }
                     ops::refresh_display(s);
                 });
+                if push_initial_ha_meds {
+                    ops::spawn_ha_medications_push(None);
+                }
             }
             Err(err) => {
                 let msg = err.to_string();
@@ -722,6 +961,7 @@ impl qobject::TelemetryController {
         };
         with_state(|s| {
             s.snooze_until_epoch = until;
+            s.snooze_updated_at_epoch = now;
             if until == 0 {
                 // Re-arm so a still-active condition alerts on the next evaluation.
                 s.last_alert = None;
@@ -736,6 +976,7 @@ impl qobject::TelemetryController {
             log_info("ALERT", "Alert snooze cancelled.");
         }
         let _ = with_state(|s| ops::persist_settings(s));
+        ops::spawn_ha_snooze_push();
         self.as_mut().tick();
     }
 
@@ -759,10 +1000,13 @@ impl qobject::TelemetryController {
                 if res.is_ok() {
                     let _ = crate::medications::save_default_medications(&s.medication_store);
                 }
-                res.is_ok()
+                res.ok()
             });
+            if let Some(ref dose) = logged {
+                ops::spawn_ha_medications_push(Some(dose.clone()));
+            }
             self.as_mut().tick();
-            return logged;
+            return logged.is_some();
         }
         if let Some(med_id) = key.trim().strip_prefix("med_skip:") {
             let skipped = with_state(|s| {
@@ -774,10 +1018,13 @@ impl qobject::TelemetryController {
                 if res.is_ok() {
                     let _ = crate::medications::save_default_medications(&s.medication_store);
                 }
-                res.is_ok()
+                res.ok()
             });
+            if let Some(ref dose) = skipped {
+                ops::spawn_ha_medications_push(Some(dose.clone()));
+            }
             self.as_mut().tick();
-            return skipped;
+            return skipped.is_some();
         }
         if let Some(minutes) = crate::models::parse_notification_snooze_action(&key) {
             log_info(
@@ -1116,6 +1363,27 @@ impl qobject::TelemetryController {
             log_warn("ALERT", format!("{}: {}", alert.title, alert.body));
             fire_alert(&settings, alert.title, &alert.body, alert.critical);
             with_state(|s| s.last_alert = Some((alert.kind, now)));
+        }
+
+        // Sensor Expiry Countdown Notification (once every 6 hours when within threshold)
+        let should_notify_sensor_expiry = with_state(|s| {
+            s.sensor_expiring_soon
+                && !s.alerts_snoozed
+                && (now - s.last_sensor_expiry_alert_epoch >= 6 * 3600)
+        });
+        if should_notify_sensor_expiry && !is_offscreen() {
+            let status_txt = snapshot.format_sensor_status(now);
+            with_state(|s| s.last_sensor_expiry_alert_epoch = now);
+            log_warn("ALERT", format!("CGM Sensor Expiring Soon: {status_txt}"));
+            qobject::librelinkup_show_notification(
+                &QString::from("CGM Sensor Expiring Soon"),
+                &QString::from(
+                    format!("Active sensor countdown: {status_txt}. Prepare a replacement sensor.")
+                        .as_str(),
+                ),
+                false,
+                true,
+            );
         }
     }
 }

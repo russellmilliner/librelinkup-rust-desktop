@@ -32,6 +32,8 @@ Window {
     readonly property int opacityPercent: settings ? Math.max(20, Math.min(100, settings.overlayOpacityPercent)) : 88
     readonly property real opacityAlpha: opacityPercent / 100.0
     readonly property color statusAccentColor: Qt.color(telemetry ? telemetry.rangeColorHex : "#22c55e")
+    readonly property color lightOverlayBgColor: Qt.darker(statusAccentColor, 1.42)
+    readonly property color lightOverlayBorderColor: Qt.darker(statusAccentColor, 1.95)
 
     Rectangle {
         id: overlayPill
@@ -39,12 +41,15 @@ Window {
         anchors.fill: parent
         radius: 14
         clip: true
+        Accessible.role: Accessible.Pane
+        Accessible.name: telemetry ? telemetry.accessibleSummary : qsTr("LibreLinkUp Glucose Overlay")
+        Accessible.description: qsTr("Floating desktop glucose overlay. Double-click to open main window, right-click for menu, scroll wheel to adjust opacity.")
         color: overlayWindow.isDarkOverlay
             ? Qt.rgba(0.06, 0.09, 0.16, overlayWindow.opacityAlpha)
             : Qt.rgba(
-                overlayWindow.statusAccentColor.r,
-                overlayWindow.statusAccentColor.g,
-                overlayWindow.statusAccentColor.b,
+                overlayWindow.lightOverlayBgColor.r,
+                overlayWindow.lightOverlayBgColor.g,
+                overlayWindow.lightOverlayBgColor.b,
                 overlayWindow.opacityAlpha
             )
         border.color: overlayWindow.isDarkOverlay
@@ -54,8 +59,8 @@ Window {
                 overlayWindow.statusAccentColor.b,
                 Math.min(1.0, overlayWindow.opacityAlpha + 0.15)
             )
-            : Qt.rgba(1, 1, 1, 0.42)
-        border.width: overlayWindow.isDarkOverlay ? 2.0 : 1.5
+            : overlayWindow.lightOverlayBorderColor
+        border.width: 2.0
 
         MouseArea {
             id: dragMouseArea
@@ -181,10 +186,10 @@ Window {
                         overlayWindow.statusAccentColor.b,
                         0.24
                     )
-                    : Qt.rgba(1, 1, 1, 0.24)
+                    : Qt.rgba(0, 0, 0, 0.34)
                 border.color: overlayWindow.isDarkOverlay
                     ? overlayWindow.statusAccentColor
-                    : Qt.rgba(1, 1, 1, 0.45)
+                    : Qt.rgba(1, 1, 1, 0.85)
                 border.width: 1.5
 
                 QQC2.Label {
@@ -211,9 +216,20 @@ Window {
                         implicitWidth: 20
                         implicitHeight: 22
                         radius: 6
-                        color: themeBtnMouse.containsMouse ? Qt.rgba(1, 1, 1, 0.28) : Qt.rgba(1, 1, 1, 0.14)
-                        border.color: Qt.rgba(1, 1, 1, 0.3)
-                        border.width: 1
+                        activeFocusOnTab: true
+                        Accessible.role: Accessible.Button
+                        Accessible.name: overlayWindow.isDarkOverlay
+                            ? qsTr("Switch overlay to color fill theme")
+                            : qsTr("Switch overlay to dark slate theme")
+                        Keys.onReturnPressed: if (overlayWindow.settings) overlayWindow.settings.updateOverlayDarkTheme(!overlayWindow.isDarkOverlay)
+                        Keys.onSpacePressed: if (overlayWindow.settings) overlayWindow.settings.updateOverlayDarkTheme(!overlayWindow.isDarkOverlay)
+                        color: overlayWindow.isDarkOverlay
+                            ? (themeBtnMouse.containsMouse || activeFocus ? Qt.rgba(1, 1, 1, 0.28) : Qt.rgba(1, 1, 1, 0.14))
+                            : (themeBtnMouse.containsMouse || activeFocus ? Qt.rgba(0, 0, 0, 0.52) : Qt.rgba(0, 0, 0, 0.34))
+                        border.color: activeFocus
+                            ? "#ffffff"
+                            : (overlayWindow.isDarkOverlay ? Qt.rgba(1, 1, 1, 0.3) : Qt.rgba(1, 1, 1, 0.72))
+                        border.width: activeFocus ? 2 : 1
 
                         Canvas {
                             id: themeToggleCanvas
@@ -284,11 +300,26 @@ Window {
                         implicitWidth: 20
                         implicitHeight: 22
                         radius: 6
+                        activeFocusOnTab: true
+                        Accessible.role: Accessible.Button
+                        Accessible.name: overlayWindow.onAllDesktops
+                            ? qsTr("Show overlay on all virtual desktops: enabled")
+                            : qsTr("Show overlay on all virtual desktops: disabled")
+                        Keys.onReturnPressed: if (overlayWindow.settings) overlayWindow.settings.updateOverlayOnAllDesktops(!overlayWindow.onAllDesktops)
+                        Keys.onSpacePressed: if (overlayWindow.settings) overlayWindow.settings.updateOverlayOnAllDesktops(!overlayWindow.onAllDesktops)
                         color: overlayWindow.onAllDesktops
-                            ? (allDeskBtnMouse.containsMouse ? Qt.rgba(0.22, 0.74, 0.97, 0.38) : Qt.rgba(0.22, 0.74, 0.97, 0.24))
-                            : (allDeskBtnMouse.containsMouse ? Qt.rgba(1, 1, 1, 0.28) : Qt.rgba(1, 1, 1, 0.14))
-                        border.color: overlayWindow.onAllDesktops ? "#38bdf8" : Qt.rgba(1, 1, 1, 0.3)
-                        border.width: 1
+                            ? (overlayWindow.isDarkOverlay
+                                ? (allDeskBtnMouse.containsMouse || activeFocus ? Qt.rgba(0.22, 0.74, 0.97, 0.38) : Qt.rgba(0.22, 0.74, 0.97, 0.24))
+                                : (allDeskBtnMouse.containsMouse || activeFocus ? Qt.rgba(0, 0, 0, 0.56) : Qt.rgba(0, 0, 0, 0.40)))
+                            : (overlayWindow.isDarkOverlay
+                                ? (allDeskBtnMouse.containsMouse || activeFocus ? Qt.rgba(1, 1, 1, 0.28) : Qt.rgba(1, 1, 1, 0.14))
+                                : (allDeskBtnMouse.containsMouse || activeFocus ? Qt.rgba(0, 0, 0, 0.52) : Qt.rgba(0, 0, 0, 0.34)))
+                        border.color: activeFocus
+                            ? "#ffffff"
+                            : (overlayWindow.onAllDesktops
+                                ? (overlayWindow.isDarkOverlay ? "#38bdf8" : "#ffffff")
+                                : (overlayWindow.isDarkOverlay ? Qt.rgba(1, 1, 1, 0.3) : Qt.rgba(1, 1, 1, 0.72)))
+                        border.width: activeFocus ? 2 : 1
 
                         Canvas {
                             id: allDesktopsCanvas
@@ -353,9 +384,18 @@ Window {
                         implicitWidth: 20
                         implicitHeight: 22
                         radius: 6
-                        color: restoreBtnMouse.containsMouse ? Qt.rgba(1, 1, 1, 0.28) : Qt.rgba(1, 1, 1, 0.14)
-                        border.color: Qt.rgba(1, 1, 1, 0.3)
-                        border.width: 1
+                        activeFocusOnTab: true
+                        Accessible.role: Accessible.Button
+                        Accessible.name: qsTr("Open LibreLinkUp Rust Desktop main window")
+                        Keys.onReturnPressed: if (overlayWindow.settings) overlayWindow.settings.showMainWindow()
+                        Keys.onSpacePressed: if (overlayWindow.settings) overlayWindow.settings.showMainWindow()
+                        color: overlayWindow.isDarkOverlay
+                            ? (restoreBtnMouse.containsMouse || activeFocus ? Qt.rgba(1, 1, 1, 0.28) : Qt.rgba(1, 1, 1, 0.14))
+                            : (restoreBtnMouse.containsMouse || activeFocus ? Qt.rgba(0, 0, 0, 0.52) : Qt.rgba(0, 0, 0, 0.34))
+                        border.color: activeFocus
+                            ? "#ffffff"
+                            : (overlayWindow.isDarkOverlay ? Qt.rgba(1, 1, 1, 0.3) : Qt.rgba(1, 1, 1, 0.72))
+                        border.width: activeFocus ? 2 : 1
 
                         QQC2.Label {
                             anchors.centerIn: parent
@@ -394,9 +434,18 @@ Window {
                         implicitWidth: 32
                         implicitHeight: 22
                         radius: 6
-                        color: menuBtnMouse.containsMouse ? Qt.rgba(1, 1, 1, 0.28) : Qt.rgba(1, 1, 1, 0.14)
-                        border.color: Qt.rgba(1, 1, 1, 0.3)
-                        border.width: 1
+                        activeFocusOnTab: true
+                        Accessible.role: Accessible.Button
+                        Accessible.name: qsTr("Open LibreLinkUp context menu")
+                        Keys.onReturnPressed: if (overlayWindow.settings) overlayWindow.settings.popupTrayMenuAtCursor()
+                        Keys.onSpacePressed: if (overlayWindow.settings) overlayWindow.settings.popupTrayMenuAtCursor()
+                        color: overlayWindow.isDarkOverlay
+                            ? (menuBtnMouse.containsMouse || activeFocus ? Qt.rgba(1, 1, 1, 0.28) : Qt.rgba(1, 1, 1, 0.14))
+                            : (menuBtnMouse.containsMouse || activeFocus ? Qt.rgba(0, 0, 0, 0.52) : Qt.rgba(0, 0, 0, 0.34))
+                        border.color: activeFocus
+                            ? "#ffffff"
+                            : (overlayWindow.isDarkOverlay ? Qt.rgba(1, 1, 1, 0.3) : Qt.rgba(1, 1, 1, 0.72))
+                        border.width: activeFocus ? 2 : 1
 
                         QQC2.Label {
                             anchors.centerIn: parent
@@ -431,9 +480,18 @@ Window {
                         implicitWidth: 32
                         implicitHeight: 22
                         radius: 6
-                        color: closeBtnMouse.containsMouse ? Qt.rgba(0.94, 0.27, 0.27, 0.65) : Qt.rgba(1, 1, 1, 0.14)
-                        border.color: Qt.rgba(1, 1, 1, 0.3)
-                        border.width: 1
+                        activeFocusOnTab: true
+                        Accessible.role: Accessible.Button
+                        Accessible.name: qsTr("Hide floating desktop overlay")
+                        Keys.onReturnPressed: if (overlayWindow.settings) overlayWindow.settings.updateOverlayVisible(false)
+                        Keys.onSpacePressed: if (overlayWindow.settings) overlayWindow.settings.updateOverlayVisible(false)
+                        color: closeBtnMouse.containsMouse || activeFocus
+                            ? Qt.rgba(0.94, 0.27, 0.27, 0.75)
+                            : (overlayWindow.isDarkOverlay ? Qt.rgba(1, 1, 1, 0.14) : Qt.rgba(0, 0, 0, 0.34))
+                        border.color: activeFocus
+                            ? "#ffffff"
+                            : (overlayWindow.isDarkOverlay ? Qt.rgba(1, 1, 1, 0.3) : Qt.rgba(1, 1, 1, 0.72))
+                        border.width: activeFocus ? 2 : 1
 
                         QQC2.Label {
                             anchors.centerIn: parent

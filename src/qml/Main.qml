@@ -15,9 +15,53 @@ Kirigami.ApplicationWindow {
     minimumWidth: 780
     minimumHeight: 540
     visible: false
-    color: Kirigami.Theme.backgroundColor
+    readonly property bool isLightTheme: (0.2126 * Kirigami.Theme.backgroundColor.r + 0.7152 * Kirigami.Theme.backgroundColor.g + 0.0722 * Kirigami.Theme.backgroundColor.b) > 0.45
+    readonly property bool isHighContrast: Boolean(settings && settings.highContrastMode)
+    readonly property real zoomScale: Math.max(0.75, Math.min(1.75, (settings ? settings.uiZoomPercent : 100) / 100.0))
+    readonly property real osBaseFontPt: Kirigami.Theme.defaultFont.pointSize > 0 ? Kirigami.Theme.defaultFont.pointSize : 10.0
+    readonly property real baseFontPt: osBaseFontPt * zoomScale
+    readonly property real fontCaptionPt: Math.max(6.5, osBaseFontPt * 0.80 * zoomScale)
+    readonly property real fontSmallPt: Math.max(7.0, osBaseFontPt * 0.85 * zoomScale)
+    readonly property real fontCompactPt: Math.max(7.5, osBaseFontPt * 0.90 * zoomScale)
+    readonly property real fontSubbodyPt: Math.max(8.0, osBaseFontPt * 0.95 * zoomScale)
+    readonly property real fontBodyPt: Math.max(8.5, osBaseFontPt * 1.00 * zoomScale)
+    readonly property real fontSubheadingPt: Math.max(9.0, osBaseFontPt * 1.05 * zoomScale)
+    readonly property real fontHeadingPt: Math.max(9.5, osBaseFontPt * 1.15 * zoomScale)
+    readonly property real fontTitlePt: Math.max(10.5, osBaseFontPt * 1.25 * zoomScale)
+    readonly property real fontHeroTrendPt: Math.max(15.0, osBaseFontPt * 2.00 * zoomScale)
+    readonly property real fontHeroValuePt: Math.max(25.0, osBaseFontPt * 3.40 * zoomScale)
+    font.pointSize: baseFontPt
 
-    readonly property bool isLightTheme: (0.2126 * root.color.r + 0.7152 * root.color.g + 0.0722 * root.color.b) > 0.45
+    onZoomScaleChanged: {
+        fullHeaderWidth = 0
+        Qt.callLater(recheckHeaderWidth)
+        glucoseCanvas.requestPaint()
+    }
+    readonly property color windowBgColor: isHighContrast
+        ? (isLightTheme ? "#cbd5e1" : "#020617")
+        : (isLightTheme ? "#dde5f0" : Kirigami.Theme.backgroundColor)
+    readonly property color cardBgColor: isHighContrast
+        ? (isLightTheme ? "#ffffff" : "#0f172a")
+        : (isLightTheme ? "#ffffff" : Kirigami.Theme.alternateBackgroundColor)
+    readonly property color subCardBgColor: isLightTheme ? "#edf2f7" : Qt.alpha(Kirigami.Theme.backgroundColor, 0.55)
+    readonly property color cardBorderColor: isHighContrast
+        ? (isLightTheme ? "#0f172a" : "#f8fafc")
+        : (isLightTheme ? "#64748b" : Qt.alpha(Kirigami.Theme.textColor, 0.22))
+    readonly property real cardBorderWidth: isHighContrast ? 2.5 : (isLightTheme ? 1.5 : 1.0)
+    readonly property color subCardBorderColor: isHighContrast
+        ? (isLightTheme ? "#1e293b" : "#cbd5e1")
+        : (isLightTheme ? "#94a3b8" : Qt.alpha(Kirigami.Theme.textColor, 0.14))
+    color: windowBgColor
+
+    function statusBadgePrefix(label) {
+        const clean = String(label || "").toLowerCase()
+        if (clean.indexOf("urgent") !== -1 || clean === "low") return "⬇ "
+        if (clean === "high") return "⬆ "
+        if (clean.indexOf("out of") !== -1) return "⚠ "
+        if (clean.indexOf("stale") !== -1) return "⏱ "
+        if (clean.indexOf("in range") !== -1) return "✓ "
+        return ""
+    }
 
     // Width the header needs with every label shown, measured from the real layout at
     // startup (depends on fonts/scaling, so it can't be hard-coded). 0 = not measured yet.
@@ -78,9 +122,13 @@ Kirigami.ApplicationWindow {
             implicitWidth: hcScrollBar.orientation === Qt.Vertical ? 12 : 100
             implicitHeight: hcScrollBar.orientation === Qt.Horizontal ? 12 : 100
             radius: 6
-            color: Qt.alpha(Kirigami.Theme.textColor, 0.16)
+            color: root.isLightTheme
+                ? "#cbd5e1"
+                : Qt.alpha(Kirigami.Theme.textColor, 0.18)
             border.width: 1
-            border.color: Qt.alpha(Kirigami.Theme.textColor, 0.32)
+            border.color: root.isLightTheme
+                ? "#475569"
+                : Qt.alpha(Kirigami.Theme.textColor, 0.36)
             visible: hcScrollBar.size < 1.0 || hcScrollBar.policy === QQC2.ScrollBar.AlwaysOn
         }
 
@@ -94,9 +142,9 @@ Kirigami.ApplicationWindow {
                 ? Kirigami.Theme.highlightColor
                 : (hcScrollBar.hovered
                     ? Qt.lighter(Kirigami.Theme.highlightColor, 1.15)
-                    : Qt.alpha(Kirigami.Theme.textColor, 0.68))
+                    : (root.isLightTheme ? "#334155" : Qt.alpha(Kirigami.Theme.textColor, 0.74)))
             border.width: 1
-            border.color: Qt.alpha(Kirigami.Theme.backgroundColor, 0.55)
+            border.color: root.isLightTheme ? "#0f172a" : Qt.alpha(Kirigami.Theme.backgroundColor, 0.55)
         }
     }
 
@@ -216,6 +264,11 @@ Kirigami.ApplicationWindow {
         id: settings
         objectName: "librelinkupSettingsController"
         onThemeModeChanged: glucoseCanvas.requestPaint()
+        onHighContrastModeChanged: glucoseCanvas.requestPaint()
+        onUiZoomPercentChanged: {
+            glucoseCanvas.requestPaint()
+            root.recheckHeaderWidth()
+        }
         onOverlayVisibleChanged: overlayWidgetWindow.visible = overlayVisible
     }
 
@@ -330,6 +383,10 @@ Kirigami.ApplicationWindow {
                 border.width: 1
                 implicitWidth: vaultLabel.implicitWidth + 10
                 implicitHeight: 22
+                Accessible.role: Accessible.StaticText
+                Accessible.name: telemetry.credentialsEncrypted
+                    ? qsTr("Credentials encrypted with AES-256-GCM")
+                    : qsTr("Credentials vault unset")
 
                 QQC2.Label {
                     id: vaultLabel
@@ -337,7 +394,7 @@ Kirigami.ApplicationWindow {
                     text: root.headerCompact
                         ? (telemetry.credentialsEncrypted ? "🔒" : "🔓")
                         : (telemetry.credentialsEncrypted ? qsTr("🔒 AES-256") : qsTr("🔓 Unset"))
-                    font.pointSize: 8
+                    font.pointSize: root.fontCaptionPt
                     font.bold: true
                     color: Kirigami.Theme.textColor
                 }
@@ -349,9 +406,10 @@ Kirigami.ApplicationWindow {
                 objectName: "tabButtonDashboard"
                 display: root.headerCompact ? QQC2.AbstractButton.IconOnly : QQC2.AbstractButton.TextBesideIcon
                 QQC2.ToolTip.visible: root.headerCompact && hovered
-                QQC2.ToolTip.text: text
+                QQC2.ToolTip.text: qsTr("Dashboard (Alt+1)")
                 icon.name: "view-statistics"
                 text: qsTr("Dashboard")
+                Accessible.name: qsTr("Dashboard tab (Alt+1)")
                 checkable: true
                 checked: root.activeTab === "dashboard"
                 onClicked: root.activeTab = "dashboard"
@@ -361,9 +419,10 @@ Kirigami.ApplicationWindow {
                 objectName: "tabButtonMedications"
                 display: root.headerCompact ? QQC2.AbstractButton.IconOnly : QQC2.AbstractButton.TextBesideIcon
                 QQC2.ToolTip.visible: root.headerCompact && hovered
-                QQC2.ToolTip.text: text
+                QQC2.ToolTip.text: qsTr("Medications (Alt+2)")
                 icon.name: "bookmarks"
                 text: qsTr("Medications")
+                Accessible.name: qsTr("Medications and Glycemic Analytics tab (Alt+2)")
                 checkable: true
                 checked: root.activeTab === "medications"
                 onClicked: root.activeTab = "medications"
@@ -373,9 +432,10 @@ Kirigami.ApplicationWindow {
                 objectName: "tabButtonGeneral"
                 display: root.headerCompact ? QQC2.AbstractButton.IconOnly : QQC2.AbstractButton.TextBesideIcon
                 QQC2.ToolTip.visible: root.headerCompact && hovered
-                QQC2.ToolTip.text: text
+                QQC2.ToolTip.text: qsTr("Settings (Alt+3)")
                 icon.name: "configure"
                 text: qsTr("Settings")
+                Accessible.name: qsTr("General and Appearance Settings tab (Alt+3)")
                 checkable: true
                 checked: root.activeTab === "general"
                 onClicked: root.activeTab = "general"
@@ -385,9 +445,10 @@ Kirigami.ApplicationWindow {
                 objectName: "tabButtonAlerts"
                 display: root.headerCompact ? QQC2.AbstractButton.IconOnly : QQC2.AbstractButton.TextBesideIcon
                 QQC2.ToolTip.visible: root.headerCompact && hovered
-                QQC2.ToolTip.text: text
+                QQC2.ToolTip.text: qsTr("Alerts (Alt+4)")
                 icon.name: "preferences-desktop-notification-bell"
                 text: qsTr("Alerts")
+                Accessible.name: qsTr("Alerts and Thresholds tab (Alt+4)")
                 checkable: true
                 checked: root.activeTab === "alerts"
                 onClicked: root.activeTab = "alerts"
@@ -397,9 +458,10 @@ Kirigami.ApplicationWindow {
                 objectName: "tabButtonAccount"
                 display: root.headerCompact ? QQC2.AbstractButton.IconOnly : QQC2.AbstractButton.TextBesideIcon
                 QQC2.ToolTip.visible: root.headerCompact && hovered
-                QQC2.ToolTip.text: text
+                QQC2.ToolTip.text: qsTr("Account (Alt+5)")
                 icon.name: "user-identity"
                 text: qsTr("Account")
+                Accessible.name: qsTr("Account and Encrypted Vault tab (Alt+5)")
                 checkable: true
                 checked: root.activeTab === "account"
                 onClicked: root.activeTab = "account"
@@ -411,7 +473,8 @@ Kirigami.ApplicationWindow {
                 text: qsTr("Logs (%1)").arg(settings.eventLogCount)
                 display: root.headerCompact ? QQC2.AbstractButton.IconOnly : QQC2.AbstractButton.TextBesideIcon
                 QQC2.ToolTip.visible: hovered
-                QQC2.ToolTip.text: qsTr("Diagnostic Log Viewer (%1 entries)").arg(settings.eventLogCount)
+                QQC2.ToolTip.text: qsTr("Diagnostic Log Viewer (%1 entries, Alt+6)").arg(settings.eventLogCount)
+                Accessible.name: qsTr("Diagnostic Log Viewer tab (%1 entries, Alt+6)").arg(settings.eventLogCount)
                 checkable: true
                 checked: root.activeTab === "logs"
                 onClicked: root.openLogViewer()
@@ -423,7 +486,8 @@ Kirigami.ApplicationWindow {
                 text: qsTr("About")
                 display: root.headerCompact ? QQC2.AbstractButton.IconOnly : QQC2.AbstractButton.TextBesideIcon
                 QQC2.ToolTip.visible: hovered
-                QQC2.ToolTip.text: qsTr("About LibreLinkUp Rust Desktop v%1").arg(telemetry.appVersion)
+                QQC2.ToolTip.text: qsTr("About LibreLinkUp Rust Desktop v%1 (Alt+7)").arg(telemetry.appVersion)
+                Accessible.name: qsTr("About LibreLinkUp Rust Desktop tab (Alt+7)")
                 checkable: true
                 checked: root.activeTab === "about"
                 onClicked: root.openAboutDialog()
@@ -433,18 +497,24 @@ Kirigami.ApplicationWindow {
                 id: headerKofiBadge
                 objectName: "headerKofiBadge"
                 radius: 12
-                color: headerKofiMouse.containsMouse ? "#c81e1e" : "#d93834"
-                border.color: "#ffffff33"
-                border.width: 1
+                color: headerKofiMouse.containsMouse || activeFocus ? "#c81e1e" : "#d93834"
+                border.color: activeFocus ? "#ffffff" : "#ffffff33"
+                border.width: activeFocus ? 2 : 1
                 implicitWidth: headerKofiLabel.implicitWidth + 12
-                implicitHeight: 24
+                implicitHeight: Math.max(24, Math.ceil(headerKofiLabel.implicitHeight + 6))
+                activeFocusOnTab: true
+                Accessible.role: Accessible.Button
+                Accessible.name: qsTr("Support Russell Milliner on Ko-fi")
+                Accessible.description: qsTr("Opens https://ko-fi.com/russellmilliner in your web browser")
+                Keys.onReturnPressed: Qt.openUrlExternally("https://ko-fi.com/russellmilliner")
+                Keys.onSpacePressed: Qt.openUrlExternally("https://ko-fi.com/russellmilliner")
 
                 QQC2.Label {
                     id: headerKofiLabel
                     anchors.centerIn: parent
                     text: root.headerCompact ? qsTr("☕") : qsTr("☕ Ko-fi")
                     font.bold: true
-                    font.pointSize: 8.5
+                    font.pointSize: root.fontSmallPt
                     color: "#ffffff"
                 }
 
@@ -465,7 +535,8 @@ Kirigami.ApplicationWindow {
                 icon.name: "view-refresh"
                 display: QQC2.AbstractButton.IconOnly
                 QQC2.ToolTip.visible: hovered
-                QQC2.ToolTip.text: qsTr("Refresh glucose telemetry now")
+                QQC2.ToolTip.text: qsTr("Refresh glucose telemetry now (F5 / Ctrl+R)")
+                Accessible.name: qsTr("Refresh glucose telemetry now (F5 or Ctrl+R)")
                 enabled: telemetry.loggedIn && !telemetry.busy
                 onClicked: telemetry.refreshGlucoseNow()
             }
@@ -476,7 +547,107 @@ Kirigami.ApplicationWindow {
                 display: QQC2.AbstractButton.IconOnly
                 QQC2.ToolTip.visible: hovered
                 QQC2.ToolTip.text: qsTr("Hide window to the KDE system tray")
+                Accessible.name: qsTr("Hide window to the KDE system tray")
                 onClicked: settings.hideMainWindow()
+            }
+        }
+    }
+
+    footer: QQC2.ToolBar {
+        id: mainFooterBar
+        objectName: "mainFooterBar"
+        leftPadding: 0
+        rightPadding: 0
+        implicitHeight: footerRow.implicitHeight + 8
+        Accessible.role: Accessible.StatusBar
+        Accessible.name: qsTr("Status and Accessibility Zoom Bar")
+
+        RowLayout {
+            id: footerRow
+            objectName: "mainFooterRow"
+            anchors.fill: parent
+            anchors.leftMargin: 10
+            anchors.rightMargin: 10
+            spacing: 6
+
+            QQC2.Label {
+                id: footerStatusLabel
+                objectName: "footerStatusLabel"
+                text: telemetry.loggedIn
+                    ? telemetry.accessibleSummary
+                    : telemetry.statusMessage
+                font.pointSize: Math.max(8.0, root.baseFontPt * 0.85)
+                color: Kirigami.Theme.textColor
+                elide: Text.ElideRight
+                Layout.fillWidth: true
+                Layout.preferredWidth: 0
+                Accessible.role: Accessible.StatusBar
+                Accessible.name: text
+                Accessible.description: qsTr("Live blood glucose telemetry and accessibility status bar")
+            }
+
+            QQC2.ToolButton {
+                id: footerHighContrastButton
+                objectName: "footerHighContrastButton"
+                display: QQC2.AbstractButton.TextOnly
+                text: settings.highContrastMode ? qsTr("◑ High Contrast: ON") : qsTr("◑ High Contrast")
+                font.pointSize: root.fontSmallPt
+                font.bold: settings.highContrastMode
+                leftPadding: 6
+                rightPadding: 6
+                checkable: true
+                checked: settings.highContrastMode
+                QQC2.ToolTip.visible: hovered
+                QQC2.ToolTip.text: qsTr("Toggle WCAG AAA High Contrast Accessibility Mode")
+                Accessible.name: qsTr("Toggle High Contrast Accessibility Mode")
+                onClicked: settings.updateHighContrastMode(!settings.highContrastMode)
+            }
+
+            QQC2.ToolButton {
+                id: zoomOutButton
+                objectName: "zoomOutButton"
+                display: QQC2.AbstractButton.TextOnly
+                text: "−"
+                font.pointSize: root.fontBodyPt
+                font.bold: true
+                leftPadding: 8
+                rightPadding: 8
+                enabled: settings.uiZoomPercent > 75
+                QQC2.ToolTip.visible: hovered
+                QQC2.ToolTip.text: qsTr("Zoom Out UI (Ctrl+-)")
+                Accessible.name: qsTr("Zoom Out UI (Ctrl+-)")
+                onClicked: settings.zoomOut()
+            }
+
+            QQC2.ToolButton {
+                id: zoomResetButton
+                objectName: "zoomResetButton"
+                display: QQC2.AbstractButton.TextOnly
+                text: settings.uiZoomPercent + "%"
+                font.pointSize: root.fontSmallPt
+                font.bold: true
+                leftPadding: 6
+                rightPadding: 6
+                QQC2.ToolTip.visible: hovered
+                QQC2.ToolTip.text: qsTr("Reset UI Zoom to 100% (Ctrl+0)")
+                Accessible.name: qsTr("Reset UI Zoom to 100 percent, current zoom %1 percent (Ctrl+0)").arg(settings.uiZoomPercent)
+                onClicked: settings.resetZoom()
+            }
+
+            QQC2.ToolButton {
+                id: zoomInButton
+                objectName: "zoomInButton"
+                display: QQC2.AbstractButton.TextOnly
+                text: "+"
+                font.pointSize: root.fontBodyPt
+                font.bold: true
+                leftPadding: 8
+                rightPadding: 8
+                enabled: settings.uiZoomPercent < 175
+                QQC2.ToolTip.visible: hovered
+                QQC2.ToolTip.text: qsTr("Zoom In UI (Ctrl++)")
+                Accessible.name: qsTr("Zoom In UI (Ctrl++)")
+                onClicked: settings.zoomIn()
             }
         }
     }
@@ -617,12 +788,12 @@ Kirigami.ApplicationWindow {
                         id: loginCard
                         objectName: "loginCard"
                         anchors.centerIn: parent
-                        width: Math.min(parent.width - 24, 480)
+                        width: Math.min(parent.width - 24, 510)
                         implicitHeight: loginCol.implicitHeight + 36
                         radius: 12
-                        color: Kirigami.Theme.alternateBackgroundColor
-                        border.color: Qt.alpha(Kirigami.Theme.textColor, 0.18)
-                        border.width: 1
+                        color: root.cardBgColor
+                        border.color: root.cardBorderColor
+                        border.width: root.cardBorderWidth
 
                         ColumnLayout {
                             id: loginCol
@@ -634,17 +805,46 @@ Kirigami.ApplicationWindow {
 
                             Kirigami.Heading {
                                 level: 2
-                                text: qsTr("Sign In to LibreLinkUp")
+                                font.pointSize: root.fontTitlePt
+                                text: settings.dataSource === "home_assistant"
+                                    ? qsTr("Connect to Home Assistant LibreLink")
+                                    : qsTr("Sign In to LibreLinkUp")
                                 color: Kirigami.Theme.textColor
                                 Layout.fillWidth: true
                                 Layout.preferredWidth: 0
                                 wrapMode: Text.WordWrap
                             }
 
+                            ColumnLayout {
+                                Layout.fillWidth: true
+                                spacing: 4
+                                QQC2.Label {
+                                    text: qsTr("CGM Data Source")
+                                    font.bold: true
+                                    color: Kirigami.Theme.textColor
+                                    Layout.fillWidth: true
+                                }
+                                QQC2.ComboBox {
+                                    id: loginDataSourceCombo
+                                    objectName: "loginDataSourceCombo"
+                                    Layout.fillWidth: true
+                                    Accessible.name: qsTr("CGM Data Source")
+                                    model: [
+                                        { label: qsTr("LibreLinkUp Cloud API"), value: "librelinkup" },
+                                        { label: qsTr("Home Assistant (LibreLink Integration)"), value: "home_assistant" }
+                                    ]
+                                    textRole: "label"
+                                    valueRole: "value"
+                                    currentIndex: settings.dataSource === "home_assistant" ? 1 : 0
+                                    onActivated: settings.updateDataSource(currentValue)
+                                }
+                            }
+
                             QQC2.Label {
+                                visible: settings.dataSource !== "home_assistant"
                                 text: qsTr("Use your LibreLinkUp follower credentials. All credentials and tokens are encrypted at rest using AES-256-GCM + PBKDF2-HMAC-SHA256.")
                                 wrapMode: Text.WordWrap
-                                opacity: 0.82
+                                opacity: 0.85
                                 color: Kirigami.Theme.textColor
                                 Layout.fillWidth: true
                                 Layout.preferredWidth: 0
@@ -652,6 +852,7 @@ Kirigami.ApplicationWindow {
 
                             ColumnLayout {
                                 Layout.fillWidth: true
+                                visible: settings.dataSource !== "home_assistant"
                                 spacing: 4
                                 QQC2.Label {
                                     text: qsTr("Email / Username")
@@ -664,11 +865,13 @@ Kirigami.ApplicationWindow {
                                     Layout.fillWidth: true
                                     placeholderText: qsTr("you@example.com")
                                     text: telemetry.username
+                                    Accessible.name: qsTr("LibreLinkUp Email or Username")
                                 }
                             }
 
                             ColumnLayout {
                                 Layout.fillWidth: true
+                                visible: settings.dataSource !== "home_assistant"
                                 spacing: 4
                                 QQC2.Label {
                                     text: qsTr("Password")
@@ -681,12 +884,14 @@ Kirigami.ApplicationWindow {
                                     Layout.fillWidth: true
                                     echoMode: TextInput.Password
                                     placeholderText: qsTr("Enter your LibreLinkUp password")
+                                    Accessible.name: qsTr("LibreLinkUp Password")
                                     onAccepted: signInButton.clicked()
                                 }
                             }
 
                             ColumnLayout {
                                 Layout.fillWidth: true
+                                visible: settings.dataSource !== "home_assistant"
                                 spacing: 4
                                 QQC2.Label {
                                     text: qsTr("Regional Server")
@@ -697,6 +902,7 @@ Kirigami.ApplicationWindow {
                                 QQC2.ComboBox {
                                     id: loginRegionCombo
                                     Layout.fillWidth: true
+                                    Accessible.name: qsTr("LibreLinkUp Regional Server")
                                     model: root.regionOptions
                                     textRole: "label"
                                     valueRole: "value"
@@ -722,10 +928,84 @@ Kirigami.ApplicationWindow {
 
                             QQC2.CheckBox {
                                 objectName: "loginRememberPasswordCheck"
+                                visible: settings.dataSource !== "home_assistant"
                                 text: qsTr("Remember password in encrypted vault (auto-renew expired tokens)")
                                 checked: settings.rememberPassword
                                 onToggled: settings.updateRememberPassword(checked)
                                 Layout.fillWidth: true
+                            }
+
+                            // Home Assistant LibreLink Integration Fields on Login Card
+                            QQC2.Label {
+                                visible: settings.dataSource === "home_assistant"
+                                text: qsTr("Pull live CGM readings, trend arrows, and 12-hour history directly from your Home Assistant LibreLink integration over your local LAN or Tailscale.")
+                                wrapMode: Text.WordWrap
+                                opacity: 0.85
+                                color: Kirigami.Theme.textColor
+                                Layout.fillWidth: true
+                                Layout.preferredWidth: 0
+                            }
+
+                            ColumnLayout {
+                                Layout.fillWidth: true
+                                visible: settings.dataSource === "home_assistant"
+                                spacing: 4
+                                QQC2.Label {
+                                    text: qsTr("Home Assistant URL")
+                                    font.bold: true
+                                    color: Kirigami.Theme.textColor
+                                    Layout.fillWidth: true
+                                }
+                                QQC2.TextField {
+                                    id: loginHaUrlField
+                                    objectName: "loginHaUrlField"
+                                    Layout.fillWidth: true
+                                    placeholderText: qsTr("https://haos.dingo-dory.ts.net")
+                                    text: settings.haUrl
+                                    Accessible.name: qsTr("Home Assistant URL")
+                                }
+                            }
+
+                            ColumnLayout {
+                                Layout.fillWidth: true
+                                visible: settings.dataSource === "home_assistant"
+                                spacing: 4
+                                QQC2.Label {
+                                    text: qsTr("Long-Lived Access Token")
+                                    font.bold: true
+                                    color: Kirigami.Theme.textColor
+                                    Layout.fillWidth: true
+                                }
+                                QQC2.TextField {
+                                    id: loginHaTokenField
+                                    objectName: "loginHaTokenField"
+                                    Layout.fillWidth: true
+                                    echoMode: TextInput.Password
+                                    placeholderText: settings.haTokenConfigured
+                                        ? qsTr("Stored in AES-256-GCM vault (leave blank to keep)")
+                                        : qsTr("Paste Home Assistant Long-Lived Access Token")
+                                    Accessible.name: qsTr("Home Assistant Long-Lived Access Token")
+                                }
+                            }
+
+                            ColumnLayout {
+                                Layout.fillWidth: true
+                                visible: settings.dataSource === "home_assistant"
+                                spacing: 4
+                                QQC2.Label {
+                                    text: qsTr("Glucose Sensor Entity ID (optional)")
+                                    font.bold: true
+                                    color: Kirigami.Theme.textColor
+                                    Layout.fillWidth: true
+                                }
+                                QQC2.TextField {
+                                    id: loginHaEntityField
+                                    objectName: "loginHaEntityField"
+                                    Layout.fillWidth: true
+                                    placeholderText: qsTr("Auto-discover (e.g. sensor.russell_milliner_measurement)")
+                                    text: settings.haSensorEntityId
+                                    Accessible.name: qsTr("Home Assistant Glucose Sensor Entity ID")
+                                }
                             }
 
                             RowLayout {
@@ -734,6 +1014,7 @@ Kirigami.ApplicationWindow {
 
                                 QQC2.Button {
                                     id: signInButton
+                                    visible: settings.dataSource !== "home_assistant"
                                     Layout.fillWidth: true
                                     highlighted: true
                                     icon.name: "dialog-ok-apply"
@@ -749,6 +1030,36 @@ Kirigami.ApplicationWindow {
                                             settings.language
                                         )
                                     }
+                                }
+
+                                QQC2.Button {
+                                    id: connectHaButton
+                                    objectName: "connectHaButton"
+                                    visible: settings.dataSource === "home_assistant"
+                                    Layout.fillWidth: true
+                                    highlighted: true
+                                    icon.name: "network-connect"
+                                    text: telemetry.busy ? qsTr("Connecting...") : qsTr("Connect Home Assistant")
+                                    enabled: !telemetry.busy
+                                    onClicked: {
+                                        telemetry.saveHomeAssistantConfig(
+                                            "home_assistant",
+                                            loginHaUrlField.text,
+                                            loginHaTokenField.text,
+                                            loginHaEntityField.text
+                                        )
+                                        loginHaTokenField.text = ""
+                                    }
+                                }
+
+                                QQC2.Button {
+                                    objectName: "loginAutoFillHaButton"
+                                    visible: settings.dataSource === "home_assistant"
+                                    icon.name: "document-import"
+                                    text: qsTr("Auto-Fill Env")
+                                    QQC2.ToolTip.visible: hovered
+                                    QQC2.ToolTip.text: qsTr("Import HA_URL and HA_TOKEN from ~/.config/home-assistant.env")
+                                    onClicked: telemetry.autoFillHomeAssistantFromEnv()
                                 }
 
                                 QQC2.Button {
@@ -785,15 +1096,24 @@ Kirigami.ApplicationWindow {
                     Rectangle {
                         id: heroCard
                         objectName: "heroCard"
-                        Layout.preferredWidth: 270
+                        Layout.preferredWidth: Math.round(270 * Math.min(1.25, root.zoomScale))
                         Layout.minimumWidth: 250
-                        Layout.maximumWidth: 300
+                        Layout.maximumWidth: Math.round(330 * Math.min(1.25, root.zoomScale))
                         Layout.preferredHeight: topCardsRow.unifiedCardHeight
                         implicitHeight: topCardsRow.unifiedCardHeight
                         radius: 14
-                        color: telemetry.rangeColorHex
-                        border.color: Qt.rgba(1, 1, 1, 0.35)
-                        border.width: 1.5
+                        color: root.isLightTheme
+                            ? Qt.darker(Qt.color(telemetry.rangeColorHex), 1.42)
+                            : Qt.darker(Qt.color(telemetry.rangeColorHex), 1.15)
+                        border.color: root.isHighContrast
+                            ? "#ffffff"
+                            : (root.isLightTheme
+                                ? Qt.darker(Qt.color(telemetry.rangeColorHex), 1.95)
+                                : Qt.rgba(1, 1, 1, 0.45))
+                        border.width: root.isHighContrast ? 2.5 : (root.isLightTheme ? 2.0 : 1.5)
+                        Accessible.role: Accessible.Pane
+                        Accessible.name: telemetry.accessibleSummary
+                        Accessible.description: telemetry.ea1CHeadline
 
                         ColumnLayout {
                             id: heroCol
@@ -809,22 +1129,25 @@ Kirigami.ApplicationWindow {
                                 spacing: 6
                                 QQC2.Label {
                                     text: qsTr("CURRENT GLUCOSE")
-                                    font.pointSize: 8.5
+                                    font.pointSize: root.fontSmallPt
                                     font.bold: true
-                                    color: Qt.rgba(1, 1, 1, 0.92)
+                                    color: Qt.rgba(1, 1, 1, 0.96)
                                     Layout.fillWidth: true
                                     elide: Text.ElideRight
                                 }
                                 Rectangle {
                                     radius: 6
-                                    color: Qt.rgba(0, 0, 0, 0.24)
+                                    color: Qt.rgba(0, 0, 0, 0.36)
+                                    border.color: Qt.rgba(1, 1, 1, 0.45)
+                                    border.width: 1
                                     implicitWidth: statusPillLabel.implicitWidth + 12
-                                    implicitHeight: 20
+                                    implicitHeight: Math.max(20, statusPillLabel.implicitHeight + 6)
                                     QQC2.Label {
                                         id: statusPillLabel
+                                        objectName: "statusPillLabel"
                                         anchors.centerIn: parent
-                                        text: telemetry.rangeStatusLabel
-                                        font.pointSize: 8
+                                        text: root.statusBadgePrefix(telemetry.rangeStatusLabel) + telemetry.rangeStatusLabel
+                                        font.pointSize: root.fontCaptionPt
                                         font.bold: true
                                         color: "#ffffff"
                                     }
@@ -836,8 +1159,10 @@ Kirigami.ApplicationWindow {
                                 spacing: 8
 
                                 QQC2.Label {
+                                    id: heroGlucoseValueLabel
+                                    objectName: "heroGlucoseValueLabel"
                                     text: telemetry.glucoseDisplay
-                                    font.pointSize: 34
+                                    font.pointSize: root.fontHeroValuePt
                                     font.bold: true
                                     color: "#ffffff"
                                 }
@@ -847,7 +1172,7 @@ Kirigami.ApplicationWindow {
                                     spacing: 2
                                     QQC2.Label {
                                         text: telemetry.resultUnit
-                                        font.pointSize: 11
+                                        font.pointSize: root.fontHeadingPt
                                         font.bold: true
                                         color: "#ffffff"
                                         Layout.fillWidth: true
@@ -855,25 +1180,25 @@ Kirigami.ApplicationWindow {
                                     }
                                     QQC2.Label {
                                         text: telemetry.trendDescription
-                                        font.pointSize: 9
-                                        color: Qt.rgba(1, 1, 1, 0.92)
+                                        font.pointSize: root.fontCompactPt
+                                        color: Qt.rgba(1, 1, 1, 0.95)
                                         Layout.fillWidth: true
                                         elide: Text.ElideRight
                                     }
                                 }
 
                                 Rectangle {
-                                    Layout.preferredWidth: 44
-                                    Layout.preferredHeight: 44
-                                    radius: 22
-                                    color: Qt.rgba(1, 1, 1, 0.25)
-                                    border.color: Qt.rgba(1, 1, 1, 0.5)
+                                    Layout.preferredWidth: Math.round(44 * Math.min(1.25, root.zoomScale))
+                                    Layout.preferredHeight: Math.round(44 * Math.min(1.25, root.zoomScale))
+                                    radius: Math.round(22 * Math.min(1.25, root.zoomScale))
+                                    color: Qt.rgba(0, 0, 0, 0.34)
+                                    border.color: Qt.rgba(1, 1, 1, 0.85)
                                     border.width: 1.5
 
                                     QQC2.Label {
                                         anchors.centerIn: parent
                                         text: telemetry.trendSymbol
-                                        font.pointSize: 20
+                                        font.pointSize: root.fontHeroTrendPt
                                         font.bold: true
                                         color: "#ffffff"
                                     }
@@ -884,9 +1209,9 @@ Kirigami.ApplicationWindow {
                                 text: telemetry.readingStale
                                       ? qsTr("⚠ STALE — updated: %1").arg(telemetry.lastUpdated)
                                       : qsTr("Updated: %1").arg(telemetry.lastUpdated)
-                                font.pointSize: 8.5
+                                font.pointSize: root.fontSmallPt
                                 font.bold: telemetry.readingStale
-                                color: Qt.rgba(1, 1, 1, 0.9)
+                                color: Qt.rgba(1, 1, 1, 0.94)
                                 Layout.fillWidth: true
                                 elide: Text.ElideRight
                             }
@@ -894,13 +1219,14 @@ Kirigami.ApplicationWindow {
                             Rectangle {
                                 objectName: "heroEa1cPill"
                                 Layout.fillWidth: true
-                                implicitHeight: 24
+                                implicitHeight: Math.max(24, heroEa1cPillLabel.implicitHeight + 8)
                                 radius: 6
-                                color: Qt.rgba(0, 0, 0, 0.22)
-                                border.color: Qt.rgba(1, 1, 1, 0.28)
+                                color: Qt.rgba(0, 0, 0, 0.34)
+                                border.color: Qt.rgba(1, 1, 1, 0.48)
                                 border.width: 1
 
                                 QQC2.Label {
+                                    id: heroEa1cPillLabel
                                     anchors.left: parent.left
                                     anchors.right: parent.right
                                     anchors.verticalCenter: parent.verticalCenter
@@ -911,7 +1237,7 @@ Kirigami.ApplicationWindow {
                                         .arg(telemetry.gmiDisplay)
                                         .arg(telemetry.tirDisplay)
                                         .arg(telemetry.statsWindow)
-                                    font.pointSize: 8.5
+                                    font.pointSize: root.fontSmallPt
                                     font.bold: true
                                     color: "#ffffff"
                                     elide: Text.ElideRight
@@ -922,8 +1248,8 @@ Kirigami.ApplicationWindow {
                             QQC2.Label {
                                 visible: telemetry.alertsSnoozed
                                 text: "🔕 " + telemetry.snoozeUntilDisplay
-                                font.pointSize: 8.5
-                                color: Qt.rgba(1, 1, 1, 0.9)
+                                font.pointSize: root.fontSmallPt
+                                color: Qt.rgba(1, 1, 1, 0.95)
                                 Layout.fillWidth: true
                                 elide: Text.ElideRight
                             }
@@ -938,9 +1264,12 @@ Kirigami.ApplicationWindow {
                         Layout.preferredHeight: topCardsRow.unifiedCardHeight
                         implicitHeight: topCardsRow.unifiedCardHeight
                         radius: 14
-                        color: Kirigami.Theme.alternateBackgroundColor
-                        border.color: Qt.alpha(Kirigami.Theme.textColor, 0.15)
-                        border.width: 1
+                        color: root.cardBgColor
+                        border.color: root.cardBorderColor
+                        border.width: root.cardBorderWidth
+                        Accessible.role: Accessible.Pane
+                        Accessible.name: qsTr("CGM Sensor Overview and Quick Controls")
+                        Accessible.description: telemetry.ea1CHeadline
 
                         ColumnLayout {
                             id: detailsCol
@@ -948,14 +1277,15 @@ Kirigami.ApplicationWindow {
                             anchors.left: parent.left
                             anchors.right: parent.right
                             anchors.top: parent.top
-                            anchors.margins: 14
-                            spacing: 6
+                            anchors.margins: 12
+                            spacing: 4
 
                             RowLayout {
                                 Layout.fillWidth: true
                                 spacing: 6
                                 Kirigami.Heading {
                                     level: 3
+                                    font.pointSize: root.fontHeadingPt
                                     text: telemetry.patientName.length > 0
                                         ? qsTr("Patient: %1").arg(telemetry.patientName)
                                         : qsTr("CGM Sensor Overview")
@@ -967,7 +1297,7 @@ Kirigami.ApplicationWindow {
                                 QQC2.ToolButton {
                                     icon.name: settings.overlayDarkTheme ? "weather-clear-night" : "color-picker"
                                     text: qsTr("Overlay Dark")
-                                    font.pointSize: 9.5
+                                    font.pointSize: root.fontSubbodyPt
                                     leftPadding: 6
                                     rightPadding: 6
                                     checkable: true
@@ -981,7 +1311,7 @@ Kirigami.ApplicationWindow {
                                     text: settings.overlayVisible
                                         ? qsTr("Hide Overlay")
                                         : qsTr("Overlay")
-                                    font.pointSize: 9.5
+                                    font.pointSize: root.fontSubbodyPt
                                     leftPadding: 6
                                     rightPadding: 6
                                     onClicked: settings.updateOverlayVisible(!settings.overlayVisible)
@@ -1002,9 +1332,32 @@ Kirigami.ApplicationWindow {
                                 }
 
                                 QQC2.Label {
-                                    text: qsTr("Region: %1 • Poll: %2s").arg(settings.country.toUpperCase()).arg(settings.pollIntervalSeconds)
+                                    text: settings.dataSource === "home_assistant"
+                                        ? qsTr("Source: Home Assistant • Poll: %1s").arg(settings.pollIntervalSeconds)
+                                        : qsTr("Region: %1 • Poll: %2s").arg(settings.country.toUpperCase()).arg(settings.pollIntervalSeconds)
                                     color: Kirigami.Theme.textColor
                                     elide: Text.ElideRight
+                                }
+                            }
+
+                            RowLayout {
+                                Layout.fillWidth: true
+                                spacing: 8
+
+                                QQC2.Label {
+                                    id: sensorStatusValueLabel
+                                    objectName: "sensorStatusValueLabel"
+                                    text: qsTr("Sensor: %1").arg(telemetry.sensorStatusDisplay)
+                                    font.pointSize: root.fontCompactPt
+                                    font.bold: telemetry.sensorInWarmup || telemetry.sensorExpiringSoon
+                                    color: (telemetry.sensorInWarmup || telemetry.sensorExpiringSoon)
+                                        ? Kirigami.Theme.neutralTextColor
+                                        : Kirigami.Theme.textColor
+                                    Layout.fillWidth: true
+                                    Layout.preferredWidth: 0
+                                    elide: Text.ElideRight
+                                    Accessible.role: Accessible.StaticText
+                                    Accessible.name: qsTr("CGM Sensor Status: %1").arg(telemetry.sensorStatusDisplay)
                                 }
                             }
 
@@ -1035,7 +1388,7 @@ Kirigami.ApplicationWindow {
                                     objectName: "dashboardEa1cHeadlineLabel"
                                     text: telemetry.ea1CHeadline
                                     font.bold: true
-                                    font.pointSize: 9.5
+                                    font.pointSize: root.fontSubbodyPt
                                     color: Kirigami.Theme.textColor
                                     Layout.fillWidth: true
                                     Layout.preferredWidth: 0
@@ -1048,7 +1401,7 @@ Kirigami.ApplicationWindow {
                                 QQC2.ToolButton {
                                     text: "12h"
                                     display: QQC2.AbstractButton.TextOnly
-                                    font.pointSize: 8.5
+                                    font.pointSize: root.fontSmallPt
                                     leftPadding: 4
                                     rightPadding: 4
                                     checkable: true
@@ -1058,7 +1411,7 @@ Kirigami.ApplicationWindow {
                                 QQC2.ToolButton {
                                     text: "7d"
                                     display: QQC2.AbstractButton.TextOnly
-                                    font.pointSize: 8.5
+                                    font.pointSize: root.fontSmallPt
                                     leftPadding: 4
                                     rightPadding: 4
                                     checkable: true
@@ -1068,7 +1421,7 @@ Kirigami.ApplicationWindow {
                                 QQC2.ToolButton {
                                     text: "14d"
                                     display: QQC2.AbstractButton.TextOnly
-                                    font.pointSize: 8.5
+                                    font.pointSize: root.fontSmallPt
                                     leftPadding: 4
                                     rightPadding: 4
                                     checkable: true
@@ -1078,7 +1431,7 @@ Kirigami.ApplicationWindow {
                                 QQC2.ToolButton {
                                     text: "30d"
                                     display: QQC2.AbstractButton.TextOnly
-                                    font.pointSize: 8.5
+                                    font.pointSize: root.fontSmallPt
                                     leftPadding: 4
                                     rightPadding: 4
                                     checkable: true
@@ -1088,7 +1441,7 @@ Kirigami.ApplicationWindow {
                                 QQC2.ToolButton {
                                     text: "90d"
                                     display: QQC2.AbstractButton.TextOnly
-                                    font.pointSize: 8.5
+                                    font.pointSize: root.fontSmallPt
                                     leftPadding: 4
                                     rightPadding: 4
                                     checkable: true
@@ -1103,13 +1456,13 @@ Kirigami.ApplicationWindow {
 
                                 QQC2.Label {
                                     text: qsTr("Theme:")
-                                    font.pointSize: 9.5
+                                    font.pointSize: root.fontSubbodyPt
                                     color: Kirigami.Theme.textColor
                                 }
                                 QQC2.ToolButton {
                                     text: qsTr("System")
                                     display: QQC2.AbstractButton.TextOnly
-                                    font.pointSize: 9.5
+                                    font.pointSize: root.fontSubbodyPt
                                     leftPadding: 6
                                     rightPadding: 6
                                     checkable: true
@@ -1119,7 +1472,7 @@ Kirigami.ApplicationWindow {
                                 QQC2.ToolButton {
                                     text: qsTr("Dark")
                                     display: QQC2.AbstractButton.TextOnly
-                                    font.pointSize: 9.5
+                                    font.pointSize: root.fontSubbodyPt
                                     leftPadding: 6
                                     rightPadding: 6
                                     checkable: true
@@ -1129,7 +1482,7 @@ Kirigami.ApplicationWindow {
                                 QQC2.ToolButton {
                                     text: qsTr("Light")
                                     display: QQC2.AbstractButton.TextOnly
-                                    font.pointSize: 9.5
+                                    font.pointSize: root.fontSubbodyPt
                                     leftPadding: 6
                                     rightPadding: 6
                                     checkable: true
@@ -1141,13 +1494,13 @@ Kirigami.ApplicationWindow {
 
                                 QQC2.Label {
                                     text: qsTr("Unit:")
-                                    font.pointSize: 9.5
+                                    font.pointSize: root.fontSubbodyPt
                                     color: Kirigami.Theme.textColor
                                 }
                                 QQC2.ToolButton {
                                     text: "mg/dL"
                                     display: QQC2.AbstractButton.TextOnly
-                                    font.pointSize: 9.5
+                                    font.pointSize: root.fontSubbodyPt
                                     leftPadding: 6
                                     rightPadding: 6
                                     checkable: true
@@ -1157,7 +1510,7 @@ Kirigami.ApplicationWindow {
                                 QQC2.ToolButton {
                                     text: "mmol/L"
                                     display: QQC2.AbstractButton.TextOnly
-                                    font.pointSize: 9.5
+                                    font.pointSize: root.fontSubbodyPt
                                     leftPadding: 6
                                     rightPadding: 6
                                     checkable: true
@@ -1176,9 +1529,12 @@ Kirigami.ApplicationWindow {
                     Layout.fillWidth: true
                     Layout.fillHeight: true
                     radius: 14
-                    color: Kirigami.Theme.alternateBackgroundColor
-                    border.color: Qt.alpha(Kirigami.Theme.textColor, 0.15)
-                    border.width: 1
+                    color: root.cardBgColor
+                    border.color: root.cardBorderColor
+                    border.width: root.cardBorderWidth
+                    Accessible.role: Accessible.Chart
+                    Accessible.name: qsTr("12-Hour Continuous Glucose Trend Chart")
+                    Accessible.description: telemetry.accessibleSummary
 
                     ColumnLayout {
                         anchors.fill: parent
@@ -1190,6 +1546,7 @@ Kirigami.ApplicationWindow {
                             spacing: 8
                             Kirigami.Heading {
                                 level: 3
+                                font.pointSize: root.fontHeadingPt
                                 text: qsTr("Continuous Glucose Trend (%1)").arg(telemetry.resultUnit)
                                 color: Kirigami.Theme.textColor
                                 Layout.fillWidth: true
@@ -1213,6 +1570,17 @@ Kirigami.ApplicationWindow {
                             objectName: "glucoseCanvas"
                             Layout.fillWidth: true
                             Layout.fillHeight: true
+                            activeFocusOnTab: true
+                            Accessible.role: Accessible.Chart
+                            Accessible.name: hoveredIndex >= 0
+                                ? qsTr("CGM Chart Point %1: %2 (%3) at %4")
+                                    .arg(hoveredIndex + 1)
+                                    .arg(hoveredValueText)
+                                    .arg(hoveredStatusText)
+                                    .arg(hoveredTimeText)
+                                : qsTr("12-Hour Continuous Glucose Trend Chart (%1). Use Left and Right arrow keys to inspect individual readings.")
+                                    .arg(telemetry.targetRangeDisplay)
+                            Accessible.description: telemetry.accessibleSummary
 
                             property int hoveredIndex: -1
                             property real hoveredX: 0
@@ -1229,6 +1597,108 @@ Kirigami.ApplicationWindow {
                                     hoveredStatusText = ""
                                     hoveredTimeText = ""
                                     requestPaint()
+                                }
+                            }
+
+                            function selectPointByIndex(idx) {
+                                let pts = []
+                                try {
+                                    pts = JSON.parse(telemetry.graphPointsJson || "[]")
+                                } catch (e) {
+                                    pts = []
+                                }
+                                if (pts.length === 0 || width <= 0 || height <= 0) {
+                                    clearHover()
+                                    return
+                                }
+                                const clampedIdx = Math.max(0, Math.min(pts.length - 1, idx))
+                                const padLeft = 48
+                                const padRight = 20
+                                const padTop = 16
+                                const padBottom = 28
+                                const plotW = Math.max(10, width - padLeft - padRight)
+                                const plotH = Math.max(10, height - padTop - padBottom)
+
+                                let minMg = 50
+                                let maxMg = 260
+                                for (let i = 0; i < pts.length; ++i) {
+                                    const v = Number(pts[i].value_mg_dl || 0)
+                                    if (v > 0) {
+                                        if (v - 20 < minMg) minMg = Math.max(30, v - 20)
+                                        if (v + 20 > maxMg) maxMg = Math.min(420, v + 20)
+                                    }
+                                }
+                                const yForMg = function(mg) {
+                                    const ratio = (mg - minMg) / Math.max(1, (maxMg - minMg))
+                                    return padTop + plotH * (1.0 - Math.max(0.0, Math.min(1.0, ratio)))
+                                }
+
+                                const pt = pts[clampedIdx]
+                                const mg = Number(pt.value_mg_dl || 0)
+                                const px = pts.length === 1
+                                    ? (padLeft + plotW / 2)
+                                    : (padLeft + (plotW * clampedIdx) / (pts.length - 1))
+                                const py = yForMg(mg)
+                                const isMmol = telemetry.resultUnit === "mmol/L"
+                                const formattedVal = isMmol
+                                    ? (mg / 18.0).toFixed(1) + " mmol/L"
+                                    : Math.round(mg).toString() + " mg/dL"
+
+                                let statusLabel = qsTr("In Range")
+                                let ptColor = "#22c55e"
+                                if (mg < 70) {
+                                    statusLabel = qsTr("Low")
+                                    ptColor = "#ef4444"
+                                } else if (mg > 240) {
+                                    statusLabel = qsTr("High")
+                                    ptColor = "#f97316"
+                                } else if (mg < telemetry.targetLowMgDl || mg > telemetry.targetHighMgDl) {
+                                    statusLabel = qsTr("Out of Target")
+                                    ptColor = "#eab308"
+                                }
+
+                                hoveredIndex = clampedIdx
+                                hoveredX = px
+                                hoveredY = py
+                                hoveredValueText = formattedVal
+                                hoveredStatusText = statusLabel
+                                let timeStr = String(pt.timestamp || qsTr("Unknown time"))
+                                try {
+                                    const dMarkers = JSON.parse(medications.graphDosesJson || "[]")
+                                    for (let d = 0; d < dMarkers.length; ++d) {
+                                        const dm = dMarkers[d]
+                                        if (Math.abs(Number(dm.point_index || 0) - clampedIdx) <= 0.75) {
+                                            timeStr += " • 💊 " + String(dm.medication_name || "") + " (" + String(dm.dosage || "") + ")"
+                                        }
+                                    }
+                                } catch (e) {}
+                                hoveredTimeText = timeStr
+                                hoveredColorHex = ptColor
+                                requestPaint()
+                            }
+
+                            onActiveFocusChanged: requestPaint()
+
+                            Keys.onPressed: function(event) {
+                                let pts = []
+                                try { pts = JSON.parse(telemetry.graphPointsJson || "[]") } catch (e) {}
+                                if (event.key === Qt.Key_Left && pts.length > 0) {
+                                    const nextIdx = hoveredIndex < 0 ? (pts.length - 1) : Math.max(0, hoveredIndex - 1)
+                                    selectPointByIndex(nextIdx)
+                                    event.accepted = true
+                                } else if (event.key === Qt.Key_Right && pts.length > 0) {
+                                    const nextIdx = hoveredIndex < 0 ? (pts.length - 1) : Math.min(pts.length - 1, hoveredIndex + 1)
+                                    selectPointByIndex(nextIdx)
+                                    event.accepted = true
+                                } else if (event.key === Qt.Key_Home && pts.length > 0) {
+                                    selectPointByIndex(0)
+                                    event.accepted = true
+                                } else if (event.key === Qt.Key_End && pts.length > 0) {
+                                    selectPointByIndex(pts.length - 1)
+                                    event.accepted = true
+                                } else if (event.key === Qt.Key_Escape) {
+                                    clearHover()
+                                    event.accepted = true
                                 }
                             }
 
@@ -1438,14 +1908,14 @@ Kirigami.ApplicationWindow {
                                             objectName: "graphHoverValueLabel"
                                             text: glucoseCanvas.hoveredValueText
                                             font.bold: true
-                                            font.pointSize: 10.5
+                                            font.pointSize: root.fontSubheadingPt
                                             color: Kirigami.Theme.textColor
                                         }
 
                                         QQC2.Label {
                                             objectName: "graphHoverStatusLabel"
                                             text: "(" + glucoseCanvas.hoveredStatusText + ")"
-                                            font.pointSize: 8.5
+                                            font.pointSize: root.fontSmallPt
                                             font.bold: true
                                             color: glucoseCanvas.hoveredColorHex
                                             Layout.fillWidth: true
@@ -1456,7 +1926,7 @@ Kirigami.ApplicationWindow {
                                     QQC2.Label {
                                         objectName: "graphHoverTimeLabel"
                                         text: glucoseCanvas.hoveredTimeText
-                                        font.pointSize: 8.5
+                                        font.pointSize: root.fontSmallPt
                                         opacity: 0.85
                                         color: Kirigami.Theme.textColor
                                         Layout.fillWidth: true
@@ -1476,7 +1946,7 @@ Kirigami.ApplicationWindow {
                                     pts = []
                                 }
 
-                                const padLeft = 48
+                                const padLeft = Math.round(48 * Math.min(1.25, root.zoomScale))
                                 const padRight = 20
                                 const padTop = 16
                                 const padBottom = 28
@@ -1503,21 +1973,34 @@ Kirigami.ApplicationWindow {
                                     return padTop + plotH * (1.0 - Math.max(0.0, Math.min(1.0, ratio)))
                                 }
 
+                                // Plot area subtle background & frame in Light theme for clear contrast
+                                if (root.isLightTheme) {
+                                    ctx.fillStyle = "#f8fafc"
+                                    ctx.fillRect(padLeft, padTop, plotW, plotH)
+                                }
+                                if (glucoseCanvas.activeFocus) {
+                                    ctx.save()
+                                    ctx.strokeStyle = root.isLightTheme ? "#0284c7" : "#38bdf8"
+                                    ctx.lineWidth = 2
+                                    ctx.strokeRect(padLeft - 2, padTop - 2, plotW + 4, plotH + 4)
+                                    ctx.restore()
+                                }
+
                                 // Target range shaded band
                                 const yHigh = yForMg(telemetry.targetHighMgDl)
                                 const yLow = yForMg(telemetry.targetLowMgDl)
                                 ctx.fillStyle = root.isLightTheme
-                                    ? "rgba(34, 197, 94, 0.14)"
+                                    ? "rgba(22, 163, 74, 0.18)"
                                     : "rgba(34, 197, 94, 0.18)"
                                 ctx.fillRect(padLeft, yHigh, plotW, Math.max(2, yLow - yHigh))
 
                                 // Grid lines
                                 ctx.strokeStyle = root.isLightTheme
-                                    ? "rgba(51, 65, 85, 0.18)"
+                                    ? "rgba(30, 41, 59, 0.26)"
                                     : "rgba(148, 163, 184, 0.18)"
                                 ctx.lineWidth = 1
-                                ctx.font = "11px sans-serif"
-                                ctx.fillStyle = root.isLightTheme ? "#334155" : "#cbd5e1"
+                                ctx.font = "bold " + Math.round(11 * root.zoomScale) + "px sans-serif"
+                                ctx.fillStyle = root.isLightTheme ? "#0f172a" : "#cbd5e1"
 
                                 const steps = 4
                                 for (let s = 0; s <= steps; ++s) {
@@ -1535,7 +2018,7 @@ Kirigami.ApplicationWindow {
                                 }
 
                                 if (pts.length === 0) {
-                                    ctx.font = "13px sans-serif"
+                                    ctx.font = Math.round(13 * root.zoomScale) + "px sans-serif"
                                     ctx.fillText(
                                         "No CGM graph points received yet — click Refresh or Sample Data.",
                                         padLeft + 16,
@@ -1647,7 +2130,7 @@ Kirigami.ApplicationWindow {
 
                                     // Compact label above marker
                                     const medTag = String(dm.medication_name || "Dose")
-                                    ctx.font = "bold 10px sans-serif"
+                                    ctx.font = "bold " + Math.round(10 * root.zoomScale) + "px sans-serif"
                                     ctx.fillStyle = root.isLightTheme ? "#6b21a8" : "#e9d5ff"
                                     const labelX = Math.max(padLeft + 4, Math.min(padLeft + plotW - 72, mx - 18))
                                     const labelY = Math.max(padTop + 12, my - 11)
@@ -1691,11 +2174,12 @@ Kirigami.ApplicationWindow {
             ColumnLayout {
                 id: medicationsContentColumn
                 objectName: "medicationsContentColumn"
-                width: Math.min(Math.max(120, medicationsScrollView.width - 18), 760)
+                width: Math.min(Math.max(120, medicationsScrollView.width - 18), Math.round(760 * Math.max(1.0, root.zoomScale)))
                 spacing: 14
 
                 Kirigami.Heading {
                     level: 2
+                    font.pointSize: root.fontTitlePt
                     text: qsTr("Medications, Dose Log & Estimated A1C")
                     color: Kirigami.Theme.textColor
                     Layout.fillWidth: true
@@ -1708,9 +2192,9 @@ Kirigami.ApplicationWindow {
                     Layout.fillWidth: true
                     implicitHeight: ea1cCardCol.implicitHeight + 28
                     radius: 10
-                    color: Kirigami.Theme.alternateBackgroundColor
-                    border.color: Qt.alpha(Kirigami.Theme.textColor, 0.15)
-                    border.width: 1
+                    color: root.cardBgColor
+                    border.color: root.cardBorderColor
+                    border.width: root.cardBorderWidth
 
                     ColumnLayout {
                         id: ea1cCardCol
@@ -1726,6 +2210,7 @@ Kirigami.ApplicationWindow {
 
                             Kirigami.Heading {
                                 level: 3
+                                font.pointSize: root.fontHeadingPt
                                 text: qsTr("Estimated A1C (eA1C) & Glycemic Management Indicator (GMI)")
                                 color: Kirigami.Theme.textColor
                                 Layout.fillWidth: true
@@ -1783,7 +2268,7 @@ Kirigami.ApplicationWindow {
                         QQC2.Label {
                             text: telemetry.ea1CHeadline
                             font.bold: true
-                            font.pointSize: 11
+                            font.pointSize: root.fontHeadingPt
                             color: Kirigami.Theme.textColor
                             Layout.fillWidth: true
                             Layout.preferredWidth: 0
@@ -1801,7 +2286,7 @@ Kirigami.ApplicationWindow {
 
                         QQC2.Label {
                             text: qsTr("Formulas: ADAG eA1C (%) = (Mean mg/dL + 46.7) / 28.7 • Bergenstal GMI (%) = 3.31 + 0.02392 × Mean mg/dL.")
-                            font.pointSize: 8.5
+                            font.pointSize: root.fontSmallPt
                             opacity: 0.72
                             color: Kirigami.Theme.textColor
                             Layout.fillWidth: true
@@ -1817,9 +2302,9 @@ Kirigami.ApplicationWindow {
                     Layout.fillWidth: true
                     implicitHeight: medsScheduleCol.implicitHeight + 28
                     radius: 10
-                    color: Kirigami.Theme.alternateBackgroundColor
-                    border.color: Qt.alpha(Kirigami.Theme.textColor, 0.15)
-                    border.width: 1
+                    color: root.cardBgColor
+                    border.color: root.cardBorderColor
+                    border.width: root.cardBorderWidth
 
                     ColumnLayout {
                         id: medsScheduleCol
@@ -1835,6 +2320,7 @@ Kirigami.ApplicationWindow {
 
                             Kirigami.Heading {
                                 level: 3
+                                font.pointSize: root.fontHeadingPt
                                 text: qsTr("Scheduled Medications & Quick Dose Checklist")
                                 color: Kirigami.Theme.textColor
                                 Layout.fillWidth: true
@@ -1870,10 +2356,10 @@ Kirigami.ApplicationWindow {
                                 radius: 8
                                 color: isEditingThis
                                     ? Qt.alpha(Kirigami.Theme.highlightColor, 0.14)
-                                    : Qt.alpha(Kirigami.Theme.backgroundColor, 0.55)
+                                    : root.subCardBgColor
                                 border.color: isEditingThis
                                     ? Kirigami.Theme.highlightColor
-                                    : Qt.alpha(Kirigami.Theme.textColor, 0.12)
+                                    : root.subCardBorderColor
                                 border.width: isEditingThis ? 1.5 : 1
 
                                 RowLayout {
@@ -1906,7 +2392,7 @@ Kirigami.ApplicationWindow {
                                                         ? (" (" + String(modelData.scheduled_time) + ")")
                                                         : ""))
                                                 + " • " + String(modelData.status_label || "")
-                                            font.pointSize: 8.5
+                                            font.pointSize: root.fontSmallPt
                                             opacity: 0.82
                                             color: Kirigami.Theme.textColor
                                             Layout.fillWidth: true
@@ -1929,7 +2415,7 @@ Kirigami.ApplicationWindow {
                                         border.color: pillColor
                                         border.width: 1
                                         implicitWidth: medStatusLabel.implicitWidth + 12
-                                        implicitHeight: 22
+                                        implicitHeight: Math.max(22, medStatusLabel.implicitHeight + 6)
 
                                         QQC2.Label {
                                             id: medStatusLabel
@@ -1942,7 +2428,7 @@ Kirigami.ApplicationWindow {
                                                 if (c === "as_needed") return qsTr("As Needed")
                                                 return qsTr("Scheduled")
                                             }
-                                            font.pointSize: 8
+                                            font.pointSize: root.fontCaptionPt
                                             font.bold: true
                                             color: Kirigami.Theme.textColor
                                         }
@@ -1970,6 +2456,7 @@ Kirigami.ApplicationWindow {
                                         display: QQC2.AbstractButton.IconOnly
                                         QQC2.ToolTip.visible: hovered
                                         QQC2.ToolTip.text: qsTr("Edit medication dosage or schedule")
+                                        Accessible.name: qsTr("Edit medication %1").arg(String(modelData.name || ""))
                                         onClicked: root.startEditingMedication(modelData)
                                     }
 
@@ -1978,6 +2465,7 @@ Kirigami.ApplicationWindow {
                                         display: QQC2.AbstractButton.IconOnly
                                         QQC2.ToolTip.visible: hovered
                                         QQC2.ToolTip.text: qsTr("Remove medication")
+                                        Accessible.name: qsTr("Remove medication %1").arg(String(modelData.name || ""))
                                         onClicked: {
                                             const delId = String(modelData.id || "")
                                             if (root.editingMedId === delId) {
@@ -1998,9 +2486,9 @@ Kirigami.ApplicationWindow {
                     Layout.fillWidth: true
                     implicitHeight: addMedCol.implicitHeight + 28
                     radius: 10
-                    color: Kirigami.Theme.alternateBackgroundColor
-                    border.color: Qt.alpha(Kirigami.Theme.textColor, 0.15)
-                    border.width: 1
+                    color: root.cardBgColor
+                    border.color: root.cardBorderColor
+                    border.width: root.cardBorderWidth
 
                     ColumnLayout {
                         id: addMedCol
@@ -2012,6 +2500,7 @@ Kirigami.ApplicationWindow {
 
                         Kirigami.Heading {
                             level: 3
+                            font.pointSize: root.fontHeadingPt
                             text: root.editingMedId.length > 0
                                 ? qsTr("Edit Medication Dosage or Schedule")
                                 : qsTr("Add Scheduled or As-Needed Medication")
@@ -2039,6 +2528,7 @@ Kirigami.ApplicationWindow {
                                     objectName: "medNameField"
                                     Layout.fillWidth: true
                                     placeholderText: qsTr("e.g. Metformin ER, Lantus, Lispro")
+                                    Accessible.name: qsTr("Medication Name")
                                 }
                             }
 
@@ -2056,6 +2546,7 @@ Kirigami.ApplicationWindow {
                                     objectName: "medDosageField"
                                     Layout.fillWidth: true
                                     placeholderText: qsTr("e.g. 500 mg, 18 units")
+                                    Accessible.name: qsTr("Medication Dosage")
                                 }
                             }
                         }
@@ -2077,6 +2568,7 @@ Kirigami.ApplicationWindow {
                                     id: medScheduleCombo
                                     objectName: "medScheduleCombo"
                                     Layout.fillWidth: true
+                                    Accessible.name: qsTr("Medication Schedule")
                                     model: [
                                         { label: qsTr("Once Daily"), value: "daily" },
                                         { label: qsTr("Twice Daily"), value: "twice_daily" },
@@ -2111,6 +2603,7 @@ Kirigami.ApplicationWindow {
                                     id: medWeekdayCombo
                                     objectName: "medWeekdayCombo"
                                     Layout.fillWidth: true
+                                    Accessible.name: qsTr("Medication Day of Week")
                                     model: [
                                         { label: qsTr("Monday"), value: 0 },
                                         { label: qsTr("Tuesday"), value: 1 },
@@ -2143,6 +2636,7 @@ Kirigami.ApplicationWindow {
                                     Layout.fillWidth: true
                                     text: "08:00"
                                     placeholderText: qsTr("08:00 or 08:00, 20:00")
+                                    Accessible.name: qsTr("Scheduled Medication Times (24-hour HH:MM)")
                                 }
                             }
                         }
@@ -2198,9 +2692,9 @@ Kirigami.ApplicationWindow {
                     Layout.fillWidth: true
                     implicitHeight: doseHistoryCol.implicitHeight + 28
                     radius: 10
-                    color: Kirigami.Theme.alternateBackgroundColor
-                    border.color: Qt.alpha(Kirigami.Theme.textColor, 0.15)
-                    border.width: 1
+                    color: root.cardBgColor
+                    border.color: root.cardBorderColor
+                    border.width: root.cardBorderWidth
 
                     ColumnLayout {
                         id: doseHistoryCol
@@ -2212,6 +2706,7 @@ Kirigami.ApplicationWindow {
 
                         Kirigami.Heading {
                             level: 3
+                            font.pointSize: root.fontHeadingPt
                             text: qsTr("Recent Dose History (%1 logged)").arg(medications.medicationDosesCount)
                             color: Kirigami.Theme.textColor
                             Layout.fillWidth: true
@@ -2250,7 +2745,7 @@ Kirigami.ApplicationWindow {
 
                                 QQC2.Label {
                                     text: String(modelData.taken_at_display || "") + (modelData.glucose_mg_dl_at_dose ? (" • " + Math.round(Number(modelData.glucose_mg_dl_at_dose)) + " mg/dL") : "")
-                                    font.pointSize: 8.5
+                                    font.pointSize: root.fontSmallPt
                                     opacity: 0.82
                                     color: Kirigami.Theme.textColor
                                     elide: Text.ElideRight
@@ -2261,6 +2756,7 @@ Kirigami.ApplicationWindow {
                                     display: QQC2.AbstractButton.IconOnly
                                     QQC2.ToolTip.visible: hovered
                                     QQC2.ToolTip.text: qsTr("Remove dose log entry")
+                                    Accessible.name: qsTr("Remove dose log entry for %1").arg(String(modelData.medication_name || ""))
                                     onClicked: medications.removeMedicationDose(String(modelData.id || ""))
                                 }
                             }
@@ -2300,11 +2796,12 @@ Kirigami.ApplicationWindow {
             ColumnLayout {
                 id: generalContentColumn
                 objectName: "generalContentColumn"
-                width: Math.min(Math.max(120, generalScrollView.width - 18), 760)
+                width: Math.min(Math.max(120, generalScrollView.width - 18), Math.round(760 * Math.max(1.0, root.zoomScale)))
                 spacing: 14
 
                 Kirigami.Heading {
                     level: 2
+                    font.pointSize: root.fontTitlePt
                     text: qsTr("General, Appearance & System Tray Settings")
                     color: Kirigami.Theme.textColor
                     Layout.fillWidth: true
@@ -2316,9 +2813,9 @@ Kirigami.ApplicationWindow {
                     Layout.fillWidth: true
                     implicitHeight: trayGroupCol.implicitHeight + 28
                     radius: 10
-                    color: Kirigami.Theme.alternateBackgroundColor
-                    border.color: Qt.alpha(Kirigami.Theme.textColor, 0.15)
-                    border.width: 1
+                    color: root.cardBgColor
+                    border.color: root.cardBorderColor
+                    border.width: root.cardBorderWidth
 
                     ColumnLayout {
                         id: trayGroupCol
@@ -2330,6 +2827,7 @@ Kirigami.ApplicationWindow {
 
                         Kirigami.Heading {
                             level: 3
+                            font.pointSize: root.fontHeadingPt
                             text: qsTr("System Tray & Startup Behavior")
                             color: Kirigami.Theme.textColor
                             Layout.fillWidth: true
@@ -2371,9 +2869,9 @@ Kirigami.ApplicationWindow {
                     Layout.fillWidth: true
                     implicitHeight: displayGroupCol.implicitHeight + 28
                     radius: 10
-                    color: Kirigami.Theme.alternateBackgroundColor
-                    border.color: Qt.alpha(Kirigami.Theme.textColor, 0.15)
-                    border.width: 1
+                    color: root.cardBgColor
+                    border.color: root.cardBorderColor
+                    border.width: root.cardBorderWidth
 
                     ColumnLayout {
                         id: displayGroupCol
@@ -2385,6 +2883,7 @@ Kirigami.ApplicationWindow {
 
                         Kirigami.Heading {
                             level: 3
+                            font.pointSize: root.fontHeadingPt
                             text: qsTr("Theme, Units & Desktop Overlay")
                             color: Kirigami.Theme.textColor
                             Layout.fillWidth: true
@@ -2397,12 +2896,15 @@ Kirigami.ApplicationWindow {
                             spacing: 12
                             QQC2.Label {
                                 text: qsTr("Color Theme:")
-                                Layout.preferredWidth: 190
+                                wrapMode: Text.WordWrap
+                                Layout.minimumWidth: Math.min(220, implicitWidth)
+                                Layout.preferredWidth: Math.max(220, Math.min(280, implicitWidth))
                                 color: Kirigami.Theme.textColor
                             }
                             QQC2.ComboBox {
                                 Layout.fillWidth: true
                                 Layout.maximumWidth: 320
+                                Accessible.name: qsTr("Color Theme")
                                 model: [
                                     { label: qsTr("System (Follow KDE Plasma)"), value: "system" },
                                     { label: qsTr("Dark Mode (Breeze Dark)"), value: "dark" },
@@ -2419,13 +2921,60 @@ Kirigami.ApplicationWindow {
                             Layout.fillWidth: true
                             spacing: 12
                             QQC2.Label {
+                                text: qsTr("UI Zoom Scale (%1%):").arg(settings.uiZoomPercent)
+                                wrapMode: Text.WordWrap
+                                Layout.minimumWidth: Math.min(220, implicitWidth)
+                                Layout.preferredWidth: Math.max(220, Math.min(280, implicitWidth))
+                                color: Kirigami.Theme.textColor
+                            }
+                            QQC2.Button {
+                                id: settingsZoomOutBtn
+                                objectName: "settingsZoomOutBtn"
+                                text: "−"
+                                enabled: settings.uiZoomPercent > 75
+                                Accessible.name: qsTr("Zoom Out UI (Ctrl+-)")
+                                onClicked: settings.zoomOut()
+                            }
+                            QQC2.Button {
+                                id: settingsZoomResetBtn
+                                objectName: "settingsZoomResetBtn"
+                                text: settings.uiZoomPercent + "% (100%)"
+                                Accessible.name: qsTr("Reset UI Zoom to 100 percent (Ctrl+0)")
+                                onClicked: settings.resetZoom()
+                            }
+                            QQC2.Button {
+                                id: settingsZoomInBtn
+                                objectName: "settingsZoomInBtn"
+                                text: "+"
+                                enabled: settings.uiZoomPercent < 175
+                                Accessible.name: qsTr("Zoom In UI (Ctrl++)")
+                                onClicked: settings.zoomIn()
+                            }
+                        }
+
+                        QQC2.Switch {
+                            id: highContrastSwitch
+                            objectName: "highContrastSwitch"
+                            text: qsTr("High Contrast Accessibility Mode (WCAG AAA reinforced borders & contrast)")
+                            checked: settings.highContrastMode
+                            onToggled: settings.updateHighContrastMode(checked)
+                            Layout.fillWidth: true
+                        }
+
+                        RowLayout {
+                            Layout.fillWidth: true
+                            spacing: 12
+                            QQC2.Label {
                                 text: qsTr("Glucose Unit:")
-                                Layout.preferredWidth: 190
+                                wrapMode: Text.WordWrap
+                                Layout.minimumWidth: Math.min(220, implicitWidth)
+                                Layout.preferredWidth: Math.max(220, Math.min(280, implicitWidth))
                                 color: Kirigami.Theme.textColor
                             }
                             QQC2.ComboBox {
                                 Layout.fillWidth: true
                                 Layout.maximumWidth: 320
+                                Accessible.name: qsTr("Glucose Unit")
                                 model: ["mg/dL", "mmol/L"]
                                 currentIndex: telemetry.resultUnit === "mmol/L" ? 1 : 0
                                 onActivated: settings.updateResultUnit(currentText)
@@ -2437,12 +2986,15 @@ Kirigami.ApplicationWindow {
                             spacing: 12
                             QQC2.Label {
                                 text: qsTr("Window Mode:")
-                                Layout.preferredWidth: 190
+                                wrapMode: Text.WordWrap
+                                Layout.minimumWidth: Math.min(220, implicitWidth)
+                                Layout.preferredWidth: Math.max(220, Math.min(280, implicitWidth))
                                 color: Kirigami.Theme.textColor
                             }
                             QQC2.ComboBox {
                                 Layout.fillWidth: true
                                 Layout.maximumWidth: 320
+                                Accessible.name: qsTr("Window Mode")
                                 model: [
                                     { label: qsTr("Standard Windowed"), value: "windowed" },
                                     { label: qsTr("Floating Desktop Overlay"), value: "overlay" },
@@ -2474,22 +3026,28 @@ Kirigami.ApplicationWindow {
                         }
 
                         RowLayout {
+                            objectName: "overlayOpacityRow"
                             Layout.fillWidth: true
                             spacing: 12
                             QQC2.Label {
+                                objectName: "overlayOpacityLabel"
                                 text: qsTr("Desktop Overlay Opacity (%1%):").arg(settings.overlayOpacityPercent)
-                                Layout.preferredWidth: 190
+                                wrapMode: Text.WordWrap
+                                Layout.minimumWidth: Math.min(220, implicitWidth)
+                                Layout.preferredWidth: Math.max(220, Math.min(280, implicitWidth))
                                 color: Kirigami.Theme.textColor
                             }
                             QQC2.Slider {
                                 id: overlayOpacitySlider
                                 objectName: "overlayOpacitySlider"
                                 Layout.fillWidth: true
+                                Layout.minimumWidth: 110
                                 Layout.maximumWidth: 220
                                 from: 20
                                 to: 100
                                 stepSize: 5
                                 value: settings.overlayOpacityPercent
+                                Accessible.name: qsTr("Desktop Overlay Opacity Slider")
                                 onMoved: settings.updateOverlayOpacityPercent(Math.round(value))
                             }
                             QQC2.SpinBox {
@@ -2499,6 +3057,7 @@ Kirigami.ApplicationWindow {
                                 to: 100
                                 stepSize: 5
                                 value: settings.overlayOpacityPercent
+                                Accessible.name: qsTr("Desktop Overlay Opacity Percentage")
                                 onValueModified: settings.updateOverlayOpacityPercent(value)
                             }
                         }
@@ -2508,7 +3067,9 @@ Kirigami.ApplicationWindow {
                             spacing: 12
                             QQC2.Label {
                                 text: qsTr("Polling Interval (seconds):")
-                                Layout.preferredWidth: 190
+                                wrapMode: Text.WordWrap
+                                Layout.minimumWidth: Math.min(220, implicitWidth)
+                                Layout.preferredWidth: Math.max(220, Math.min(280, implicitWidth))
                                 color: Kirigami.Theme.textColor
                             }
                             QQC2.SpinBox {
@@ -2516,6 +3077,7 @@ Kirigami.ApplicationWindow {
                                 to: 3600
                                 stepSize: 15
                                 value: settings.pollIntervalSeconds
+                                Accessible.name: qsTr("Polling Interval in Seconds")
                                 onValueModified: settings.updatePollIntervalSeconds(value)
                             }
                         }
@@ -2566,6 +3128,186 @@ Kirigami.ApplicationWindow {
                         }
                     }
                 }
+
+                // Home Assistant LibreLink Integration Settings Card
+                Rectangle {
+                    id: haIntegrationCard
+                    objectName: "haIntegrationCard"
+                    Layout.fillWidth: true
+                    implicitHeight: haIntegrationCol.implicitHeight + 28
+                    radius: 10
+                    color: root.cardBgColor
+                    border.color: root.cardBorderColor
+                    border.width: root.cardBorderWidth
+
+                    ColumnLayout {
+                        id: haIntegrationCol
+                        anchors.left: parent.left
+                        anchors.right: parent.right
+                        anchors.top: parent.top
+                        anchors.margins: 14
+                        spacing: 10
+
+                        Kirigami.Heading {
+                            level: 3
+                            font.pointSize: root.fontHeadingPt
+                            text: qsTr("Data Source & Home Assistant LibreLink Integration")
+                            color: Kirigami.Theme.textColor
+                            Layout.fillWidth: true
+                            Layout.preferredWidth: 0
+                            wrapMode: Text.WordWrap
+                        }
+
+                        QQC2.Label {
+                            text: qsTr("Choose whether to poll Abbott LibreLinkUp Cloud directly or pull CGM readings, trend arrows, and 12-hour history from your Home Assistant LibreLink integration.")
+                            wrapMode: Text.WordWrap
+                            opacity: 0.85
+                            color: Kirigami.Theme.textColor
+                            Layout.fillWidth: true
+                            Layout.preferredWidth: 0
+                        }
+
+                        RowLayout {
+                            Layout.fillWidth: true
+                            spacing: 12
+                            QQC2.Label {
+                                text: qsTr("Telemetry Source:")
+                                wrapMode: Text.WordWrap
+                                Layout.minimumWidth: Math.min(220, implicitWidth)
+                                Layout.preferredWidth: Math.max(220, Math.min(280, implicitWidth))
+                                color: Kirigami.Theme.textColor
+                            }
+                            QQC2.ComboBox {
+                                id: settingsDataSourceCombo
+                                objectName: "settingsDataSourceCombo"
+                                Layout.fillWidth: true
+                                Layout.maximumWidth: 360
+                                Accessible.name: qsTr("Telemetry Data Source")
+                                model: [
+                                    { label: qsTr("LibreLinkUp Cloud API"), value: "librelinkup" },
+                                    { label: qsTr("Home Assistant (LibreLink Integration)"), value: "home_assistant" }
+                                ]
+                                textRole: "label"
+                                valueRole: "value"
+                                currentIndex: settings.dataSource === "home_assistant" ? 1 : 0
+                                onActivated: settings.updateDataSource(currentValue)
+                            }
+                        }
+
+                        RowLayout {
+                            Layout.fillWidth: true
+                            spacing: 12
+                            QQC2.Label {
+                                text: qsTr("Home Assistant URL:")
+                                wrapMode: Text.WordWrap
+                                Layout.minimumWidth: Math.min(220, implicitWidth)
+                                Layout.preferredWidth: Math.max(220, Math.min(280, implicitWidth))
+                                color: Kirigami.Theme.textColor
+                            }
+                            QQC2.TextField {
+                                id: settingsHaUrlField
+                                objectName: "settingsHaUrlField"
+                                Layout.fillWidth: true
+                                placeholderText: qsTr("https://haos.dingo-dory.ts.net")
+                                text: settings.haUrl
+                                Accessible.name: qsTr("Home Assistant URL")
+                            }
+                        }
+
+                        RowLayout {
+                            Layout.fillWidth: true
+                            spacing: 12
+                            QQC2.Label {
+                                text: qsTr("Long-Lived Access Token:")
+                                wrapMode: Text.WordWrap
+                                Layout.minimumWidth: Math.min(220, implicitWidth)
+                                Layout.preferredWidth: Math.max(220, Math.min(280, implicitWidth))
+                                color: Kirigami.Theme.textColor
+                            }
+                            QQC2.TextField {
+                                id: settingsHaTokenField
+                                objectName: "settingsHaTokenField"
+                                Layout.fillWidth: true
+                                echoMode: TextInput.Password
+                                placeholderText: settings.haTokenConfigured
+                                    ? qsTr("Encrypted in AES-256-GCM vault (leave blank to keep)")
+                                    : qsTr("Paste Home Assistant Long-Lived Access Token")
+                                Accessible.name: qsTr("Home Assistant Long-Lived Access Token")
+                            }
+                        }
+
+                        RowLayout {
+                            Layout.fillWidth: true
+                            spacing: 12
+                            QQC2.Label {
+                                text: qsTr("Sensor Entity ID (optional):")
+                                wrapMode: Text.WordWrap
+                                Layout.minimumWidth: Math.min(220, implicitWidth)
+                                Layout.preferredWidth: Math.max(220, Math.min(280, implicitWidth))
+                                color: Kirigami.Theme.textColor
+                            }
+                            QQC2.TextField {
+                                id: settingsHaEntityField
+                                objectName: "settingsHaEntityField"
+                                Layout.fillWidth: true
+                                placeholderText: qsTr("Auto-discover (e.g. sensor.russell_milliner_measurement)")
+                                text: settings.haSensorEntityId
+                                Accessible.name: qsTr("Home Assistant Glucose Sensor Entity ID")
+                            }
+                        }
+
+                        QQC2.Switch {
+                            id: haSyncMedicationsSwitch
+                            objectName: "haSyncMedicationsSwitch"
+                            text: qsTr("Two-way Medication & Dose Sync with Home Assistant (sensor.librelinkup_medications)")
+                            checked: settings.haSyncMedications
+                            onToggled: settings.updateHaSyncMedications(checked)
+                            Layout.fillWidth: true
+                            Accessible.name: qsTr("Two-way Medication and Dose Sync with Home Assistant")
+                        }
+
+                        QQC2.Switch {
+                            id: haSyncSnoozeSwitch
+                            objectName: "haSyncSnoozeSwitch"
+                            text: qsTr("Cross-Device Alert Snooze Synchronization via Home Assistant (sensor.librelinkup_alert_snooze)")
+                            checked: settings.haSyncSnooze
+                            onToggled: settings.updateHaSyncSnooze(checked)
+                            Layout.fillWidth: true
+                            Accessible.name: qsTr("Cross-Device Alert Snooze Synchronization with Home Assistant")
+                        }
+
+                        RowLayout {
+                            Layout.fillWidth: true
+                            spacing: 10
+
+                            QQC2.Button {
+                                objectName: "saveHaConfigButton"
+                                highlighted: true
+                                icon.name: "network-connect"
+                                text: telemetry.busy
+                                    ? qsTr("Connecting...")
+                                    : qsTr("Save & Connect Home Assistant")
+                                enabled: !telemetry.busy
+                                onClicked: {
+                                    telemetry.saveHomeAssistantConfig(
+                                        settingsDataSourceCombo.currentValue,
+                                        settingsHaUrlField.text,
+                                        settingsHaTokenField.text,
+                                        settingsHaEntityField.text
+                                    )
+                                    settingsHaTokenField.text = ""
+                                }
+                            }
+
+                            QQC2.Button {
+                                objectName: "autoFillHaEnvButton"
+                                icon.name: "document-import"
+                                text: qsTr("Import ~/.config/home-assistant.env")
+                                onClicked: telemetry.autoFillHomeAssistantFromEnv()
+                            }
+                        }
+                    }
+                }
             }
         }
 
@@ -2599,11 +3341,12 @@ Kirigami.ApplicationWindow {
             ColumnLayout {
                 id: alertsContentColumn
                 objectName: "alertsContentColumn"
-                width: Math.min(Math.max(120, alertsScrollView.width - 18), 760)
+                width: Math.min(Math.max(120, alertsScrollView.width - 18), Math.round(760 * Math.max(1.0, root.zoomScale)))
                 spacing: 14
 
                 Kirigami.Heading {
                     level: 2
+                    font.pointSize: root.fontTitlePt
                     text: qsTr("Glucose Alerts & Custom Thresholds")
                     color: Kirigami.Theme.textColor
                     Layout.fillWidth: true
@@ -2615,9 +3358,9 @@ Kirigami.ApplicationWindow {
                     Layout.fillWidth: true
                     implicitHeight: alertsGroupCol.implicitHeight + 28
                     radius: 10
-                    color: Kirigami.Theme.alternateBackgroundColor
-                    border.color: Qt.alpha(Kirigami.Theme.textColor, 0.15)
-                    border.width: 1
+                    color: root.cardBgColor
+                    border.color: root.cardBorderColor
+                    border.width: root.cardBorderWidth
 
                     ColumnLayout {
                         id: alertsGroupCol
@@ -2666,6 +3409,7 @@ Kirigami.ApplicationWindow {
                                 Layout.fillWidth: true
                                 text: settings.customSoundPath
                                 placeholderText: qsTr("/path/to/custom-alert.mp3")
+                                Accessible.name: qsTr("Custom Alert Audio File Path")
                             }
 
                             QQC2.Button {
@@ -2697,6 +3441,7 @@ Kirigami.ApplicationWindow {
                                     from: 40
                                     to: 180
                                     value: Math.round(settings.customTargetLow)
+                                    Accessible.name: qsTr("Custom Low Alert Threshold in mg/dL")
                                 }
                             }
 
@@ -2710,6 +3455,7 @@ Kirigami.ApplicationWindow {
                                     from: 100
                                     to: 400
                                     value: Math.round(settings.customTargetHigh)
+                                    Accessible.name: qsTr("Custom High Alert Threshold in mg/dL")
                                 }
                             }
                         }
@@ -2735,6 +3481,7 @@ Kirigami.ApplicationWindow {
                                 from: 40
                                 to: 100
                                 value: Math.round(settings.urgentLowMgDl)
+                                Accessible.name: qsTr("Urgent Low Alert Threshold in mg/dL")
                             }
 
                             QQC2.Label {
@@ -2748,6 +3495,7 @@ Kirigami.ApplicationWindow {
                                 from: 1
                                 to: 240
                                 value: settings.alertRepeatMinutes
+                                Accessible.name: qsTr("Repeat Alerts Interval in Minutes")
                             }
 
                             QQC2.Switch {
@@ -2761,6 +3509,23 @@ Kirigami.ApplicationWindow {
                                 from: 5
                                 to: 120
                                 value: settings.staleAfterMinutes
+                                Accessible.name: qsTr("Stale Sensor Reading Threshold in Minutes")
+                            }
+
+                            QQC2.Label {
+                                text: qsTr("Sensor Expiry Warning (hours remaining, 0 = off)")
+                                color: Kirigami.Theme.textColor
+                                Layout.fillWidth: true
+                                wrapMode: Text.WordWrap
+                            }
+                            QQC2.SpinBox {
+                                id: sensorExpiryAlertSpin
+                                objectName: "sensorExpiryAlertSpin"
+                                from: 0
+                                to: 168
+                                value: settings.sensorExpiryAlertHours
+                                onValueModified: settings.updateSensorExpiryAlertHours(value)
+                                Accessible.name: qsTr("Sensor Expiry Warning Threshold in Hours")
                             }
                         }
 
@@ -2814,6 +3579,7 @@ Kirigami.ApplicationWindow {
                                 icon.name: "document-save"
                                 text: qsTr("Save Alert Settings")
                                 onClicked: {
+                                    settings.updateSensorExpiryAlertHours(sensorExpiryAlertSpin.value)
                                     settings.saveAdvancedAlertSettings(
                                         urgentLowSpin.value,
                                         alertRepeatSpin.value,
@@ -2874,11 +3640,12 @@ Kirigami.ApplicationWindow {
             ColumnLayout {
                 id: accountContentColumn
                 objectName: "accountContentColumn"
-                width: Math.min(Math.max(120, accountScrollView.width - 18), 760)
+                width: Math.min(Math.max(120, accountScrollView.width - 18), Math.round(760 * Math.max(1.0, root.zoomScale)))
                 spacing: 14
 
                 Kirigami.Heading {
                     level: 2
+                    font.pointSize: root.fontTitlePt
                     text: qsTr("Account & Encrypted Credential Vault")
                     color: Kirigami.Theme.textColor
                     Layout.fillWidth: true
@@ -2890,9 +3657,9 @@ Kirigami.ApplicationWindow {
                     Layout.fillWidth: true
                     implicitHeight: accountCol.implicitHeight + 28
                     radius: 10
-                    color: Kirigami.Theme.alternateBackgroundColor
-                    border.color: Qt.alpha(Kirigami.Theme.textColor, 0.15)
-                    border.width: 1
+                    color: root.cardBgColor
+                    border.color: root.cardBorderColor
+                    border.width: root.cardBorderWidth
 
                     ColumnLayout {
                         id: accountCol
@@ -2934,6 +3701,7 @@ Kirigami.ApplicationWindow {
                             QQC2.ComboBox {
                                 id: settingsRegionCombo
                                 Layout.preferredWidth: 230
+                                Accessible.name: qsTr("LibreLinkUp Regional Endpoint")
                                 model: root.regionOptions
                                 textRole: "label"
                                 valueRole: "value"

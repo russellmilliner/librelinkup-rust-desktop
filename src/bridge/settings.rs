@@ -42,6 +42,8 @@ impl Default for SettingsControllerRust {
         // Valid empty values only; `initialize()` -> `sync()` fills them from shared state.
         Self {
             theme_mode: QString::from("system"),
+            ui_zoom_percent: 100,
+            high_contrast_mode: false,
             country: QString::from("us"),
             language: QString::from("en"),
             window_mode: QString::from("windowed"),
@@ -75,6 +77,13 @@ impl Default for SettingsControllerRust {
             custom_target_high: 180.0,
             remember_password: false,
             credentials_vault_path: QString::default(),
+            data_source: QString::from("librelinkup"),
+            ha_url: QString::default(),
+            ha_sensor_entity_id: QString::default(),
+            ha_token_configured: false,
+            ha_sync_medications: true,
+            ha_sync_snooze: true,
+            sensor_expiry_alert_hours: 24,
             urgent_low_mg_dl: 55.0,
             alert_repeat_minutes: 15,
             stale_after_minutes: 15,
@@ -139,6 +148,10 @@ impl qobject::SettingsController {
                 s.custom_target_high,
                 s.remember_password,
                 s.credentials_vault_path.clone(),
+                s.data_source.clone(),
+                s.ha_url.clone(),
+                s.ha_sensor_entity_id.clone(),
+                s.ha_token_configured,
                 s.urgent_low_mg_dl,
                 s.alert_repeat_minutes,
                 s.stale_after_minutes,
@@ -190,6 +203,10 @@ impl qobject::SettingsController {
             custom_high,
             remember_password,
             vault_path,
+            data_source,
+            ha_url,
+            ha_sensor_entity_id,
+            ha_token_configured,
             urgent_low,
             repeat_minutes,
             stale_after,
@@ -305,6 +322,20 @@ impl qobject::SettingsController {
             credentials_vault_path,
             vault_path
         );
+        sync_str!(self, set_data_source, data_source, data_source);
+        sync_str!(self, set_ha_url, ha_url, ha_url);
+        sync_str!(
+            self,
+            set_ha_sensor_entity_id,
+            ha_sensor_entity_id,
+            ha_sensor_entity_id
+        );
+        sync_val!(
+            self,
+            set_ha_token_configured,
+            ha_token_configured,
+            ha_token_configured
+        );
         sync_val!(self, set_urgent_low_mg_dl, urgent_low_mg_dl, urgent_low);
         sync_val!(
             self,
@@ -349,6 +380,35 @@ impl qobject::SettingsController {
         sync_val!(self, set_installing_update, installing_update, installing);
         sync_str!(self, set_event_log_json, event_log_json, event_json);
         sync_val!(self, set_event_log_count, event_log_count, event_count);
+        let (ui_zoom, high_contrast, ha_sync_meds, ha_sync_snz, sensor_exp_hrs) = with_state(|s| {
+            (
+                s.ui_zoom_percent,
+                s.high_contrast_mode,
+                s.ha_sync_medications,
+                s.ha_sync_snooze,
+                s.sensor_expiry_alert_hours,
+            )
+        });
+        sync_val!(self, set_ui_zoom_percent, ui_zoom_percent, ui_zoom);
+        sync_val!(
+            self,
+            set_high_contrast_mode,
+            high_contrast_mode,
+            high_contrast
+        );
+        sync_val!(
+            self,
+            set_ha_sync_medications,
+            ha_sync_medications,
+            ha_sync_meds
+        );
+        sync_val!(self, set_ha_sync_snooze, ha_sync_snooze, ha_sync_snz);
+        sync_val!(
+            self,
+            set_sensor_expiry_alert_hours,
+            sensor_expiry_alert_hours,
+            sensor_exp_hrs
+        );
     }
 
     pub fn update_theme_mode(mut self: Pin<&mut Self>, mode: QString) {
@@ -361,6 +421,99 @@ impl qobject::SettingsController {
         with_state(|s| s.theme_mode = valid.clone());
         let _ = with_state(|s| ops::persist_settings(s));
         log_info("SYSTEM", format!("Switched color theme mode to '{valid}'."));
+        self.as_mut().sync();
+    }
+
+    pub fn update_ui_zoom_percent(mut self: Pin<&mut Self>, zoom_percent: i32) {
+        let clamped = crate::models::clamp_ui_zoom_percent(zoom_percent);
+        with_state(|s| s.ui_zoom_percent = clamped);
+        let _ = with_state(|s| ops::persist_settings(s));
+        log_info("SYSTEM", format!("Set UI zoom scale to {clamped}%."));
+        self.as_mut().sync();
+    }
+
+    pub fn zoom_in(mut self: Pin<&mut Self>) {
+        let next = with_state(|s| crate::models::clamp_ui_zoom_percent(s.ui_zoom_percent + 10));
+        self.as_mut().update_ui_zoom_percent(next);
+    }
+
+    pub fn zoom_out(mut self: Pin<&mut Self>) {
+        let next = with_state(|s| crate::models::clamp_ui_zoom_percent(s.ui_zoom_percent - 10));
+        self.as_mut().update_ui_zoom_percent(next);
+    }
+
+    pub fn reset_zoom(mut self: Pin<&mut Self>) {
+        self.as_mut().update_ui_zoom_percent(100);
+    }
+
+    pub fn update_high_contrast_mode(mut self: Pin<&mut Self>, enabled: bool) {
+        with_state(|s| s.high_contrast_mode = enabled);
+        let _ = with_state(|s| ops::persist_settings(s));
+        log_info(
+            "SYSTEM",
+            format!("Set high contrast accessibility mode to {enabled}."),
+        );
+        self.as_mut().sync();
+    }
+
+    pub fn update_data_source(mut self: Pin<&mut Self>, data_source: QString) {
+        let clean = if data_source
+            .to_string()
+            .trim()
+            .eq_ignore_ascii_case("home_assistant")
+        {
+            "home_assistant".to_string()
+        } else {
+            "librelinkup".to_string()
+        };
+        with_state(|s| {
+            s.data_source = clean.clone();
+            if let Some(creds) = s.creds.as_ref() {
+                s.logged_in = creds.has_valid_session_for(&s.data_source, &s.ha_url);
+            }
+        });
+        let _ = with_state(|s| ops::persist_settings(s));
+        log_info("API", format!("Set telemetry data source to '{clean}'."));
+        self.as_mut().sync();
+    }
+
+    pub fn update_ha_sync_medications(mut self: Pin<&mut Self>, enabled: bool) {
+        with_state(|s| s.ha_sync_medications = enabled);
+        let _ = with_state(|s| ops::persist_settings(s));
+        log_info(
+            "MEDS",
+            format!("Set Home Assistant two-way medication sync to {enabled}."),
+        );
+        if enabled {
+            ops::spawn_ha_medications_push(None);
+        }
+        self.as_mut().sync();
+    }
+
+    pub fn update_ha_sync_snooze(mut self: Pin<&mut Self>, enabled: bool) {
+        with_state(|s| s.ha_sync_snooze = enabled);
+        let _ = with_state(|s| ops::persist_settings(s));
+        log_info(
+            "ALERT",
+            format!("Set Home Assistant cross-device alert snooze sync to {enabled}."),
+        );
+        if enabled {
+            ops::spawn_ha_snooze_push();
+        }
+        self.as_mut().sync();
+    }
+
+    pub fn update_sensor_expiry_alert_hours(mut self: Pin<&mut Self>, hours: i32) {
+        let clamped = hours.clamp(0, 168);
+        with_state(|s| {
+            s.sensor_expiry_alert_hours = clamped;
+            ops::refresh_display(s);
+        });
+        let _ = with_state(|s| ops::persist_settings(s));
+        log_info(
+            "ALERT",
+            format!("Set CGM sensor expiry alert threshold to {clamped}h."),
+        );
         self.as_mut().sync();
     }
 

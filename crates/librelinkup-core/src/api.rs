@@ -737,6 +737,32 @@ pub fn parse_graph_response(
         });
     }
 
+    let sensor_obj = conn.get("sensor").or_else(|| data.get("sensor"));
+    let sensor_serial = sensor_obj
+        .and_then(|s| s.get("sn").or_else(|| s.get("serialNumber")))
+        .and_then(|v| v.as_str())
+        .unwrap_or("")
+        .trim()
+        .to_string();
+    let sensor_activated_at_epoch = sensor_obj
+        .and_then(|s| s.get("a").and_then(|v| v.as_i64()))
+        .filter(|&ep| ep > 1_000_000_000);
+    let sensor_pt = sensor_obj
+        .and_then(|s| s.get("pt").and_then(|v| v.as_i64()))
+        .unwrap_or(0);
+    let sensor_plus_model = sensor_obj
+        .and_then(|s| s.get("plus").and_then(|v| v.as_bool()))
+        .unwrap_or(sensor_pt == 4);
+    let sensor_lifespan_days = if sensor_plus_model {
+        15
+    } else if sensor_activated_at_epoch.is_some() {
+        14
+    } else {
+        0
+    };
+    let sensor_expires_at_epoch =
+        sensor_activated_at_epoch.map(|act| act + i64::from(sensor_lifespan_days.max(14)) * 86_400);
+
     Ok(GlucoseSnapshot {
         value_mg_dl,
         trend_arrow,
@@ -748,6 +774,11 @@ pub fn parse_graph_response(
         last_name,
         graph_points,
         measured_at_epoch,
+        sensor_serial,
+        sensor_activated_at_epoch,
+        sensor_expires_at_epoch,
+        sensor_lifespan_days,
+        sensor_plus_model,
     })
 }
 
@@ -838,6 +869,818 @@ pub async fn fetch_cgm_snapshot_async(
     .await?;
 
     parse_graph_response(&graph_body, &patient_id, &first_name, &last_name)
+}
+
+// ---------------------------------------------------------------------------
+// Home Assistant LibreLink Integration REST API Support
+// ---------------------------------------------------------------------------
+
+/// Validates and normalizes a Home Assistant base URL (e.g. `"https://haos.dingo-dory.ts.net"`
+/// or `"http://homeassistant.local:8123"`). Strips any trailing `/` or `/api`.
+pub fn validate_ha_base_url(raw_url: &str) -> Result<String, ApiError> {
+    let trimmed = raw_url.trim().trim_end_matches('/');
+    let trimmed = trimmed.strip_suffix("/api").unwrap_or(trimmed).trim_end_matches('/');
+    if trimmed.is_empty() {
+        return Err(ApiError::ParseError(
+            "Home Assistant URL is empty. Enter your Home Assistant URL (e.g. https://haos.dingo-dory.ts.net)."
+                .to_string(),
+        ));
+    }
+    let rest = if let Some(r) = trimmed.strip_prefix("https://") {
+        r
+    } else if let Some(r) = trimmed.strip_prefix("http://") {
+        r
+    } else {
+        return Err(ApiError::ParseError(
+            "Home Assistant URL must start with https:// or http://".to_string(),
+        ));
+    };
+    if rest.is_empty()
+        || rest.contains('@')
+        || rest.contains('?')
+        || rest.contains('#')
+        || rest.chars().any(|c| c.is_whitespace() || c.is_control())
+    {
+        return Err(ApiError::ParseError(
+            "Invalid characters in Home Assistant URL".to_string(),
+        ));
+    }
+    let host_port = rest.split('/').next().unwrap_or("");
+    if host_port.is_empty()
+        || !host_port
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || matches!(c, '.' | '-' | ':' | '[' | ']'))
+    {
+        return Err(ApiError::ParseError(
+            "Invalid hostname or port in Home Assistant URL".to_string(),
+        ));
+    }
+    Ok(trimmed.to_string())
+}
+
+fn parse_ha_trend_str(raw: &str) -> Option<i32> {
+    let s = raw.trim();
+    if s.is_empty() {
+        return None;
+    }
+    match s {
+        "↓" | "⇊" | "1" | "mdi:arrow-down-bold" | "mdi:arrow-down" | "mdi:chevron-double-down" => {
+            Some(1)
+        }
+        "↘" | "2" | "mdi:arrow-bottom-right" | "mdi:arrow-bottom-right-thick" => Some(2),
+        "→" | "3" | "mdi:arrow-right" | "mdi:arrow-right-thick" => Some(3),
+        "↗" | "4" | "mdi:arrow-top-right" | "mdi:arrow-top-right-thick" => Some(4),
+        "↑" | "⇈" | "5" | "mdi:arrow-up-bold" | "mdi:arrow-up" | "mdi:chevron-double-up" => {
+            Some(5)
+        }
+        _ => {
+            let up = s.to_ascii_uppercase().replace(['-', '_'], " ");
+            match up.as_str() {
+                "FALLING QUICKLY" | "RAPIDLY FALLING" => Some(1),
+                "FALLING" | "SLOWLY FALLING" => Some(2),
+                "STABLE" | "STEADY" | "NORMAL" => Some(3),
+                "RISING" | "SLOWLY RISING" => Some(4),
+                "RISING QUICKLY" | "RAPIDLY RISING" => Some(5),
+                _ => None,
+            }
+        }
+    }
+}
+
+fn format_rfc3339_as_local_libreview(iso_raw: &str) -> Option<(i64, String)> {
+    let trimmed = iso_raw.trim();
+    if trimmed.is_empty() {
+        return None;
+    }
+    if let Ok(dt) = chrono::DateTime::parse_from_rfc3339(trimmed) {
+        let epoch = dt.timestamp();
+        let local_str = dt
+            .with_timezone(&chrono::Local)
+            .format("%m/%d/%Y %I:%M:%S %p")
+            .to_string();
+        return Some((epoch, local_str));
+    }
+    if let Some(epoch) = parse_libreview_timestamp(trimmed, true) {
+        if let Some(dt) = chrono::DateTime::from_timestamp(epoch, 0) {
+            let local_str = dt
+                .with_timezone(&chrono::Local)
+                .format("%m/%d/%Y %I:%M:%S %p")
+                .to_string();
+            return Some((epoch, local_str));
+        }
+    }
+    None
+}
+
+/// Finds the primary glucose measurement entity object inside a Home Assistant `/api/states` array.
+pub fn find_ha_glucose_entity<'a>(
+    states_arr: &'a [Value],
+    entity_id_hint: &str,
+) -> Result<&'a Value, ApiError> {
+    let hint = entity_id_hint.trim();
+    if !hint.is_empty() {
+        if let Some(found) = states_arr.iter().find(|item| {
+            item.get("entity_id")
+                .and_then(|v| v.as_str())
+                .is_some_and(|id| id.eq_ignore_ascii_case(hint))
+        }) {
+            return Ok(found);
+        }
+        return Err(ApiError::ParseError(format!(
+            "Home Assistant entity '{hint}' was not found in /api/states"
+        )));
+    }
+
+    let is_glucose_sensor = |item: &Value| -> bool {
+        let id = item
+            .get("entity_id")
+            .and_then(|v| v.as_str())
+            .unwrap_or("");
+        if !id.starts_with("sensor.")
+            || id.contains("_delta_")
+            || id.ends_with("_rate_of_change")
+            || id.contains("_time_in_range")
+        {
+            return false;
+        }
+        let attrs = item.get("attributes");
+        let dev_class = attrs
+            .and_then(|a| a.get("device_class"))
+            .and_then(|v| v.as_str())
+            .unwrap_or("");
+        let attribution = attrs
+            .and_then(|a| a.get("attribution"))
+            .and_then(|v| v.as_str())
+            .unwrap_or("");
+        dev_class.eq_ignore_ascii_case("blood_glucose_concentration")
+            || (id.ends_with("_measurement")
+                && attribution.to_ascii_lowercase().contains("libreview"))
+    };
+
+    let has_numeric_state = |item: &Value| -> bool {
+        item.get("state")
+            .and_then(|v| v.as_str())
+            .and_then(|s| s.trim().parse::<f64>().ok())
+            .is_some_and(|v| v > 0.0)
+    };
+
+    // 1. Prefer `sensor.*_measurement` with a live numeric reading.
+    if let Some(found) = states_arr.iter().find(|item| {
+        let id = item
+            .get("entity_id")
+            .and_then(|v| v.as_str())
+            .unwrap_or("");
+        id.ends_with("_measurement") && is_glucose_sensor(item) && has_numeric_state(item)
+    }) {
+        return Ok(found);
+    }
+
+    // 2. Any blood_glucose_concentration sensor with a live numeric reading.
+    if let Some(found) = states_arr
+        .iter()
+        .find(|item| is_glucose_sensor(item) && has_numeric_state(item))
+    {
+        return Ok(found);
+    }
+
+    // 3. Fallback to any matching glucose sensor even if its state is currently unavailable.
+    if let Some(found) = states_arr.iter().find(|item| is_glucose_sensor(item)) {
+        return Ok(found);
+    }
+
+    Err(ApiError::NoConnectionsFound)
+}
+
+/// Parses Home Assistant `/api/states` and optional `/api/history/period/...` payloads into a
+/// [`GlucoseSnapshot`].
+pub fn parse_ha_states_and_history(
+    states_body: &Value,
+    history_body: Option<&Value>,
+    entity_id_hint: &str,
+) -> Result<GlucoseSnapshot, ApiError> {
+    let states_arr = states_body.as_array().ok_or_else(|| {
+        ApiError::ParseError("Home Assistant /api/states did not return a JSON array".to_string())
+    })?;
+
+    let primary = find_ha_glucose_entity(states_arr, entity_id_hint)?;
+    let entity_id = primary
+        .get("entity_id")
+        .and_then(|v| v.as_str())
+        .unwrap_or("sensor.librelink_measurement");
+
+    let raw_state = primary
+        .get("state")
+        .and_then(|v| v.as_str())
+        .unwrap_or("")
+        .trim();
+    let raw_val = raw_state.parse::<f64>().map_err(|_| {
+        ApiError::ParseError(format!(
+            "Home Assistant glucose sensor '{entity_id}' has non-numeric state '{raw_state}'"
+        ))
+    })?;
+
+    let attrs = primary.get("attributes");
+    let unit_attr = attrs
+        .and_then(|a| a.get("unit_of_measurement"))
+        .and_then(|v| v.as_str())
+        .unwrap_or("mg/dL");
+    let is_mmol = unit_attr.to_ascii_lowercase().contains("mmol");
+    let to_mg_dl = |val: f64| -> f64 {
+        if is_mmol {
+            val * 18.0182
+        } else {
+            val
+        }
+    };
+    let value_mg_dl = to_mg_dl(raw_val);
+
+    // Derive the LibreLink entity prefix (e.g. "sensor.russell_milliner_measurement" -> "russell_milliner")
+    let without_domain = entity_id.strip_prefix("sensor.").unwrap_or(entity_id);
+    let prefix = without_domain
+        .strip_suffix("_measurement")
+        .or_else(|| without_domain.strip_suffix("_glucose_measurement"))
+        .or_else(|| without_domain.strip_suffix("_glucose"))
+        .unwrap_or(without_domain);
+
+    // 1. Trend arrow discovery across sibling entities and primary attributes
+    let mut trend_arrow: Option<i32> = None;
+
+    // Check `sensor.<prefix>_glucose_trend_arrow`
+    let arrow_entity_id = format!("sensor.{prefix}_glucose_trend_arrow");
+    if let Some(ent) = states_arr.iter().find(|e| {
+        e.get("entity_id")
+            .and_then(|v| v.as_str())
+            .is_some_and(|id| id == arrow_entity_id)
+    }) {
+        if let Some(st) = ent.get("state").and_then(|v| v.as_str()) {
+            trend_arrow = parse_ha_trend_str(st);
+        }
+    }
+
+    // Check `sensor.<prefix>_trend` or `sensor.<prefix>_trend_2`
+    if trend_arrow.is_none() {
+        let trend_prefix = format!("sensor.{prefix}_trend");
+        for ent in states_arr.iter().filter(|e| {
+            e.get("entity_id")
+                .and_then(|v| v.as_str())
+                .is_some_and(|id| id == trend_prefix || id.starts_with(&format!("{trend_prefix}_")))
+        }) {
+            if let Some(ent_attrs) = ent.get("attributes") {
+                if let Some(arr_str) = ent_attrs.get("trend_arrow").and_then(|v| v.as_str()) {
+                    if let Some(code) = parse_ha_trend_str(arr_str) {
+                        trend_arrow = Some(code);
+                        break;
+                    }
+                }
+                if let Some(cat_str) = ent_attrs.get("trend_category").and_then(|v| v.as_str()) {
+                    if let Some(code) = parse_ha_trend_str(cat_str) {
+                        trend_arrow = Some(code);
+                        break;
+                    }
+                }
+            }
+            if let Some(st) = ent.get("state").and_then(|v| v.as_str()) {
+                if let Some(code) = parse_ha_trend_str(st) {
+                    trend_arrow = Some(code);
+                    break;
+                }
+            }
+        }
+    }
+
+    // Fallback to primary sensor's own attributes (`trend_arrow` or `icon`)
+    if trend_arrow.is_none() {
+        if let Some(a) = attrs {
+            if let Some(s) = a.get("trend_arrow").and_then(|v| v.as_str()) {
+                trend_arrow = parse_ha_trend_str(s);
+            }
+            if trend_arrow.is_none() {
+                if let Some(icon) = a.get("icon").and_then(|v| v.as_str()) {
+                    trend_arrow = parse_ha_trend_str(icon);
+                }
+            }
+        }
+    }
+    let trend_arrow = trend_arrow.unwrap_or(3);
+
+    // 2. Timestamp & measured_at_epoch discovery
+    let mut ts_pair: Option<(i64, String)> = None;
+    let ts_prefix = format!("sensor.{prefix}_last_measurement_timestamp");
+    for ent in states_arr.iter().filter(|e| {
+        e.get("entity_id")
+            .and_then(|v| v.as_str())
+            .is_some_and(|id| id == ts_prefix || id.starts_with(&format!("{ts_prefix}_")))
+    }) {
+        if let Some(st) = ent.get("state").and_then(|v| v.as_str()) {
+            if let Some(parsed) = format_rfc3339_as_local_libreview(st) {
+                ts_pair = Some(parsed);
+                break;
+            }
+        }
+    }
+    if ts_pair.is_none() {
+        if let Some(lu) = primary
+            .get("last_updated")
+            .and_then(|v| v.as_str())
+            .or_else(|| primary.get("last_changed").and_then(|v| v.as_str()))
+        {
+            ts_pair = format_rfc3339_as_local_libreview(lu);
+        }
+    }
+    let (measured_at_epoch, timestamp) = match ts_pair {
+        Some((ep, s)) => (Some(ep), s),
+        None => (None, String::new()),
+    };
+
+    // 3. Patient name, Patient ID & Sensor Expiry/Warmup metadata from application/expiration timestamp entities
+    let mut patient_id = String::new();
+    let mut full_name = String::new();
+    let mut sensor_serial = String::new();
+    let mut sensor_activated_at_epoch: Option<i64> = None;
+    let mut sensor_expires_at_epoch: Option<i64> = None;
+    let mut sensor_lifespan_days: i32 = 0;
+    let mut sensor_plus_model = false;
+
+    for ent in states_arr.iter().filter(|e| {
+        e.get("entity_id")
+            .and_then(|v| v.as_str())
+            .is_some_and(|id| {
+                id.starts_with(&format!("sensor.{prefix}_application_timestamp"))
+                    || id.starts_with(&format!("sensor.{prefix}_expiration_timestamp"))
+            })
+    }) {
+        let ent_id = ent
+            .get("entity_id")
+            .and_then(|v| v.as_str())
+            .unwrap_or("");
+        if let Some(st) = ent.get("state").and_then(|v| v.as_str()) {
+            if ent_id.starts_with(&format!("sensor.{prefix}_application_timestamp"))
+                && sensor_activated_at_epoch.is_none()
+            {
+                sensor_activated_at_epoch = parse_libreview_timestamp(st, true);
+            } else if ent_id.starts_with(&format!("sensor.{prefix}_expiration_timestamp"))
+                && sensor_expires_at_epoch.is_none()
+            {
+                sensor_expires_at_epoch = parse_libreview_timestamp(st, true);
+            }
+        }
+        if let Some(a) = ent.get("attributes") {
+            if patient_id.is_empty() {
+                if let Some(pid) = a.get("Patient ID").and_then(|v| v.as_str()) {
+                    patient_id = pid.trim().to_string();
+                }
+            }
+            if full_name.is_empty() {
+                if let Some(pname) = a.get("Patient").and_then(|v| v.as_str()) {
+                    full_name = pname.trim().to_string();
+                }
+            }
+            if sensor_serial.is_empty() {
+                if let Some(sn) = a.get("Serial number").and_then(|v| v.as_str()) {
+                    sensor_serial = sn.trim().to_string();
+                }
+            }
+            if sensor_activated_at_epoch.is_none() {
+                if let Some(act_str) = a.get("Activation date").and_then(|v| v.as_str()) {
+                    sensor_activated_at_epoch = parse_libreview_timestamp(act_str, true);
+                }
+            }
+            if sensor_lifespan_days <= 0 {
+                if let Some(days) = a.get("Sensor lifespan days").and_then(|v| v.as_i64()) {
+                    sensor_lifespan_days = days.clamp(1, 60) as i32;
+                }
+            }
+            if let Some(plus) = a.get("Sensor plus model").and_then(|v| v.as_bool()) {
+                sensor_plus_model = plus;
+            }
+        }
+    }
+    if sensor_expires_at_epoch.is_none() {
+        if let Some(act) = sensor_activated_at_epoch {
+            let days = if sensor_lifespan_days > 0 {
+                i64::from(sensor_lifespan_days)
+            } else if sensor_plus_model {
+                15
+            } else {
+                14
+            };
+            sensor_expires_at_epoch = Some(act + days * 86_400);
+        }
+    }
+    if full_name.is_empty() {
+        if let Some(friendly) = attrs
+            .and_then(|a| a.get("friendly_name"))
+            .and_then(|v| v.as_str())
+        {
+            let cleaned = friendly
+                .trim()
+                .strip_suffix(" Measurement")
+                .or_else(|| friendly.trim().strip_suffix(" Glucose"))
+                .unwrap_or(friendly.trim());
+            full_name = cleaned.trim().to_string();
+        }
+    }
+    let (first_name, last_name) = match full_name.split_once(' ') {
+        Some((f, l)) => (f.trim().to_string(), l.trim().to_string()),
+        None => (full_name, String::new()),
+    };
+    if patient_id.is_empty() {
+        patient_id = format!("ha-{prefix}");
+    }
+
+    // 4. Target range discovery from any time_in_range sensor for this prefix
+    let mut target_low_mg_dl = DEFAULT_TARGET_LOW_MG_DL;
+    let mut target_high_mg_dl = DEFAULT_TARGET_HIGH_MG_DL;
+    for ent in states_arr.iter().filter(|e| {
+        e.get("entity_id")
+            .and_then(|v| v.as_str())
+            .is_some_and(|id| id.contains(prefix) && id.contains("time_in_range"))
+    }) {
+        if let Some(a) = ent.get("attributes") {
+            if let Some(low) = a.get("target_low_mgdl").and_then(|v| v.as_f64()) {
+                if low > 0.0 {
+                    target_low_mg_dl = low;
+                }
+            }
+            if let Some(high) = a.get("target_high_mgdl").and_then(|v| v.as_f64()) {
+                if high > 0.0 {
+                    target_high_mg_dl = high;
+                }
+            }
+        }
+    }
+
+    // 5. Historical 12-hour series from `/api/history/period/...`
+    let mut graph_points = Vec::new();
+    if let Some(hist) = history_body.and_then(|v| v.as_array()) {
+        let entries: Vec<&Value> = if let Some(first_arr) = hist.first().and_then(|v| v.as_array())
+        {
+            first_arr.iter().collect()
+        } else {
+            hist.iter().collect()
+        };
+        for item in entries {
+            let Some(st_str) = item.get("state").and_then(|v| v.as_str()) else {
+                continue;
+            };
+            let Ok(raw_v) = st_str.trim().parse::<f64>() else {
+                continue;
+            };
+            let mg_dl = to_mg_dl(raw_v);
+            if mg_dl <= 0.0 || mg_dl.is_nan() {
+                continue;
+            }
+            let ts_iso = item
+                .get("last_changed")
+                .and_then(|v| v.as_str())
+                .or_else(|| item.get("last_updated").and_then(|v| v.as_str()))
+                .unwrap_or("");
+            let formatted_ts = format_rfc3339_as_local_libreview(ts_iso)
+                .map(|(_, s)| s)
+                .unwrap_or_else(|| ts_iso.to_string());
+            if !formatted_ts.is_empty() {
+                graph_points.push(GraphPoint {
+                    timestamp: formatted_ts,
+                    value_mg_dl: mg_dl,
+                });
+            }
+        }
+    }
+
+    if value_mg_dl > 0.0 && !timestamp.is_empty() {
+        let already_last = graph_points
+            .last()
+            .is_some_and(|last| last.timestamp == timestamp && (last.value_mg_dl - value_mg_dl).abs() < 0.5);
+        if !already_last {
+            graph_points.push(GraphPoint {
+                timestamp: timestamp.clone(),
+                value_mg_dl,
+            });
+        }
+    }
+
+    Ok(GlucoseSnapshot {
+        value_mg_dl,
+        trend_arrow,
+        timestamp,
+        target_low_mg_dl,
+        target_high_mg_dl,
+        patient_id,
+        first_name,
+        last_name,
+        graph_points,
+        measured_at_epoch,
+        sensor_serial,
+        sensor_activated_at_epoch,
+        sensor_expires_at_epoch,
+        sensor_lifespan_days,
+        sensor_plus_model,
+    })
+}
+
+/// Builds the Home Assistant `/api/states/sensor.librelinkup_alert_snooze` payload for
+/// cross-device alert snooze synchronization.
+pub fn build_ha_snooze_payload(
+    snooze_until_epoch: i64,
+    updated_at_epoch: i64,
+    now_epoch: i64,
+) -> Value {
+    let active = snooze_until_epoch > now_epoch;
+    let iso_until = if active {
+        chrono::DateTime::from_timestamp(snooze_until_epoch, 0)
+            .map(|dt| dt.to_rfc3339())
+            .unwrap_or_default()
+    } else {
+        String::new()
+    };
+    serde_json::json!({
+        "state": if active { "snoozed" } else { "active" },
+        "attributes": {
+            "friendly_name": "LibreLinkUp Alert Snooze",
+            "icon": if active { "mdi:bell-sleep" } else { "mdi:bell-ring-outline" },
+            "snoozed": active,
+            "snooze_until_epoch": if active { snooze_until_epoch } else { 0 },
+            "snooze_until_iso": iso_until,
+            "updated_at_epoch": updated_at_epoch,
+        }
+    })
+}
+
+/// Inspects a Home Assistant `/api/states` array for `sensor.librelinkup_alert_snooze` (or
+/// `input_datetime.librelinkup_snooze_until`) and returns `Some((remote_snooze_until_epoch, remote_updated_at_epoch))`
+/// when the remote state was updated more recently than `local_updated_at_epoch`.
+pub fn parse_ha_remote_snooze(
+    states_arr: &[Value],
+    local_updated_at_epoch: i64,
+) -> Option<(i64, i64)> {
+    // 1. Primary cross-device entity: `sensor.librelinkup_alert_snooze`
+    if let Some(ent) = states_arr.iter().find(|e| {
+        e.get("entity_id")
+            .and_then(|v| v.as_str())
+            .is_some_and(|id| id == "sensor.librelinkup_alert_snooze")
+    }) {
+        let attrs = ent.get("attributes");
+        let remote_updated = attrs
+            .and_then(|a| a.get("updated_at_epoch"))
+            .and_then(|v| v.as_i64())
+            .or_else(|| {
+                ent.get("last_updated")
+                    .and_then(|v| v.as_str())
+                    .and_then(|s| parse_libreview_timestamp(s, true))
+            })
+            .unwrap_or(0);
+        if remote_updated > local_updated_at_epoch {
+            let st_str = ent
+                .get("state")
+                .and_then(|v| v.as_str())
+                .unwrap_or("")
+                .trim();
+            let remote_until = if st_str.eq_ignore_ascii_case("active")
+                || st_str.eq_ignore_ascii_case("off")
+                || st_str == "0"
+            {
+                0
+            } else {
+                attrs
+                    .and_then(|a| a.get("snooze_until_epoch"))
+                    .and_then(|v| v.as_i64())
+                    .or_else(|| {
+                        attrs
+                            .and_then(|a| a.get("snooze_until_iso"))
+                            .and_then(|v| v.as_str())
+                            .and_then(|s| parse_libreview_timestamp(s, true))
+                    })
+                    .unwrap_or(0)
+            };
+            return Some((remote_until.max(0), remote_updated));
+        }
+    }
+
+    // 2. Optional Home Assistant helper: `input_datetime.librelinkup_snooze_until`
+    if let Some(ent) = states_arr.iter().find(|e| {
+        e.get("entity_id")
+            .and_then(|v| v.as_str())
+            .is_some_and(|id| id == "input_datetime.librelinkup_snooze_until")
+    }) {
+        let remote_updated = ent
+            .get("last_updated")
+            .and_then(|v| v.as_str())
+            .and_then(|s| parse_libreview_timestamp(s, true))
+            .unwrap_or(0);
+        if remote_updated > local_updated_at_epoch {
+            let attrs = ent.get("attributes");
+            let remote_until = attrs
+                .and_then(|a| a.get("timestamp"))
+                .and_then(|v| v.as_f64())
+                .map(|t| t as i64)
+                .or_else(|| {
+                    ent.get("state")
+                        .and_then(|v| v.as_str())
+                        .and_then(|s| parse_libreview_timestamp(s, false))
+                })
+                .unwrap_or(0);
+            return Some((remote_until.max(0), remote_updated));
+        }
+    }
+
+    None
+}
+
+/// Fetches the full `/api/states` array from Home Assistant.
+pub async fn fetch_ha_states_array_async(
+    ha_url: &str,
+    ha_token: &str,
+) -> Result<Vec<Value>, ApiError> {
+    let base = validate_ha_base_url(ha_url)?;
+    let token = ha_token.trim();
+    if token.is_empty() {
+        return Err(ApiError::InvalidCredentials);
+    }
+    let client = shared_api_client()?;
+    let states_url = format!("{base}/api/states");
+    let states_body = send_json_request(
+        client,
+        reqwest::Method::GET,
+        &states_url,
+        Some(token),
+        None,
+        None,
+    )
+    .await?;
+    states_body.as_array().cloned().ok_or_else(|| {
+        ApiError::ParseError("Home Assistant /api/states did not return a JSON array".to_string())
+    })
+}
+
+/// Publishes the current alert snooze state to Home Assistant
+/// (`POST /api/states/sensor.librelinkup_alert_snooze` and
+/// `POST /api/events/librelinkup_alert_snooze_changed`).
+pub async fn publish_ha_snooze_state_async(
+    ha_url: &str,
+    ha_token: &str,
+    snooze_until_epoch: i64,
+    updated_at_epoch: i64,
+) -> Result<(), ApiError> {
+    let base = validate_ha_base_url(ha_url)?;
+    let token = ha_token.trim();
+    if token.is_empty() {
+        return Err(ApiError::InvalidCredentials);
+    }
+    let now = chrono::Utc::now().timestamp();
+    let payload = build_ha_snooze_payload(snooze_until_epoch, updated_at_epoch, now);
+    let client = shared_api_client()?;
+    let state_url = format!("{base}/api/states/sensor.librelinkup_alert_snooze");
+    send_json_request(
+        client,
+        reqwest::Method::POST,
+        &state_url,
+        Some(token),
+        None,
+        Some(&payload),
+    )
+    .await?;
+
+    let event_url = format!("{base}/api/events/librelinkup_alert_snooze_changed");
+    let event_payload = serde_json::json!({
+        "snoozed": snooze_until_epoch > now,
+        "snooze_until_epoch": snooze_until_epoch.max(0),
+        "updated_at_epoch": updated_at_epoch,
+    });
+    let _ = send_json_request(
+        client,
+        reqwest::Method::POST,
+        &event_url,
+        Some(token),
+        None,
+        Some(&event_payload),
+    )
+    .await;
+    Ok(())
+}
+
+/// Publishes the current [`crate::medications::MedicationStore`] state to Home Assistant
+/// (`POST /api/states/sensor.librelinkup_medications`) and optionally fires
+/// `POST /api/events/librelinkup_medication_dose_logged` when a dose is logged or skipped.
+pub async fn publish_ha_medications_state_async(
+    ha_url: &str,
+    ha_token: &str,
+    store: &crate::medications::MedicationStore,
+    logged_dose: Option<&crate::medications::MedicationDoseLog>,
+) -> Result<(), ApiError> {
+    let base = validate_ha_base_url(ha_url)?;
+    let token = ha_token.trim();
+    if token.is_empty() {
+        return Err(ApiError::InvalidCredentials);
+    }
+    let now = chrono::Utc::now().timestamp();
+    let payload = store.to_ha_sensor_payload(now);
+    let client = shared_api_client()?;
+    let state_url = format!("{base}/api/states/sensor.librelinkup_medications");
+    send_json_request(
+        client,
+        reqwest::Method::POST,
+        &state_url,
+        Some(token),
+        None,
+        Some(&payload),
+    )
+    .await?;
+
+    if let Some(dose) = logged_dose {
+        let event_url = format!("{base}/api/events/librelinkup_medication_dose_logged");
+        let event_payload = serde_json::json!({
+            "id": dose.id,
+            "medication_id": dose.medication_id,
+            "medication_name": dose.medication_name,
+            "dosage": dose.dosage,
+            "taken_at_epoch": dose.taken_at_epoch,
+            "taken_at_display": dose.taken_at_display,
+            "glucose_mg_dl_at_dose": dose.glucose_mg_dl_at_dose,
+            "skipped": dose.skipped,
+            "notes": dose.notes,
+        });
+        let _ = send_json_request(
+            client,
+            reqwest::Method::POST,
+            &event_url,
+            Some(token),
+            None,
+            Some(&event_payload),
+        )
+        .await;
+    }
+    Ok(())
+}
+
+/// Fetches the current CGM reading, trend arrow, patient metadata, 12-hour history, and the
+/// full `/api/states` array from a Home Assistant instance running the LibreLink integration.
+pub async fn fetch_ha_cgm_snapshot_and_states_async(
+    ha_url: &str,
+    ha_token: &str,
+    entity_id_hint: &str,
+) -> Result<(GlucoseSnapshot, Vec<Value>), ApiError> {
+    let base = validate_ha_base_url(ha_url)?;
+    let token = ha_token.trim();
+    if token.is_empty() {
+        return Err(ApiError::InvalidCredentials);
+    }
+
+    let client = shared_api_client()?;
+    let states_url = format!("{base}/api/states");
+    let states_body = send_json_request(
+        client,
+        reqwest::Method::GET,
+        &states_url,
+        Some(token),
+        None,
+        None,
+    )
+    .await?;
+
+    let states_arr = states_body.as_array().ok_or_else(|| {
+        ApiError::ParseError("Home Assistant /api/states did not return a JSON array".to_string())
+    })?;
+    let primary = find_ha_glucose_entity(states_arr, entity_id_hint)?;
+    let matched_entity_id = primary
+        .get("entity_id")
+        .and_then(|v| v.as_str())
+        .unwrap_or("")
+        .to_string();
+
+    let history_body = if !matched_entity_id.is_empty() {
+        let start_iso = (chrono::Utc::now() - chrono::Duration::hours(12))
+            .format("%Y-%m-%dT%H:%M:%SZ")
+            .to_string();
+        let hist_url = format!(
+            "{base}/api/history/period/{start_iso}?filter_entity_id={matched_entity_id}&minimal_response&no_attributes"
+        );
+        send_json_request(
+            client,
+            reqwest::Method::GET,
+            &hist_url,
+            Some(token),
+            None,
+            None,
+        )
+        .await
+        .ok()
+    } else {
+        None
+    };
+
+    let snap = parse_ha_states_and_history(&states_body, history_body.as_ref(), entity_id_hint)?;
+    Ok((snap, states_arr.clone()))
+}
+
+/// Fetches the current CGM reading, trend arrow, patient metadata, and 12-hour history from
+/// a Home Assistant instance running the LibreLink integration.
+pub async fn fetch_ha_cgm_snapshot_async(
+    ha_url: &str,
+    ha_token: &str,
+    entity_id_hint: &str,
+) -> Result<GlucoseSnapshot, ApiError> {
+    let (snap, _) = fetch_ha_cgm_snapshot_and_states_async(ha_url, ha_token, entity_id_hint).await?;
+    Ok(snap)
 }
 
 #[cfg(test)]
@@ -998,5 +1841,109 @@ mod tests {
         assert!(!dbg.contains("Patient"));
         assert!(dbg.contains("[REDACTED]"));
         assert!(dbg.contains("eu"));
+    }
+
+    #[test]
+    fn parses_home_assistant_librelink_states_and_history() {
+        let states = serde_json::json!([
+            {
+                "entity_id": "sensor.russell_milliner_measurement",
+                "state": "105",
+                "last_updated": "2026-10-31T15:39:25.298895+00:00",
+                "attributes": {
+                    "unit_of_measurement": "mg/dL",
+                    "device_class": "blood_glucose_concentration",
+                    "friendly_name": "Russell Milliner Measurement",
+                    "icon": "mdi:arrow-right",
+                    "attribution": "Data provided by https://libreview.com"
+                }
+            },
+            {
+                "entity_id": "sensor.russell_milliner_trend_2",
+                "state": "Rising",
+                "attributes": {
+                    "trend_arrow": "↗",
+                    "trend_category": "RISING"
+                }
+            },
+            {
+                "entity_id": "sensor.russell_milliner_last_measurement_timestamp_2",
+                "state": "2026-10-31T15:39:25+00:00",
+                "attributes": {
+                    "device_class": "timestamp"
+                }
+            },
+            {
+                "entity_id": "sensor.russell_milliner_application_timestamp_2",
+                "state": "2026-10-30T02:31:26+00:00",
+                "attributes": {
+                    "Patient ID": "84ab9cce-7a4f-11ed-9dfe-0242ac110006",
+                    "Patient": "Russell Milliner",
+                    "Serial number": "40TUAM8CTE0",
+                    "Activation date": "2026-10-30T02:31:26+00:00",
+                    "Sensor lifespan days": 15,
+                    "Sensor plus model": true
+                }
+            },
+            {
+                "entity_id": "sensor.russell_milliner_expiration_timestamp_2",
+                "state": "2026-11-14T02:31:26+00:00",
+                "attributes": {
+                    "device_class": "timestamp"
+                }
+            },
+            {
+                "entity_id": "sensor.main_bed_russell_milliner_time_in_range_24h",
+                "state": "99.3",
+                "attributes": {
+                    "target_low_mgdl": 72,
+                    "target_high_mgdl": 175
+                }
+            },
+            {
+                "entity_id": "sensor.librelinkup_alert_snooze",
+                "state": "snoozed",
+                "attributes": {
+                    "snooze_until_epoch": 1793500000,
+                    "updated_at_epoch": 1793496400
+                }
+            }
+        ]);
+
+        let history = serde_json::json!([[
+            {
+                "entity_id": "sensor.russell_milliner_measurement",
+                "state": "98",
+                "last_changed": "2026-10-31T15:24:25+00:00"
+            },
+            {
+                "entity_id": "sensor.russell_milliner_measurement",
+                "state": "102",
+                "last_changed": "2026-10-31T15:34:25+00:00"
+            }
+        ]]);
+
+        let snap = parse_ha_states_and_history(&states, Some(&history), "").expect("parse HA states");
+        assert_eq!(snap.value_mg_dl, 105.0);
+        assert_eq!(snap.trend_arrow, 4); // ↗ Rising
+        assert_eq!(snap.first_name, "Russell");
+        assert_eq!(snap.last_name, "Milliner");
+        assert_eq!(snap.patient_id, "84ab9cce-7a4f-11ed-9dfe-0242ac110006");
+        assert_eq!(snap.target_low_mg_dl, 72.0);
+        assert_eq!(snap.target_high_mg_dl, 175.0);
+        assert_eq!(snap.sensor_serial, "40TUAM8CTE0");
+        assert_eq!(snap.sensor_lifespan_days, 15);
+        assert!(snap.sensor_plus_model);
+        assert!(snap.sensor_activated_at_epoch.is_some());
+        assert!(snap.sensor_expires_at_epoch.is_some());
+        assert_eq!(snap.graph_points.len(), 3);
+        assert!(snap.measured_at_epoch.is_some());
+
+        // Cross-device alert snooze parsing
+        let states_arr = states.as_array().unwrap();
+        let remote_snooze = parse_ha_remote_snooze(states_arr, 1793400000);
+        assert_eq!(remote_snooze, Some((1793500000, 1793496400)));
+        // When local is newer, remote is ignored
+        assert_eq!(parse_ha_remote_snooze(states_arr, 1793500000), None);
     }
 }

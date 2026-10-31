@@ -738,6 +738,153 @@ impl MedicationStore {
             )
         }
     }
+
+    /// Builds the Home Assistant `/api/states/sensor.librelinkup_medications` JSON payload for
+    /// two-way medication and dose synchronization.
+    pub fn to_ha_sensor_payload(&self, now_epoch: i64) -> serde_json::Value {
+        let mut due_now_count = 0usize;
+        let mut taken_today_count = 0usize;
+        for med in self.medications.iter().filter(|m| m.enabled) {
+            match self.medication_status(med, now_epoch).0 {
+                DoseStatusKind::DueNow => due_now_count += 1,
+                DoseStatusKind::Taken => taken_today_count += 1,
+                _ => {}
+            }
+        }
+        let latest = self.dose_logs.first();
+        let recent_doses: Vec<&MedicationDoseLog> = self.dose_logs.iter().take(25).collect();
+        serde_json::json!({
+            "state": self.summary_line(now_epoch),
+            "attributes": {
+                "friendly_name": "LibreLinkUp Medications & Dose Tracker",
+                "icon": "mdi:pill",
+                "updated_at_epoch": now_epoch,
+                "due_now_count": due_now_count,
+                "taken_today_count": taken_today_count,
+                "scheduled_count": self.medications.len(),
+                "last_dose_medication": latest.map(|d| d.medication_name.as_str()).unwrap_or(""),
+                "last_dose_dosage": latest.map(|d| d.dosage.as_str()).unwrap_or(""),
+                "last_dose_at_epoch": latest.map(|d| d.taken_at_epoch).unwrap_or(0),
+                "last_dose_at_display": latest.map(|d| d.taken_at_display.as_str()).unwrap_or(""),
+                "last_dose_glucose_mg_dl": latest.and_then(|d| d.glucose_mg_dl_at_dose),
+                "last_dose_skipped": latest.map(|d| d.skipped).unwrap_or(false),
+                "medications": self.medications,
+                "recent_doses": recent_doses,
+            }
+        })
+    }
+
+    /// Merges remote medications and dose logs published to Home Assistant's
+    /// `sensor.librelinkup_medications` entity (from another desktop client or a Home Assistant
+    /// automation/script/button). Returns `true` if any medication or dose log was imported.
+    pub fn merge_from_ha_states(&mut self, states_arr: &[serde_json::Value]) -> bool {
+        let Some(ent) = states_arr.iter().find(|e| {
+            e.get("entity_id")
+                .and_then(|v| v.as_str())
+                .is_some_and(|id| id == "sensor.librelinkup_medications")
+        }) else {
+            return false;
+        };
+        let Some(attrs) = ent.get("attributes") else {
+            return false;
+        };
+
+        let mut changed = false;
+
+        // 1. Merge remote medication definitions
+        if let Some(meds_val) = attrs.get("medications") {
+            if let Ok(remote_meds) = serde_json::from_value::<Vec<MedicationDef>>(meds_val.clone())
+            {
+                for rm in remote_meds {
+                    if rm.name.trim().is_empty() {
+                        continue;
+                    }
+                    let already_exists = self.medications.iter().any(|m| {
+                        (!rm.id.is_empty() && m.id == rm.id)
+                            || (m.name.eq_ignore_ascii_case(&rm.name)
+                                && m.dosage.eq_ignore_ascii_case(&rm.dosage))
+                    });
+                    if !already_exists {
+                        self.medications.push(rm);
+                        changed = true;
+                    }
+                }
+            }
+        }
+
+        // 2. Merge remote dose logs
+        if let Some(doses_val) = attrs.get("recent_doses") {
+            if let Ok(remote_doses) =
+                serde_json::from_value::<Vec<MedicationDoseLog>>(doses_val.clone())
+            {
+                for mut rd in remote_doses {
+                    if rd.medication_name.trim().is_empty() || rd.taken_at_epoch <= 0 {
+                        continue;
+                    }
+                    if rd.taken_at_display.trim().is_empty() {
+                        rd.taken_at_display = format_epoch_short(rd.taken_at_epoch);
+                    }
+                    let duplicate = self.dose_logs.iter().any(|d| {
+                        (!rd.id.is_empty() && d.id == rd.id)
+                            || (d.medication_name.eq_ignore_ascii_case(&rd.medication_name)
+                                && (d.taken_at_epoch - rd.taken_at_epoch).abs() < 60
+                                && d.skipped == rd.skipped)
+                    });
+                    if !duplicate {
+                        self.dose_logs.push(rd);
+                        changed = true;
+                    }
+                }
+            }
+        }
+
+        // 3. Support simple Home Assistant automation/button triggers via attributes:
+        //    `trigger_take_medication`: medication name or ID, `trigger_epoch`: unix epoch seconds
+        if let Some(trig_med) = attrs
+            .get("trigger_take_medication")
+            .and_then(|v| v.as_str())
+            .map(str::trim)
+            .filter(|s| !s.is_empty())
+        {
+            let trig_epoch = attrs
+                .get("trigger_epoch")
+                .and_then(|v| v.as_i64())
+                .unwrap_or(0);
+            if trig_epoch > 0 {
+                let target_med = self
+                    .medications
+                    .iter()
+                    .find(|m| m.id == trig_med || m.name.eq_ignore_ascii_case(trig_med))
+                    .cloned();
+                let med_name = target_med
+                    .as_ref()
+                    .map(|m| m.name.as_str())
+                    .unwrap_or(trig_med);
+                let already_logged = self.dose_logs.iter().any(|d| {
+                    d.medication_name.eq_ignore_ascii_case(med_name)
+                        && (d.taken_at_epoch - trig_epoch).abs() < 120
+                });
+                if !already_logged {
+                    let id_or_name = target_med
+                        .as_ref()
+                        .map(|m| m.id.as_str())
+                        .unwrap_or(trig_med);
+                    if self.log_dose(id_or_name, None, trig_epoch, None, "Logged via Home Assistant").is_ok() {
+                        changed = true;
+                    }
+                }
+            }
+        }
+
+        if changed {
+            self.dose_logs
+                .sort_by_key(|d| std::cmp::Reverse(d.taken_at_epoch));
+            if self.dose_logs.len() > 2_000 {
+                self.dose_logs.truncate(2_000);
+            }
+        }
+        changed
+    }
 }
 
 /// Generates sample medications and a logged dose within the last 2 hours for `--demo` mode.
@@ -954,5 +1101,37 @@ mod tests {
         assert!(skipped.skipped);
         let (wk_after, _) = store.medication_status(&store.medications[0], now);
         assert_eq!(wk_after, DoseStatusKind::Skipped);
+
+        // Two-way Home Assistant medication & dose sync round-trip
+        let mut remote_store = MedicationStore::default();
+        let rem_id = remote_store
+            .upsert_medication(
+                "ha-med-1",
+                "Lantus SoloStar",
+                "18 units",
+                MedicationSchedule::Daily,
+                "21:00",
+                0,
+                true,
+                "Bedtime basal",
+            )
+            .unwrap();
+        remote_store
+            .log_dose(&rem_id, None, now - 600, Some(118.0), "Logged from HA")
+            .unwrap();
+        let ha_payload = remote_store.to_ha_sensor_payload(now);
+        let ha_states = serde_json::json!([
+            {
+                "entity_id": "sensor.librelinkup_medications",
+                "state": ha_payload["state"],
+                "attributes": ha_payload["attributes"]
+            }
+        ]);
+        let states_arr = ha_states.as_array().unwrap();
+        assert!(store.merge_from_ha_states(states_arr));
+        assert!(store.medications.iter().any(|m| m.name == "Lantus SoloStar"));
+        assert!(store.dose_logs.iter().any(|d| d.medication_name == "Lantus SoloStar"));
+        // Merging identical states a second time is idempotent (returns false)
+        assert!(!store.merge_from_ha_states(states_arr));
     }
 }

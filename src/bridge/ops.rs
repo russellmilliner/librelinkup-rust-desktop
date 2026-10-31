@@ -20,6 +20,8 @@ use crate::session::{effective_reading_age_minutes, format_snooze_until};
 pub fn current_settings(state: &AppState) -> AppSettings {
     let mut s = crate::models::load_default_settings();
     s.theme_mode = state.theme_mode.clone();
+    s.ui_text_scale = crate::models::clamp_ui_zoom_percent(state.ui_zoom_percent);
+    s.high_contrast_mode = state.high_contrast_mode;
     s.result_unit = state.result_unit.clone();
     s.country = state.country.clone();
     s.language = state.language.clone();
@@ -57,9 +59,16 @@ pub fn current_settings(state: &AppState) -> AppSettings {
     s.stale_after_minutes = state.stale_after_minutes.clamp(5, 120) as u32;
     s.alert_on_stale = state.alert_on_stale;
     s.snooze_until_epoch = state.snooze_until_epoch;
+    s.snooze_updated_at_epoch = state.snooze_updated_at_epoch;
     s.check_updates_on_startup = state.check_updates_on_startup;
     s.remember_password = state.remember_password;
     s.stats_window = StatsWindow::from_code(&state.stats_window).code().to_string();
+    s.data_source = state.data_source.clone();
+    s.ha_url = state.ha_url.clone();
+    s.ha_sensor_entity_id = state.ha_sensor_entity_id.clone();
+    s.ha_sync_medications = state.ha_sync_medications;
+    s.ha_sync_snooze = state.ha_sync_snooze;
+    s.sensor_expiry_alert_hours = state.sensor_expiry_alert_hours.clamp(0, 168);
     s
 }
 
@@ -109,6 +118,13 @@ pub fn refresh_display(state: &mut AppState) {
     state.reading_stale = stale;
     state.alerts_snoozed = settings.is_snoozed(now);
     state.snooze_until_display = format_snooze_until(settings.snooze_until_epoch, now);
+    state.accessible_summary =
+        crate::models::accessible_glucose_announcement(&snapshot, &settings, stale, &age_text);
+    state.sensor_status_display = snapshot.format_sensor_status(now);
+    state.sensor_serial = snapshot.sensor_serial.clone();
+    state.sensor_in_warmup = snapshot.is_sensor_in_warmup(now);
+    state.sensor_expiring_soon =
+        snapshot.is_sensor_expiring_soon(now, state.sensor_expiry_alert_hours);
 
     if !snapshot.timestamp.is_empty() {
         state.last_updated = if age_text.is_empty() {
@@ -212,5 +228,78 @@ pub fn ingest_history(state: &mut AppState, snapshot: &crate::models::GlucoseSna
     let now = crate::bridge::state::now_epoch();
     if state.glucose_history.ingest_snapshot(snapshot, now) {
         persist_history_if_due(state, false);
+    }
+}
+
+/// Spawns a non-blocking background push of the current medication store (and optional logged
+/// dose event) to Home Assistant when `ha_sync_medications` is enabled and Home Assistant
+/// credentials are configured.
+pub fn spawn_ha_medications_push(logged_dose: Option<crate::medications::MedicationDoseLog>) {
+    let (enabled, ha_url, ha_token, store) = crate::bridge::state::with_state(|s| {
+        let tok = s
+            .creds
+            .as_ref()
+            .map(|c| c.ha_token.clone())
+            .unwrap_or_default();
+        (
+            s.ha_sync_medications,
+            s.ha_url.clone(),
+            tok,
+            s.medication_store.clone(),
+        )
+    });
+    if !enabled || ha_url.trim().is_empty() || ha_token.trim().is_empty() {
+        return;
+    }
+    if let Some(rt) = crate::bridge::autostart::background_runtime() {
+        rt.spawn(async move {
+            if let Err(e) = crate::api::publish_ha_medications_state_async(
+                &ha_url,
+                &ha_token,
+                &store,
+                logged_dose.as_ref(),
+            )
+            .await
+            {
+                crate::event_log::log_warn(
+                    "MEDS",
+                    format!("Failed to sync medications to Home Assistant: {e}"),
+                );
+            }
+        });
+    }
+}
+
+/// Spawns a non-blocking background push of the current alert snooze state to Home Assistant
+/// when `ha_sync_snooze` is enabled and Home Assistant credentials are configured.
+pub fn spawn_ha_snooze_push() {
+    let (enabled, ha_url, ha_token, until, updated) = crate::bridge::state::with_state(|s| {
+        let tok = s
+            .creds
+            .as_ref()
+            .map(|c| c.ha_token.clone())
+            .unwrap_or_default();
+        (
+            s.ha_sync_snooze,
+            s.ha_url.clone(),
+            tok,
+            s.snooze_until_epoch,
+            s.snooze_updated_at_epoch,
+        )
+    });
+    if !enabled || ha_url.trim().is_empty() || ha_token.trim().is_empty() {
+        return;
+    }
+    if let Some(rt) = crate::bridge::autostart::background_runtime() {
+        rt.spawn(async move {
+            if let Err(e) =
+                crate::api::publish_ha_snooze_state_async(&ha_url, &ha_token, until, updated).await
+            {
+                crate::event_log::log_warn(
+                    "ALERT",
+                    format!("Failed to sync alert snooze to Home Assistant: {e}"),
+                );
+            }
+        });
     }
 }

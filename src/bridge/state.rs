@@ -67,7 +67,14 @@ pub struct AppState {
     pub ea1c_display: String,
     pub gmi_display: String,
     pub tir_display: String,
+    pub accessible_summary: String,
+    pub sensor_status_display: String,
+    pub sensor_serial: String,
+    pub sensor_in_warmup: bool,
+    pub sensor_expiring_soon: bool,
+    pub last_sensor_expiry_alert_epoch: i64,
     pub snooze_until_epoch: i64,
+    pub snooze_updated_at_epoch: i64,
     pub last_alert: Option<(AlertKind, i64)>,
     pub snapshot: GlucoseSnapshot,
     pub creds: Option<StoredCredentials>,
@@ -81,6 +88,8 @@ pub struct AppState {
     pub country: String,
     pub language: String,
     pub theme_mode: String,
+    pub ui_zoom_percent: i32,
+    pub high_contrast_mode: bool,
     pub window_mode: String,
     pub overlay_visible: bool,
     pub overlay_only_mode: bool,
@@ -113,6 +122,13 @@ pub struct AppState {
     pub credentials_encrypted: bool,
     pub remember_password: bool,
     pub credentials_vault_path: String,
+    pub data_source: String,
+    pub ha_url: String,
+    pub ha_sensor_entity_id: String,
+    pub ha_token_configured: bool,
+    pub ha_sync_medications: bool,
+    pub ha_sync_snooze: bool,
+    pub sensor_expiry_alert_hours: i32,
     pub urgent_low_mg_dl: f64,
     pub alert_repeat_minutes: i32,
     pub stale_after_minutes: i32,
@@ -191,7 +207,19 @@ impl Default for AppState {
             ea1c_display: "--%".to_string(),
             gmi_display: "--%".to_string(),
             tir_display: "--%".to_string(),
+            accessible_summary: crate::models::accessible_glucose_announcement(
+                &GlucoseSnapshot::default(),
+                &settings,
+                false,
+                "",
+            ),
+            sensor_status_display: "—".to_string(),
+            sensor_serial: String::new(),
+            sensor_in_warmup: false,
+            sensor_expiring_soon: false,
+            last_sensor_expiry_alert_epoch: 0,
             snooze_until_epoch: settings.snooze_until_epoch,
+            snooze_updated_at_epoch: settings.snooze_updated_at_epoch,
             last_alert: None,
             snapshot: GlucoseSnapshot::default(),
             creds: None,
@@ -204,6 +232,8 @@ impl Default for AppState {
             country: crate::api::normalize_country_code(&settings.country),
             language: settings.language.clone(),
             theme_mode: settings.theme_mode.clone(),
+            ui_zoom_percent: crate::models::clamp_ui_zoom_percent(settings.ui_text_scale),
+            high_contrast_mode: settings.high_contrast_mode,
             window_mode: settings.window_mode.clone(),
             overlay_visible: settings.overlay_visible
                 || settings.window_mode == "overlay"
@@ -242,6 +272,21 @@ impl Default for AppState {
             credentials_vault_path: crate::paths::credentials_file_path()
                 .to_string_lossy()
                 .into_owned(),
+            data_source: if settings
+                .data_source
+                .trim()
+                .eq_ignore_ascii_case("home_assistant")
+            {
+                "home_assistant".to_string()
+            } else {
+                "librelinkup".to_string()
+            },
+            ha_url: settings.ha_url.clone(),
+            ha_sensor_entity_id: settings.ha_sensor_entity_id.clone(),
+            ha_token_configured: false,
+            ha_sync_medications: settings.ha_sync_medications,
+            ha_sync_snooze: settings.ha_sync_snooze,
+            sensor_expiry_alert_hours: settings.sensor_expiry_alert_hours.clamp(0, 168),
             urgent_low_mg_dl: settings.effective_urgent_low(),
             alert_repeat_minutes: settings.alert_repeat_minutes.clamp(1, 240) as i32,
             stale_after_minutes: settings.effective_stale_after_minutes() as i32,

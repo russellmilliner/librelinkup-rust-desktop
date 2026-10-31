@@ -65,6 +65,9 @@ pub struct StoredCredentials {
     pub first_name: String,
     #[serde(default)]
     pub last_name: String,
+    /// Optional Home Assistant Long-Lived Access Token (encrypted inside the same AES-256-GCM vault).
+    #[serde(default)]
+    pub ha_token: String,
 }
 
 impl fmt::Debug for StoredCredentials {
@@ -79,6 +82,7 @@ impl fmt::Debug for StoredCredentials {
             .field("patient_id", &"[REDACTED]")
             .field("first_name", &"[REDACTED]")
             .field("last_name", &"[REDACTED]")
+            .field("ha_token", &"[REDACTED]")
             .finish()
     }
 }
@@ -92,12 +96,29 @@ impl Drop for StoredCredentials {
         self.patient_id.zeroize();
         self.first_name.zeroize();
         self.last_name.zeroize();
+        self.ha_token.zeroize();
     }
 }
 
 impl StoredCredentials {
-    pub fn has_valid_session(&self) -> bool {
+    pub fn has_valid_llu_session(&self) -> bool {
         !self.token.trim().is_empty() && !self.account_id.trim().is_empty()
+    }
+
+    pub fn has_valid_ha_session(&self) -> bool {
+        !self.ha_token.trim().is_empty()
+    }
+
+    pub fn has_valid_session(&self) -> bool {
+        self.has_valid_llu_session() || self.has_valid_ha_session()
+    }
+
+    pub fn has_valid_session_for(&self, data_source: &str, ha_url: &str) -> bool {
+        if data_source.trim().eq_ignore_ascii_case("home_assistant") {
+            self.has_valid_ha_session() && !ha_url.trim().is_empty()
+        } else {
+            self.has_valid_llu_session()
+        }
     }
 
     /// Returns a copy prepared for vault storage, stripping `password` unless `remember_password` is `true`.
@@ -109,6 +130,54 @@ impl StoredCredentials {
         }
         out
     }
+}
+
+/// Parses `HA_URL` and `HA_TOKEN` from a dotenv-style configuration string.
+pub fn parse_ha_env_contents(raw: &str) -> Option<(String, String)> {
+    let mut url = String::new();
+    let mut token = String::new();
+    for line in raw.lines() {
+        let trimmed = line.trim();
+        if trimmed.is_empty() || trimmed.starts_with('#') {
+            continue;
+        }
+        let cleaned = trimmed.strip_prefix("export ").unwrap_or(trimmed).trim();
+        if let Some((k, v)) = cleaned.split_once('=') {
+            let key = k.trim();
+            let val = v.trim().trim_matches('"').trim_matches('\'').trim();
+            if key == "HA_URL" && !val.is_empty() {
+                url = val.to_string();
+            } else if key == "HA_TOKEN" && !val.is_empty() {
+                token = val.to_string();
+            }
+        }
+    }
+    if !url.is_empty() && !token.is_empty() {
+        Some((url, token))
+    } else {
+        None
+    }
+}
+
+/// Attempts to read `HA_URL` and `HA_TOKEN` from `~/.config/home-assistant.env` on the local host.
+pub fn try_load_host_ha_env() -> Option<(String, String)> {
+    let mut candidates = Vec::new();
+    if let Ok(home) = std::env::var("HOME") {
+        candidates.push(std::path::PathBuf::from(home).join(".config/home-assistant.env"));
+    }
+    if let Ok(userprofile) = std::env::var("USERPROFILE") {
+        candidates.push(std::path::PathBuf::from(userprofile).join(".config/home-assistant.env"));
+    }
+    for path in candidates {
+        if let Ok(mut raw) = fs::read_to_string(&path) {
+            let parsed = parse_ha_env_contents(&raw);
+            raw.zeroize();
+            if parsed.is_some() {
+                return parsed;
+            }
+        }
+    }
+    None
 }
 
 #[derive(Clone, Serialize, Deserialize)]
@@ -710,6 +779,7 @@ pub fn try_migrate_legacy_leveldb_credentials(leveldb_dir: &Path) -> Option<Stor
                             patient_id: String::new(),
                             first_name: String::new(),
                             last_name: String::new(),
+                            ha_token: String::new(),
                         });
                     }
                 }
@@ -734,6 +804,7 @@ mod tests {
             patient_id: "pat-uuid-8888".into(),
             first_name: "SecretFirst".into(),
             last_name: "SecretLast".into(),
+            ha_token: "ha-long-lived-secret-token".into(),
         }
     }
 

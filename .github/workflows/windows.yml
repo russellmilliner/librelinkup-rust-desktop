@@ -181,9 +181,12 @@ jobs:
           flatpak remote-add --user --if-not-exists flathub \
             https://flathub.org/repo/flathub.flatpakrepo
           flatpak install --user -y --noninteractive flathub \
-            org.kde.Platform//6.11 org.kde.Sdk//6.11 \
-            org.freedesktop.Sdk.Extension.rust-stable \
-            org.freedesktop.Sdk.Extension.llvm22
+            org.kde.Platform//6.11 org.kde.Sdk//6.11
+          FDO_EXT_VER="$(flatpak info --show-metadata org.kde.Sdk//6.11 | sed -n '/^\[Extension org\.freedesktop\.Sdk\.Extension\]/,/^\[/s/^version\s*=\s*//p' | head -n1 | tr -d '[:space:]')"
+          FDO_EXT_VER="${FDO_EXT_VER:-25.08}"
+          flatpak install --user -y --noninteractive flathub \
+            "org.freedesktop.Sdk.Extension.rust-stable//${FDO_EXT_VER}" \
+            "org.freedesktop.Sdk.Extension.llvm22//${FDO_EXT_VER}"
 
       - name: Install Rust (stable)
         uses: dtolnay/rust-toolchain@stable

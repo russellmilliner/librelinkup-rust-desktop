@@ -1,5 +1,6 @@
 #pragma once
 
+#include <QAccessible>
 #include <QApplication>
 #include <QColor>
 #include <QCoreApplication>
@@ -8,6 +9,7 @@
 #include <QFont>
 #include <QIcon>
 #include <QImage>
+#include <QKeyEvent>
 #include <QLinearGradient>
 #include <QList>
 #include <QLoggingCategory>
@@ -66,7 +68,7 @@ inline void inspect_item_tree(
     const QString className = QString::fromLatin1(item->metaObject()->className());
     const QString label = objName.isEmpty() ? className : QStringLiteral("%1(%2)").arg(objName, className);
 
-    // 1. Check horizontal & vertical Layout implicit size overflows
+    // 1. Check horizontal & vertical Layout implicit size overflows and RowLayout sibling overlaps
     if (className.contains(QStringLiteral("QQuickRowLayout")) ||
         className.contains(QStringLiteral("QQuickColumnLayout")) ||
         className.contains(QStringLiteral("QQuickGridLayout"))) {
@@ -85,6 +87,45 @@ inline void inspect_item_tree(
                     .arg(item->implicitHeight(), 0, 'f', 1)
                     .arg(item->height(), 0, 'f', 1)
             );
+        }
+        if (className.contains(QStringLiteral("QQuickRowLayout"))) {
+            QVector<QQuickItem*> rowChildren;
+            for (QQuickItem* child : item->childItems()) {
+                if (child && child->isVisible() && child->opacity() > 0.01 && child->width() > 0.5 && child->height() > 0.5) {
+                    const QString cClass = QString::fromLatin1(child->metaObject()->className());
+                    if (!cClass.contains(QStringLiteral("MouseArea")) && !cClass.contains(QStringLiteral("HoverHandler"))) {
+                        rowChildren.append(child);
+                    }
+                }
+            }
+            std::sort(rowChildren.begin(), rowChildren.end(), [](QQuickItem* a, QQuickItem* b) {
+                return a->x() < b->x();
+            });
+            for (int i = 0; i + 1 < rowChildren.size(); ++i) {
+                QQuickItem* leftItem = rowChildren[i];
+                QQuickItem* rightItem = rowChildren[i + 1];
+                const qreal leftContentW = leftItem->property("contentWidth").toReal();
+                const int leftElide = leftItem->property("elide").toInt();
+                const qreal effectiveLeftWidth = (leftElide == 0 && leftContentW > leftItem->width())
+                    ? leftContentW
+                    : leftItem->width();
+                const qreal leftRightEdge = leftItem->x() + effectiveLeftWidth;
+                if (leftRightEdge > rightItem->x() + 1.5) {
+                    const QString leftDesc = leftItem->objectName().isEmpty()
+                        ? leftItem->property("text").toString()
+                        : leftItem->objectName();
+                    const QString rightDesc = rightItem->objectName().isEmpty()
+                        ? QString::fromLatin1(rightItem->metaObject()->className())
+                        : rightItem->objectName();
+                    violations.append(
+                        QStringLiteral("[%1] RowLayout '%2' child '%3' (right=%4) overlaps sibling '%5' (x=%6)")
+                            .arg(contextLabel, label, leftDesc)
+                            .arg(leftRightEdge, 0, 'f', 1)
+                            .arg(rightDesc)
+                            .arg(rightItem->x(), 0, 'f', 1)
+                    );
+                }
+            }
         }
     }
 
@@ -106,7 +147,8 @@ inline void inspect_item_tree(
         QStringLiteral("aboutHeaderCard"),
         QStringLiteral("aboutLinksCard"),
         QStringLiteral("overlayPill"),
-        QStringLiteral("mainHeaderToolBar")
+        QStringLiteral("mainHeaderToolBar"),
+        QStringLiteral("mainFooterBar")
     };
     if (cardNames.contains(objName)) {
         const qreal cardW = item->width();
@@ -817,6 +859,289 @@ inline QString librelinkup_run_ui_overflow_tests() {
                 }
             }
         }
+        mainWin->setProperty("activeTab", QStringLiteral("dashboard"));
+        librelinkup_uitest::pump_events(25);
+    }
+
+    // State G: Accessibility, Screen-Reader Semantics, Keyboard Navigation & Multi-Zoom Layout Verification
+    {
+        QMetaObject::invokeMethod(ctrl, "loadDemoSampleData", Qt::DirectConnection);
+        QMetaObject::invokeMethod(settingsCtrl, "resetZoom", Qt::DirectConnection);
+        QMetaObject::invokeMethod(settingsCtrl, "updateHighContrastMode", Qt::DirectConnection, Q_ARG(bool, false));
+        sync_all();
+        mainWin->resize(960, 660);
+        mainWin->setProperty("activeTab", QStringLiteral("dashboard"));
+        librelinkup_uitest::pump_events(35);
+
+        // 1. Verify live screen-reader glucose announcement (accessibleSummary) & sensor countdown
+        const QString accSummary = ctrl->property("accessibleSummary").toString();
+        if (accSummary.isEmpty() || !accSummary.contains(QStringLiteral("112")) || !accSummary.contains(QStringLiteral("In Range"))) {
+            violations.append(
+                QStringLiteral("Expected accessibleSummary to include demo glucose reading and range status, got '%1'")
+                    .arg(accSummary)
+            );
+        }
+        const QString sensorStatus = ctrl->property("sensorStatusDisplay").toString();
+        if (!sensorStatus.contains(QStringLiteral("40TUAM8CTE0")) || !sensorStatus.contains(QStringLiteral("remaining"))) {
+            violations.append(
+                QStringLiteral("Expected demo sensorStatusDisplay to include serial '40TUAM8CTE0' and countdown, got '%1'")
+                    .arg(sensorStatus)
+            );
+        }
+
+        // Verify Home Assistant sync & sensor expiry threshold invokables
+        QMetaObject::invokeMethod(settingsCtrl, "updateHaSyncMedications", Qt::DirectConnection, Q_ARG(bool, false));
+        QMetaObject::invokeMethod(settingsCtrl, "updateHaSyncSnooze", Qt::DirectConnection, Q_ARG(bool, false));
+        QMetaObject::invokeMethod(settingsCtrl, "updateSensorExpiryAlertHours", Qt::DirectConnection, Q_ARG(qint32, 36));
+        sync_all();
+        if (settingsCtrl->property("haSyncMedications").toBool() ||
+            settingsCtrl->property("haSyncSnooze").toBool() ||
+            settingsCtrl->property("sensorExpiryAlertHours").toInt() != 36) {
+            violations.append(QStringLiteral("Failed to update haSyncMedications / haSyncSnooze / sensorExpiryAlertHours"));
+        }
+        QMetaObject::invokeMethod(settingsCtrl, "updateHaSyncMedications", Qt::DirectConnection, Q_ARG(bool, true));
+        QMetaObject::invokeMethod(settingsCtrl, "updateHaSyncSnooze", Qt::DirectConnection, Q_ARG(bool, true));
+        QMetaObject::invokeMethod(settingsCtrl, "updateSensorExpiryAlertHours", Qt::DirectConnection, Q_ARG(qint32, 24));
+        sync_all();
+
+        // 2. Verify QAccessible interface names on key controls & cards
+        const QStringList requiredAccessibleObjects = {
+            QStringLiteral("heroCard"),
+            QStringLiteral("detailsCard"),
+            QStringLiteral("sensorStatusValueLabel"),
+            QStringLiteral("graphCard"),
+            QStringLiteral("glucoseCanvas"),
+            QStringLiteral("headerKofiBadge"),
+            QStringLiteral("buttonRefreshNow"),
+            QStringLiteral("buttonToTray"),
+            QStringLiteral("mainFooterBar"),
+            QStringLiteral("footerStatusLabel"),
+            QStringLiteral("footerHighContrastButton"),
+            QStringLiteral("zoomOutButton"),
+            QStringLiteral("zoomResetButton"),
+            QStringLiteral("zoomInButton"),
+            QStringLiteral("haSyncMedicationsSwitch"),
+            QStringLiteral("haSyncSnoozeSwitch"),
+            QStringLiteral("sensorExpiryAlertSpin")
+        };
+        for (const QString& objName : requiredAccessibleObjects) {
+            QQuickItem* item = mainWin->findChild<QQuickItem*>(objName);
+            if (!item) {
+                violations.append(QStringLiteral("Missing expected accessible QQuickItem '%1'").arg(objName));
+                continue;
+            }
+            QAccessibleInterface* iface = QAccessible::queryAccessibleInterface(item);
+            const QString accName = iface ? iface->text(QAccessible::Name).trimmed() : QString();
+            if (accName.isEmpty()) {
+                violations.append(QStringLiteral("Accessible.name is empty on QQuickItem '%1'").arg(objName));
+            }
+        }
+        if (QQuickWindow* ovWin = mainWin->findChild<QQuickWindow*>(QStringLiteral("librelinkupOverlayWindow"))) {
+            const QStringList overlayAccessibleObjects = {
+                QStringLiteral("overlayPill"),
+                QStringLiteral("overlayThemeToggleBtn"),
+                QStringLiteral("overlayAllDesktopsBtn"),
+                QStringLiteral("overlayRestoreBtn"),
+                QStringLiteral("overlayMenuBtn"),
+                QStringLiteral("overlayCloseBtn")
+            };
+            for (const QString& objName : overlayAccessibleObjects) {
+                QQuickItem* item = ovWin->findChild<QQuickItem*>(objName);
+                if (!item) {
+                    violations.append(QStringLiteral("Missing expected accessible overlay QQuickItem '%1'").arg(objName));
+                    continue;
+                }
+                QAccessibleInterface* iface = QAccessible::queryAccessibleInterface(item);
+                const QString accName = iface ? iface->text(QAccessible::Name).trimmed() : QString();
+                if (accName.isEmpty()) {
+                    violations.append(QStringLiteral("Accessible.name is empty on overlay QQuickItem '%1'").arg(objName));
+                }
+            }
+        }
+
+        // 3. Verify keyboard zoom shortcuts (Ctrl++, Ctrl+-, Ctrl+0, and Ctrl+Wheel)
+        QKeyEvent zoomInKey(QEvent::KeyPress, Qt::Key_Plus, Qt::ControlModifier);
+        QCoreApplication::sendEvent(mainWin, &zoomInKey);
+        sync_all();
+        librelinkup_uitest::pump_events(15);
+        if (settingsCtrl->property("uiZoomPercent").toInt() != 110) {
+            violations.append(
+                QStringLiteral("Expected Ctrl++ to set uiZoomPercent=110, got %1")
+                    .arg(settingsCtrl->property("uiZoomPercent").toInt())
+            );
+        }
+
+        const QPointF centerPt(mainWin->width() * 0.5, mainWin->height() * 0.5);
+        QWheelEvent ctrlWheelIn(
+            centerPt,
+            mainWin->mapToGlobal(centerPt.toPoint()),
+            QPoint(0, 0),
+            QPoint(0, 120),
+            Qt::NoButton,
+            Qt::ControlModifier,
+            Qt::NoScrollPhase,
+            false
+        );
+        QCoreApplication::sendEvent(mainWin, &ctrlWheelIn);
+        sync_all();
+        librelinkup_uitest::pump_events(15);
+        if (settingsCtrl->property("uiZoomPercent").toInt() != 120) {
+            violations.append(
+                QStringLiteral("Expected Ctrl+Wheel up to set uiZoomPercent=120, got %1")
+                    .arg(settingsCtrl->property("uiZoomPercent").toInt())
+            );
+        }
+
+        QKeyEvent zoomOutKey(QEvent::KeyPress, Qt::Key_Minus, Qt::ControlModifier);
+        QCoreApplication::sendEvent(mainWin, &zoomOutKey);
+        sync_all();
+        librelinkup_uitest::pump_events(15);
+        if (settingsCtrl->property("uiZoomPercent").toInt() != 110) {
+            violations.append(
+                QStringLiteral("Expected Ctrl+- to set uiZoomPercent=110, got %1")
+                    .arg(settingsCtrl->property("uiZoomPercent").toInt())
+            );
+        }
+
+        QKeyEvent zoomResetKey(QEvent::KeyPress, Qt::Key_0, Qt::ControlModifier);
+        QCoreApplication::sendEvent(mainWin, &zoomResetKey);
+        sync_all();
+        librelinkup_uitest::pump_events(15);
+        if (settingsCtrl->property("uiZoomPercent").toInt() != 100) {
+            violations.append(
+                QStringLiteral("Expected Ctrl+0 to reset uiZoomPercent=100, got %1")
+                    .arg(settingsCtrl->property("uiZoomPercent").toInt())
+            );
+        }
+
+        // 4. Verify Alt+1..Alt+7 tab keyboard navigation
+        const QList<QPair<Qt::Key, QString>> tabHotkeys = {
+            {Qt::Key_2, QStringLiteral("medications")},
+            {Qt::Key_3, QStringLiteral("general")},
+            {Qt::Key_4, QStringLiteral("alerts")},
+            {Qt::Key_5, QStringLiteral("account")},
+            {Qt::Key_6, QStringLiteral("logs")},
+            {Qt::Key_7, QStringLiteral("about")},
+            {Qt::Key_1, QStringLiteral("dashboard")}
+        };
+        for (const auto& pair : tabHotkeys) {
+            QKeyEvent tabKey(QEvent::KeyPress, pair.first, Qt::AltModifier);
+            QCoreApplication::sendEvent(mainWin, &tabKey);
+            librelinkup_uitest::pump_events(15);
+            const QString currentTab = mainWin->property("activeTab").toString();
+            if (currentTab != pair.second) {
+                violations.append(
+                    QStringLiteral("Expected Alt+%1 to switch activeTab to '%2', got '%3'")
+                        .arg(int(pair.first - Qt::Key_0))
+                        .arg(pair.second, currentTab)
+                );
+            }
+        }
+
+        // 5. Verify keyboard point inspection on glucoseCanvas (selectPointByIndex / Home / Right / Left / End / Escape)
+        if (QQuickItem* canvas = mainWin->findChild<QQuickItem*>(QStringLiteral("glucoseCanvas"))) {
+            QMetaObject::invokeMethod(canvas, "selectPointByIndex", Qt::DirectConnection, Q_ARG(QVariant, QVariant(0)));
+            librelinkup_uitest::pump_events(15);
+            if (canvas->property("hoveredIndex").toInt() != 0 || canvas->property("hoveredValueText").toString().isEmpty()) {
+                violations.append(QStringLiteral("glucoseCanvas selectPointByIndex(0) did not populate hoveredIndex/hoveredValueText"));
+            }
+            QMetaObject::invokeMethod(canvas, "selectPointByIndex", Qt::DirectConnection, Q_ARG(QVariant, QVariant(5)));
+            librelinkup_uitest::pump_events(15);
+            if (canvas->property("hoveredIndex").toInt() != 5) {
+                violations.append(
+                    QStringLiteral("Expected glucoseCanvas hoveredIndex=5 after selectPointByIndex(5), got %1")
+                        .arg(canvas->property("hoveredIndex").toInt())
+                );
+            }
+            QMetaObject::invokeMethod(canvas, "clearHover", Qt::DirectConnection);
+            librelinkup_uitest::pump_events(15);
+            if (canvas->property("hoveredIndex").toInt() != -1) {
+                violations.append(QStringLiteral("Expected glucoseCanvas clearHover() to reset hoveredIndex=-1"));
+            }
+        }
+
+        // 6. Verify that UI zoom (100% -> 130%) scales typography across Dashboard, Settings, and Status Bar
+        //    and produces zero card/window/sibling layout overflows across zoom scales (80%, 100%, 130%)
+        QMetaObject::invokeMethod(settingsCtrl, "updateUiZoomPercent", Qt::DirectConnection, Q_ARG(qint32, 100));
+        sync_all();
+        librelinkup_uitest::pump_events(25);
+
+        auto read_item_font_pt = [mainWin](const QString& objName) -> double {
+            if (QQuickItem* it = mainWin->findChild<QQuickItem*>(objName)) {
+                const QFont f = it->property("font").value<QFont>();
+                return f.pointSizeF();
+            }
+            return -1.0;
+        };
+
+        const double heroPt100 = read_item_font_pt(QStringLiteral("heroGlucoseValueLabel"));
+        const double sensorPt100 = read_item_font_pt(QStringLiteral("sensorStatusValueLabel"));
+        const double opacityLabelPt100 = read_item_font_pt(QStringLiteral("overlayOpacityLabel"));
+        const double footerPt100 = read_item_font_pt(QStringLiteral("footerStatusLabel"));
+
+        QMetaObject::invokeMethod(settingsCtrl, "updateUiZoomPercent", Qt::DirectConnection, Q_ARG(qint32, 130));
+        sync_all();
+        librelinkup_uitest::pump_events(25);
+
+        const double heroPt130 = read_item_font_pt(QStringLiteral("heroGlucoseValueLabel"));
+        const double sensorPt130 = read_item_font_pt(QStringLiteral("sensorStatusValueLabel"));
+        const double opacityLabelPt130 = read_item_font_pt(QStringLiteral("overlayOpacityLabel"));
+        const double footerPt130 = read_item_font_pt(QStringLiteral("footerStatusLabel"));
+
+        if (heroPt100 <= 0.0 || heroPt130 < heroPt100 * 1.22) {
+            violations.append(
+                QStringLiteral("Expected heroGlucoseValueLabel font.pointSize to scale with 130% zoom (%1 -> %2)")
+                    .arg(heroPt100, 0, 'f', 2)
+                    .arg(heroPt130, 0, 'f', 2)
+            );
+        }
+        if (sensorPt100 <= 0.0 || sensorPt130 < sensorPt100 * 1.22) {
+            violations.append(
+                QStringLiteral("Expected sensorStatusValueLabel font.pointSize to scale with 130% zoom (%1 -> %2)")
+                    .arg(sensorPt100, 0, 'f', 2)
+                    .arg(sensorPt130, 0, 'f', 2)
+            );
+        }
+        if (opacityLabelPt100 <= 0.0 || opacityLabelPt130 < opacityLabelPt100 * 1.22) {
+            violations.append(
+                QStringLiteral("Expected overlayOpacityLabel font.pointSize to scale with 130% zoom (%1 -> %2)")
+                    .arg(opacityLabelPt100, 0, 'f', 2)
+                    .arg(opacityLabelPt130, 0, 'f', 2)
+            );
+        }
+        if (footerPt100 <= 0.0 || footerPt130 < footerPt100 * 1.22) {
+            violations.append(
+                QStringLiteral("Expected footerStatusLabel font.pointSize to scale with 130% zoom (%1 -> %2)")
+                    .arg(footerPt100, 0, 'f', 2)
+                    .arg(footerPt130, 0, 'f', 2)
+            );
+        }
+
+        const QVector<int> zoomLevels = {80, 100, 130};
+        for (const QString& theme : {QStringLiteral("dark"), QStringLiteral("light")}) {
+            QMetaObject::invokeMethod(ctrl, "updateThemeMode", Qt::DirectConnection, Q_ARG(QString, theme));
+            QMetaObject::invokeMethod(settingsCtrl, "updateHighContrastMode", Qt::DirectConnection, Q_ARG(bool, true));
+            for (int zoomPct : zoomLevels) {
+                QMetaObject::invokeMethod(settingsCtrl, "updateUiZoomPercent", Qt::DirectConnection, Q_ARG(qint32, zoomPct));
+                sync_all();
+                mainWin->resize(980, 720);
+                for (const QString& tab : tabs) {
+                    mainWin->setProperty("activeTab", tab);
+                    librelinkup_uitest::pump_events(25);
+                    librelinkup_uitest::inspect_window_tree(
+                        mainWin,
+                        QStringLiteral("A11y/Theme=%1/HC=true/Zoom=%2%/Tab=%3").arg(theme).arg(zoomPct).arg(tab),
+                        violations
+                    );
+                }
+            }
+        }
+
+        // Restore default zoom (100%) and High Contrast Mode (false)
+        QMetaObject::invokeMethod(settingsCtrl, "resetZoom", Qt::DirectConnection);
+        QMetaObject::invokeMethod(settingsCtrl, "updateHighContrastMode", Qt::DirectConnection, Q_ARG(bool, false));
+        QMetaObject::invokeMethod(ctrl, "updateThemeMode", Qt::DirectConnection, Q_ARG(QString, QStringLiteral("dark")));
+        sync_all();
         mainWin->setProperty("activeTab", QStringLiteral("dashboard"));
         librelinkup_uitest::pump_events(25);
     }

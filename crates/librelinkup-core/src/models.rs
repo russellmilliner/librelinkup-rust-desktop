@@ -162,6 +162,21 @@ pub struct GlucoseSnapshot {
     /// `FactoryTimestamp`, which is UTC). `None` when unknown (e.g. sample data).
     #[serde(default)]
     pub measured_at_epoch: Option<i64>,
+    /// Active CGM sensor serial number (e.g. `"40TUAM8CTE0"`).
+    #[serde(default)]
+    pub sensor_serial: String,
+    /// Unix epoch seconds when the current CGM sensor was activated/applied.
+    #[serde(default)]
+    pub sensor_activated_at_epoch: Option<i64>,
+    /// Unix epoch seconds when the current CGM sensor expires.
+    #[serde(default)]
+    pub sensor_expires_at_epoch: Option<i64>,
+    /// Sensor rated lifespan in days (typically `14` or `15` for Plus sensors).
+    #[serde(default)]
+    pub sensor_lifespan_days: i32,
+    /// Whether the active sensor is a Plus (15-day) model.
+    #[serde(default)]
+    pub sensor_plus_model: bool,
 }
 
 impl fmt::Debug for GlucoseSnapshot {
@@ -177,6 +192,11 @@ impl fmt::Debug for GlucoseSnapshot {
             .field("last_name", &"[REDACTED]")
             .field("graph_points_len", &self.graph_points.len())
             .field("measured_at_epoch", &self.measured_at_epoch)
+            .field("sensor_serial", &"[REDACTED]")
+            .field("sensor_activated_at_epoch", &self.sensor_activated_at_epoch)
+            .field("sensor_expires_at_epoch", &self.sensor_expires_at_epoch)
+            .field("sensor_lifespan_days", &self.sensor_lifespan_days)
+            .field("sensor_plus_model", &self.sensor_plus_model)
             .finish()
     }
 }
@@ -194,6 +214,98 @@ impl Default for GlucoseSnapshot {
             last_name: String::new(),
             graph_points: Vec::new(),
             measured_at_epoch: None,
+            sensor_serial: String::new(),
+            sensor_activated_at_epoch: None,
+            sensor_expires_at_epoch: None,
+            sensor_lifespan_days: 0,
+            sensor_plus_model: false,
+        }
+    }
+}
+
+/// FreeStyle Libre sensor warmup duration after initial activation (60 minutes).
+pub const SENSOR_WARMUP_SECONDS: i64 = 60 * 60;
+
+impl GlucoseSnapshot {
+    /// Returns `true` when the sensor was activated within the last 60 minutes (`SENSOR_WARMUP_SECONDS`).
+    pub fn is_sensor_in_warmup(&self, now_epoch: i64) -> bool {
+        self.sensor_activated_at_epoch
+            .is_some_and(|act| now_epoch >= act && (now_epoch - act) < SENSOR_WARMUP_SECONDS)
+    }
+
+    /// Remaining warmup minutes (`1..=60`) if the sensor is currently warming up.
+    pub fn sensor_warmup_minutes_remaining(&self, now_epoch: i64) -> Option<i64> {
+        let act = self.sensor_activated_at_epoch?;
+        if now_epoch >= act && (now_epoch - act) < SENSOR_WARMUP_SECONDS {
+            let rem_secs = (act + SENSOR_WARMUP_SECONDS - now_epoch).max(1);
+            Some((rem_secs + 59) / 60)
+        } else {
+            None
+        }
+    }
+
+    /// Effective Unix epoch seconds when the sensor expires, either from explicit
+    /// `sensor_expires_at_epoch` or derived from `sensor_activated_at_epoch + lifespan_days`.
+    pub fn effective_sensor_expires_at_epoch(&self) -> Option<i64> {
+        self.sensor_expires_at_epoch.or_else(|| {
+            self.sensor_activated_at_epoch.map(|act| {
+                let days = if self.sensor_lifespan_days > 0 {
+                    i64::from(self.sensor_lifespan_days)
+                } else if self.sensor_plus_model {
+                    15
+                } else {
+                    14
+                };
+                act + days * 86_400
+            })
+        })
+    }
+
+    /// Seconds remaining until sensor expiration (negative if expired).
+    pub fn sensor_seconds_remaining(&self, now_epoch: i64) -> Option<i64> {
+        self.effective_sensor_expires_at_epoch()
+            .map(|exp| exp - now_epoch)
+    }
+
+    /// Returns `true` when the sensor has less than or equal to `threshold_hours` remaining
+    /// (or has already expired).
+    pub fn is_sensor_expiring_soon(&self, now_epoch: i64, threshold_hours: i32) -> bool {
+        if threshold_hours <= 0 {
+            return false;
+        }
+        self.sensor_seconds_remaining(now_epoch)
+            .is_some_and(|rem| rem <= i64::from(threshold_hours) * 3600)
+    }
+
+    /// Formats a concise human-readable sensor warmup / expiry countdown string for the UI.
+    pub fn format_sensor_status(&self, now_epoch: i64) -> String {
+        if let Some(mins) = self.sensor_warmup_minutes_remaining(now_epoch) {
+            return if self.sensor_serial.is_empty() {
+                format!("⏳ Warmup: {mins}m remaining")
+            } else {
+                format!("⏳ Warmup: {mins}m remaining (SN: {})", self.sensor_serial)
+            };
+        }
+        let Some(rem) = self.sensor_seconds_remaining(now_epoch) else {
+            return if self.sensor_serial.is_empty() {
+                "—".to_string()
+            } else {
+                format!("SN: {}", self.sensor_serial)
+            };
+        };
+        let countdown = if rem <= 0 {
+            "⚠ Sensor expired".to_string()
+        } else if rem < 3600 {
+            format!("⚠ Expires in {}m", (rem + 59) / 60)
+        } else if rem < 86_400 {
+            format!("⚠ {}h {}m remaining", rem / 3600, (rem % 3600) / 60)
+        } else {
+            format!("{}d {}h remaining", rem / 86_400, (rem % 86_400) / 3600)
+        };
+        if self.sensor_serial.is_empty() {
+            countdown
+        } else {
+            format!("{countdown} ({})", self.sensor_serial)
         }
     }
 }
@@ -236,6 +348,9 @@ pub struct AppSettings {
     pub custom_target_low: f64,
     pub custom_target_high: f64,
     pub ui_text_scale: i32,
+    /// Optional high-contrast accessibility mode (thicker borders, stronger focus rings, and
+    /// explicit status icon prefixes alongside color coding).
+    pub high_contrast_mode: bool,
     /// Urgent-low threshold (mg/dL). Urgent-low alerts ignore snooze and repeat every 5 min.
     pub urgent_low_mg_dl: f64,
     /// Minimum minutes between repeated alerts of the same kind.
@@ -246,6 +361,8 @@ pub struct AppSettings {
     pub alert_on_stale: bool,
     /// Non-urgent alerts are silenced until this Unix epoch second (0 = not snoozed).
     pub snooze_until_epoch: i64,
+    /// Unix epoch second when `snooze_until_epoch` was last updated locally or via Home Assistant.
+    pub snooze_updated_at_epoch: i64,
     /// Check GitHub Releases for a newer version automatically at startup.
     pub check_updates_on_startup: bool,
     /// Opt-in: also persist the account password inside the encrypted vault so expired
@@ -253,6 +370,21 @@ pub struct AppSettings {
     pub remember_password: bool,
     /// Selected glycemic statistics window (`12h`, `7d`, `14d`, `30d`, `90d`).
     pub stats_window: String,
+    /// Active telemetry data source: `"librelinkup"` (default) or `"home_assistant"`.
+    pub data_source: String,
+    /// Base URL for the Home Assistant instance (e.g. `"https://haos.dingo-dory.ts.net"`).
+    pub ha_url: String,
+    /// Optional explicit Home Assistant glucose sensor entity ID (e.g.
+    /// `"sensor.russell_milliner_measurement"`). Empty = auto-discover LibreLink sensor.
+    pub ha_sensor_entity_id: String,
+    /// Two-way synchronization of medications and dose logs with Home Assistant
+    /// (`sensor.librelinkup_medications` and `librelinkup_medication_dose_logged` event).
+    pub ha_sync_medications: bool,
+    /// Cross-device synchronization of alert snooze state with Home Assistant
+    /// (`sensor.librelinkup_alert_snooze` and `librelinkup_alert_snooze_changed` event).
+    pub ha_sync_snooze: bool,
+    /// Warn when the active CGM sensor has fewer than this many hours remaining (`0` = disabled).
+    pub sensor_expiry_alert_hours: i32,
 }
 
 impl Default for AppSettings {
@@ -293,14 +425,22 @@ impl Default for AppSettings {
             custom_target_low: DEFAULT_TARGET_LOW_MG_DL,
             custom_target_high: DEFAULT_TARGET_HIGH_MG_DL,
             ui_text_scale: 100,
+            high_contrast_mode: false,
             urgent_low_mg_dl: DEFAULT_URGENT_LOW_MG_DL,
             alert_repeat_minutes: DEFAULT_ALERT_REPEAT_MINUTES,
             stale_after_minutes: DEFAULT_STALE_AFTER_MINUTES,
             alert_on_stale: true,
             snooze_until_epoch: 0,
+            snooze_updated_at_epoch: 0,
             check_updates_on_startup: true,
             remember_password: false,
             stats_window: "14d".to_string(),
+            data_source: "librelinkup".to_string(),
+            ha_url: String::new(),
+            ha_sensor_entity_id: String::new(),
+            ha_sync_medications: true,
+            ha_sync_snooze: true,
+            sensor_expiry_alert_hours: 24,
         }
     }
 }
@@ -381,10 +521,89 @@ impl AppSettings {
     }
 }
 
+pub const MIN_UI_ZOOM_PERCENT: i32 = 75;
+pub const MAX_UI_ZOOM_PERCENT: i32 = 175;
+
+pub fn clamp_ui_zoom_percent(zoom: i32) -> i32 {
+    if zoom <= 0 {
+        100
+    } else {
+        zoom.clamp(MIN_UI_ZOOM_PERCENT, MAX_UI_ZOOM_PERCENT)
+    }
+}
+
+/// Parses a `#RRGGBB` or `RRGGBB` hex color string into `(r, g, b)`.
+pub fn parse_hex_rgb(hex: &str) -> Option<(u8, u8, u8)> {
+    let clean = hex.trim().trim_start_matches('#');
+    if clean.len() != 6 {
+        return None;
+    }
+    let val = u32::from_str_radix(clean, 16).ok()?;
+    Some(((val >> 16) as u8, ((val >> 8) & 0xff) as u8, (val & 0xff) as u8))
+}
+
+/// Computes the WCAG 2.1 relative luminance `L` in `[0.0, 1.0]` for an sRGB color.
+pub fn wcag_relative_luminance(r: u8, g: u8, b: u8) -> f64 {
+    let channel = |c: u8| -> f64 {
+        let s = f64::from(c) / 255.0;
+        if s <= 0.03928 {
+            s / 12.92
+        } else {
+            ((s + 0.055) / 1.055).powf(2.4)
+        }
+    };
+    0.2126 * channel(r) + 0.7152 * channel(g) + 0.0722 * channel(b)
+}
+
+/// Computes the WCAG 2.1 contrast ratio `(L1 + 0.05) / (L2 + 0.05)` in `[1.0, 21.0]` between two
+/// `#RRGGBB` hex colors.
+pub fn wcag_contrast_ratio_hex(fg_hex: &str, bg_hex: &str) -> Option<f64> {
+    let (r1, g1, b1) = parse_hex_rgb(fg_hex)?;
+    let (r2, g2, b2) = parse_hex_rgb(bg_hex)?;
+    let l1 = wcag_relative_luminance(r1, g1, b1);
+    let l2 = wcag_relative_luminance(r2, g2, b2);
+    let (lighter, darker) = if l1 >= l2 { (l1, l2) } else { (l2, l1) };
+    Some((lighter + 0.05) / (darker + 0.05))
+}
+
+/// Builds a complete screen-reader announcement string for the current glucose snapshot.
+pub fn accessible_glucose_announcement(
+    snapshot: &GlucoseSnapshot,
+    settings: &AppSettings,
+    reading_stale: bool,
+    age_display: &str,
+) -> String {
+    if snapshot.value_mg_dl <= 0.0 {
+        return "No blood glucose reading available yet.".to_string();
+    }
+    let val = format_glucose_value(snapshot.value_mg_dl, &settings.result_unit);
+    let trend = trend_arrow_description(snapshot.trend_arrow);
+    let low = settings.effective_target_low(snapshot.target_low_mg_dl);
+    let high = settings.effective_target_high(snapshot.target_high_mg_dl);
+    let status = if reading_stale {
+        "Stale reading"
+    } else {
+        GlucoseRangeStatus::classify(snapshot.value_mg_dl, low, high).label()
+    };
+    let target = format_target_range(low, high, &settings.result_unit);
+    let age_part = if !age_display.trim().is_empty() {
+        format!(", updated {}", age_display.trim())
+    } else if !snapshot.timestamp.trim().is_empty() {
+        format!(", measured at {}", snapshot.timestamp.trim())
+    } else {
+        String::new()
+    };
+    format!(
+        "Blood glucose {} {}, trend {}, status {}{}. Target range {}.",
+        val, settings.result_unit, trend, status, age_part, target
+    )
+}
+
 pub fn load_settings_from_path(path: &Path) -> AppSettings {
     if let Ok(raw) = fs::read_to_string(path) {
         if let Ok(mut parsed) = serde_json::from_str::<AppSettings>(&raw) {
             parsed.poll_interval_seconds = clamp_poll_interval(parsed.poll_interval_seconds);
+            parsed.ui_text_scale = clamp_ui_zoom_percent(parsed.ui_text_scale);
             return parsed;
         }
     }
@@ -394,6 +613,7 @@ pub fn load_settings_from_path(path: &Path) -> AppSettings {
 pub fn save_settings_to_path(settings: &AppSettings, path: &Path) -> Result<(), String> {
     let mut normalized = settings.clone();
     normalized.poll_interval_seconds = clamp_poll_interval(normalized.poll_interval_seconds);
+    normalized.ui_text_scale = clamp_ui_zoom_percent(normalized.ui_text_scale);
     let json = serde_json::to_string_pretty(&normalized)
         .map_err(|e| format!("Failed to serialize settings: {e}"))?;
     write_file_atomic_0600(path, json.as_bytes())
@@ -412,13 +632,17 @@ pub fn save_default_settings(settings: &AppSettings) -> Result<(), String> {
 // Reading age / staleness and alert decision logic (pure, unit-testable).
 // ---------------------------------------------------------------------------
 
-/// Parses a LibreView timestamp such as `"10/19/2026 7:12:34 PM"`.
+/// Parses a LibreView timestamp such as `"10/19/2026 7:12:34 PM"` or an ISO 8601 / RFC 3339
+/// timestamp from Home Assistant (e.g. `"2026-10-31T15:39:25.298895+00:00"`).
 /// `as_utc = true` for `FactoryTimestamp` (UTC); `false` for `Timestamp` (local time).
 pub fn parse_libreview_timestamp(raw: &str, as_utc: bool) -> Option<i64> {
-    use chrono::{NaiveDateTime, TimeZone};
+    use chrono::{DateTime, NaiveDateTime, TimeZone};
     let trimmed = raw.trim();
     if trimmed.is_empty() {
         return None;
+    }
+    if let Ok(dt) = DateTime::parse_from_rfc3339(trimmed) {
+        return Some(dt.timestamp());
     }
     let naive = ["%m/%d/%Y %I:%M:%S %p", "%m/%d/%Y %H:%M:%S", "%Y-%m-%dT%H:%M:%S"]
         .iter()
@@ -743,11 +967,109 @@ mod alert_tests {
             last_name: "Patient".into(),
             graph_points: vec![],
             measured_at_epoch: Some(1792436709),
+            sensor_serial: "40TUAM8CTE0".into(),
+            ..Default::default()
         };
         let dbg = format!("{snap:?}");
         assert!(!dbg.contains("pat-secret-uuid"));
         assert!(!dbg.contains("Alice"));
         assert!(!dbg.contains("Patient"));
+        assert!(!dbg.contains("40TUAM8CTE0"));
         assert!(dbg.contains("[REDACTED]"));
+    }
+
+    #[test]
+    fn wcag_contrast_ratios_meet_aa_thresholds() {
+        // Light theme card background (#ffffff) vs slate-900 primary text (#0f172a) -> >= 15:1 (WCAG AAA)
+        let light_card_text = wcag_contrast_ratio_hex("#0f172a", "#ffffff").unwrap();
+        assert!(light_card_text >= 15.0, "got {light_card_text}");
+
+        // Light theme alternating log row (#e2e8f0) vs primary text (#0f172a) -> >= 11:1 (WCAG AAA)
+        let light_row_text = wcag_contrast_ratio_hex("#0f172a", "#e2e8f0").unwrap();
+        assert!(light_row_text >= 11.0, "got {light_row_text}");
+
+        // Light theme scrollbar thumb (#334155) vs track (#cbd5e1) -> >= 6.0:1 (WCAG AA UI >= 3.0)
+        let sb_contrast = wcag_contrast_ratio_hex("#334155", "#cbd5e1").unwrap();
+        assert!(sb_contrast >= 6.0, "got {sb_contrast}");
+
+        // Darkened status hero/overlay fills (Qt.darker(..., 1.42)) vs #ffffff text -> >= 3.0:1 large text AA
+        let dark_green_hero = wcag_contrast_ratio_hex("#ffffff", "#188a42").unwrap();
+        assert!(dark_green_hero >= 4.2, "got {dark_green_hero}");
+        let dark_red_hero = wcag_contrast_ratio_hex("#ffffff", "#a83030").unwrap();
+        assert!(dark_red_hero >= 5.5, "got {dark_red_hero}");
+    }
+
+    #[test]
+    fn ui_zoom_percent_clamping_and_accessible_announcement() {
+        assert_eq!(clamp_ui_zoom_percent(0), 100);
+        assert_eq!(clamp_ui_zoom_percent(50), 75);
+        assert_eq!(clamp_ui_zoom_percent(100), 100);
+        assert_eq!(clamp_ui_zoom_percent(125), 125);
+        assert_eq!(clamp_ui_zoom_percent(250), 175);
+
+        let s = AppSettings::default();
+        let empty = GlucoseSnapshot::default();
+        assert_eq!(
+            accessible_glucose_announcement(&empty, &s, false, ""),
+            "No blood glucose reading available yet."
+        );
+
+        let snap = GlucoseSnapshot {
+            value_mg_dl: 112.0,
+            trend_arrow: 3,
+            timestamp: "10/31/2026 12:00:00 PM".into(),
+            target_low_mg_dl: 70.0,
+            target_high_mg_dl: 180.0,
+            patient_id: "p1".into(),
+            first_name: "Russell".into(),
+            last_name: "Milliner".into(),
+            graph_points: vec![],
+            measured_at_epoch: Some(1_793_462_400),
+            ..Default::default()
+        };
+        let ann = accessible_glucose_announcement(&snap, &s, false, "1 min ago");
+        assert!(ann.contains("Blood glucose 112 mg/dL"));
+        assert!(ann.contains("trend Stable"));
+        assert!(ann.contains("status In Range"));
+        assert!(ann.contains("updated 1 min ago"));
+        assert!(ann.contains("Target range 70\u{2013}180 mg/dL"));
+    }
+
+    #[test]
+    fn sensor_warmup_and_expiry_countdown_formatting() {
+        let act = 1_700_000_000;
+        let exp = act + 15 * 86_400;
+        let snap = GlucoseSnapshot {
+            value_mg_dl: 109.0,
+            sensor_serial: "40TUAM8CTE0".into(),
+            sensor_activated_at_epoch: Some(act),
+            sensor_expires_at_epoch: Some(exp),
+            sensor_lifespan_days: 15,
+            sensor_plus_model: true,
+            ..Default::default()
+        };
+
+        // 20 minutes after activation -> 40m warmup remaining
+        assert!(snap.is_sensor_in_warmup(act + 20 * 60));
+        assert_eq!(snap.sensor_warmup_minutes_remaining(act + 20 * 60), Some(40));
+        let warm_str = snap.format_sensor_status(act + 20 * 60);
+        assert!(warm_str.contains("Warmup: 40m remaining"), "got {warm_str}");
+        assert!(warm_str.contains("40TUAM8CTE0"), "got {warm_str}");
+
+        // 2 days after activation -> 13d 0h remaining
+        assert!(!snap.is_sensor_in_warmup(act + 2 * 86_400));
+        assert!(!snap.is_sensor_expiring_soon(act + 2 * 86_400, 24));
+        let mid_str = snap.format_sensor_status(act + 2 * 86_400);
+        assert!(mid_str.contains("13d 0h remaining"), "got {mid_str}");
+
+        // 12 hours before expiration -> expiring soon
+        assert!(snap.is_sensor_expiring_soon(exp - 12 * 3600, 24));
+        let soon_str = snap.format_sensor_status(exp - 12 * 3600);
+        assert!(soon_str.contains("12h 0m remaining"), "got {soon_str}");
+
+        // After expiration -> expired
+        assert!(snap.is_sensor_expiring_soon(exp + 60, 24));
+        let exp_str = snap.format_sensor_status(exp + 60);
+        assert!(exp_str.contains("Sensor expired"), "got {exp_str}");
     }
 }

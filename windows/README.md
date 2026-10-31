@@ -10,14 +10,14 @@ A native, lightweight **Rust (`eframe` / `egui`)** desktop application for **Win
 
 | Package | Download Link | Description |
 | :--- | :--- | :--- |
-| **Windows Installer (`x64`)** | [**`LibreLinkUp-Setup-0.5.2-x64.exe`**](https://github.com/russellmilliner/librelinkup-rust-desktop/releases/download/v0.5.2/LibreLinkUp-Setup-0.5.2-x64.exe) ([SHA-256](https://github.com/russellmilliner/librelinkup-rust-desktop/releases/download/v0.5.2/LibreLinkUp-Setup-0.5.2-x64.exe.sha256) • [Minisign](https://github.com/russellmilliner/librelinkup-rust-desktop/releases/download/v0.5.2/LibreLinkUp-Setup-0.5.2-x64.exe.minisig)) | Per-user Inno Setup installer (no admin prompt required), Start Menu shortcut with Toast `AppUserModelID`, optional start at Windows sign-in |
-| **Portable Zip (`x64`)** | [**`LibreLinkUp-0.5.2-windows-x64-portable.zip`**](https://github.com/russellmilliner/librelinkup-rust-desktop/releases/download/v0.5.2/LibreLinkUp-0.5.2-windows-x64-portable.zip) ([SHA-256](https://github.com/russellmilliner/librelinkup-rust-desktop/releases/download/v0.5.2/LibreLinkUp-0.5.2-windows-x64-portable.zip.sha256) • [Minisign](https://github.com/russellmilliner/librelinkup-rust-desktop/releases/download/v0.5.2/LibreLinkUp-0.5.2-windows-x64-portable.zip.minisig)) | Standalone `LibreLinkUp.exe` executable — extract anywhere and run |
+| **Windows Installer (`x64`)** | [**`LibreLinkUp-Setup-0.5.3-x64.exe`**](https://github.com/russellmilliner/librelinkup-rust-desktop/releases/download/v0.5.3/LibreLinkUp-Setup-0.5.3-x64.exe) ([SHA-256](https://github.com/russellmilliner/librelinkup-rust-desktop/releases/download/v0.5.3/LibreLinkUp-Setup-0.5.3-x64.exe.sha256) • [Minisign](https://github.com/russellmilliner/librelinkup-rust-desktop/releases/download/v0.5.3/LibreLinkUp-Setup-0.5.3-x64.exe.minisig)) | Per-user Inno Setup installer (no admin prompt required), Start Menu shortcut with Toast `AppUserModelID`, optional start at Windows sign-in |
+| **Portable Zip (`x64`)** | [**`LibreLinkUp-0.5.3-windows-x64-portable.zip`**](https://github.com/russellmilliner/librelinkup-rust-desktop/releases/download/v0.5.3/LibreLinkUp-0.5.3-windows-x64-portable.zip) ([SHA-256](https://github.com/russellmilliner/librelinkup-rust-desktop/releases/download/v0.5.3/LibreLinkUp-0.5.3-windows-x64-portable.zip.sha256) • [Minisign](https://github.com/russellmilliner/librelinkup-rust-desktop/releases/download/v0.5.3/LibreLinkUp-0.5.3-windows-x64-portable.zip.minisig)) | Standalone `LibreLinkUp.exe` executable — extract anywhere and run |
 
 ### PowerShell Quick Install
 
 ```powershell
-Invoke-WebRequest -Uri "https://github.com/russellmilliner/librelinkup-rust-desktop/releases/download/v0.5.2/LibreLinkUp-Setup-0.5.2-x64.exe" -OutFile "$env:TEMP\LibreLinkUp-Setup-0.5.2-x64.exe"
-Start-Process -FilePath "$env:TEMP\LibreLinkUp-Setup-0.5.2-x64.exe"
+Invoke-WebRequest -Uri "https://github.com/russellmilliner/librelinkup-rust-desktop/releases/download/v0.5.3/LibreLinkUp-Setup-0.5.3-x64.exe" -OutFile "$env:TEMP\LibreLinkUp-Setup-0.5.3-x64.exe"
+Start-Process -FilePath "$env:TEMP\LibreLinkUp-Setup-0.5.3-x64.exe"
 ```
 
 > **Windows SmartScreen Note**: Because the binary is not code-signed with a commercial EV certificate, Windows SmartScreen may display *"Windows protected your PC"* on first launch. Click **More info → Run anyway**.
@@ -162,7 +162,7 @@ cargo build --release --manifest-path windows/Cargo.toml
 # Run headless self-test
 .\windows\target\release\LibreLinkUp.exe --self-test
 
-# Build the Inno Setup installer (produces windows\dist\LibreLinkUp-Setup-0.5.2-x64.exe)
+# Build the Inno Setup installer (produces windows\dist\LibreLinkUp-Setup-0.5.3-x64.exe)
 & "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe" `
     /DAppVersion=0.4.5 `
     /DSourceExe=..\target\release\LibreLinkUp.exe `
@@ -183,7 +183,7 @@ Prerequisites:
 ```
 
 Generated artifacts are placed in `windows/dist/`:
-- `windows/dist/LibreLinkUp-Setup-0.5.2-x64.exe` (+ `.sha256`)
+- `windows/dist/LibreLinkUp-Setup-0.5.3-x64.exe` (+ `.sha256`)
 - `windows/dist/LibreLinkUp-0.4.5-windows-x64-portable.zip` (+ `.sha256`)
 
 ---

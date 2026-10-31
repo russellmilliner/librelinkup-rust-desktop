@@ -2,6 +2,14 @@
 
 All notable changes and bumped dependencies for `russellmilliner/librelinkup-rust-desktop` are documented in this file.
 
+## [v0.5.3](https://github.com/russellmilliner/librelinkup-rust-desktop/releases/tag/v0.5.3) — 2026-10-31
+
+### Highlights
+- Fix infinite overlayOnlyMode event loop and 100% CPU lockup when main window is closed with desktop overlay visible; eliminate per-tick disk reads and redundant JSON/D-Bus updates
+
+### Commits
+- fix(tray,overlay): eliminate infinite overlayOnlyMode queued-event loop and per-tick disk/JSON overhead (f612f2f)
+
 ## [v0.5.2](https://github.com/russellmilliner/librelinkup-rust-desktop/releases/tag/v0.5.2) — 2026-10-31
 
 ### Highlights

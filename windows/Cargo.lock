@@ -2080,7 +2080,7 @@ dependencies = [
 
 [[package]]
 name = "librelinkup-core"
-version = "0.5.2"
+version = "0.5.3"
 dependencies = [
  "chrono",
  "minisign-verify",
@@ -2094,7 +2094,7 @@ dependencies = [
 
 [[package]]
 name = "librelinkup-windows"
-version = "0.5.2"
+version = "0.5.3"
 dependencies = [
  "ab_glyph",
  "chrono",

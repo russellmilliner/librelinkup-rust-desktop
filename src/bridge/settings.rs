@@ -80,6 +80,7 @@ impl Default for SettingsControllerRust {
             data_source: QString::from("librelinkup"),
             ha_url: QString::default(),
             ha_sensor_entity_id: QString::default(),
+            ha_discovered_patients_json: QString::from("[]"),
             ha_token_configured: false,
             ha_sync_medications: true,
             ha_sync_snooze: true,
@@ -380,16 +381,24 @@ impl qobject::SettingsController {
         sync_val!(self, set_installing_update, installing_update, installing);
         sync_str!(self, set_event_log_json, event_log_json, event_json);
         sync_val!(self, set_event_log_count, event_log_count, event_count);
-        let (ui_zoom, high_contrast, ha_sync_meds, ha_sync_snz, sensor_exp_hrs) = with_state(|s| {
-            (
-                s.ui_zoom_percent,
-                s.high_contrast_mode,
-                s.ha_sync_medications,
-                s.ha_sync_snooze,
-                s.sensor_expiry_alert_hours,
-            )
-        });
+        let (ui_zoom, high_contrast, ha_sync_meds, ha_sync_snz, sensor_exp_hrs, ha_patients_json) =
+            with_state(|s| {
+                (
+                    s.ui_zoom_percent,
+                    s.high_contrast_mode,
+                    s.ha_sync_medications,
+                    s.ha_sync_snooze,
+                    s.sensor_expiry_alert_hours,
+                    s.ha_discovered_patients_json.clone(),
+                )
+            });
         sync_val!(self, set_ui_zoom_percent, ui_zoom_percent, ui_zoom);
+        sync_str!(
+            self,
+            set_ha_discovered_patients_json,
+            ha_discovered_patients_json,
+            ha_patients_json
+        );
         sync_val!(
             self,
             set_high_contrast_mode,

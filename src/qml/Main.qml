@@ -63,6 +63,60 @@ Kirigami.ApplicationWindow {
         return ""
     }
 
+    function formatHaHost(rawUrl) {
+        const u = String(rawUrl || "").trim()
+        if (u.length === 0) return ""
+        return u.replace(/^https?:\/\//i, "").replace(/\/.*$/, "")
+    }
+
+    readonly property bool isDemoSession: telemetry.loggedIn && telemetry.patientId === "demo-patient-001"
+    readonly property string connectionSourceLabel: {
+        if (root.isDemoSession) {
+            return qsTr("Sample Data (Demo)")
+        }
+        if (settings.dataSource === "home_assistant") {
+            const host = root.formatHaHost(settings.haUrl)
+            return host.length > 0
+                ? qsTr("Home Assistant (%1)").arg(host)
+                : qsTr("Home Assistant")
+        }
+        return qsTr("LibreLinkUp (%1)").arg(settings.country.toUpperCase())
+    }
+    readonly property string connectionStateBadgeText: {
+        if (telemetry.busy) {
+            return qsTr("⟳ Syncing • %1").arg(root.connectionSourceLabel)
+        }
+        if (root.isDemoSession) {
+            return qsTr("● Connected • %1").arg(root.connectionSourceLabel)
+        }
+        if (telemetry.loggedIn) {
+            if (telemetry.errorMessage.length > 0 || telemetry.readingStale) {
+                return qsTr("⚠ Connected • %1").arg(root.connectionSourceLabel)
+            }
+            return qsTr("● Connected • %1").arg(root.connectionSourceLabel)
+        }
+        return qsTr("○ Disconnected • %1").arg(root.connectionSourceLabel)
+    }
+    readonly property string connectionBadgeColor: {
+        if (telemetry.busy) return "#eab308"
+        if (root.isDemoSession) return "#0284c7"
+        if (telemetry.loggedIn) {
+            if (telemetry.errorMessage.length > 0 || telemetry.readingStale) return "#f59e0b"
+            return "#22c55e"
+        }
+        if (telemetry.errorMessage.length > 0) return "#ef4444"
+        return "#64748b"
+    }
+    readonly property string footerStatusSummaryText: {
+        if (telemetry.loggedIn) {
+            return telemetry.accessibleSummary
+        }
+        if (telemetry.errorMessage.length > 0) {
+            return telemetry.errorMessage
+        }
+        return telemetry.statusMessage
+    }
+
     // Width the header needs with every label shown, measured from the real layout at
     // startup (depends on fonts/scaling, so it can't be hard-coded). 0 = not measured yet.
     property real fullHeaderWidth: 0
@@ -173,6 +227,47 @@ Kirigami.ApplicationWindow {
         const clean = String(code || "us").toLowerCase()
         for (let i = 0; i < regionOptions.length; ++i) {
             if (regionOptions[i].value === clean) return i
+        }
+        return 0
+    }
+
+    readonly property var haPatientsModel: {
+        try {
+            const parsed = JSON.parse(settings.haDiscoveredPatientsJson || "[]")
+            return Array.isArray(parsed) ? parsed : []
+        } catch (e) {
+            return []
+        }
+    }
+
+    readonly property var haPatientComboOptions: {
+        const list = [{
+            entity_id: "",
+            patient_name: qsTr("Auto-discover"),
+            label: qsTr("Auto-discover (First Active Sensor)"),
+            compact_label: qsTr("Auto-discover (First Active Sensor)")
+        }]
+        for (let i = 0; i < root.haPatientsModel.length; ++i) {
+            const p = root.haPatientsModel[i]
+            const pname = String(p.patient_name || p.entity_id || "")
+            const reading = String(p.reading_display || "")
+            list.push({
+                entity_id: String(p.entity_id || ""),
+                patient_name: pname,
+                label: String(p.label || pname),
+                compact_label: reading.length > 0 ? (pname + " (" + reading + ")") : pname
+            })
+        }
+        return list
+    }
+
+    function haPatientComboIndexForEntity(entityId) {
+        const clean = String(entityId || "").trim().toLowerCase()
+        if (clean.length === 0) return 0
+        for (let i = 1; i < haPatientComboOptions.length; ++i) {
+            if (String(haPatientComboOptions[i].entity_id || "").toLowerCase() === clean) {
+                return i
+            }
         }
         return 0
     }
@@ -540,16 +635,6 @@ Kirigami.ApplicationWindow {
                 enabled: telemetry.loggedIn && !telemetry.busy
                 onClicked: telemetry.refreshGlucoseNow()
             }
-
-            QQC2.ToolButton {
-                objectName: "buttonToTray"
-                icon.name: "window-minimize"
-                display: QQC2.AbstractButton.IconOnly
-                QQC2.ToolTip.visible: hovered
-                QQC2.ToolTip.text: qsTr("Hide window to the KDE system tray")
-                Accessible.name: qsTr("Hide window to the KDE system tray")
-                onClicked: settings.hideMainWindow()
-            }
         }
     }
 
@@ -568,22 +653,59 @@ Kirigami.ApplicationWindow {
             anchors.fill: parent
             anchors.leftMargin: 10
             anchors.rightMargin: 10
-            spacing: 6
+            spacing: 8
+
+            Rectangle {
+                id: footerConnectionBadge
+                objectName: "footerConnectionBadge"
+                radius: 6
+                color: Qt.alpha(Qt.color(root.connectionBadgeColor), root.isLightTheme ? 0.16 : 0.22)
+                border.color: Qt.color(root.connectionBadgeColor)
+                border.width: root.isHighContrast ? 2 : 1
+                readonly property real maxBadgeW: Math.max(150, Math.round(root.width * 0.34))
+                implicitWidth: Math.min(maxBadgeW, footerConnectionLabel.implicitWidth + 14)
+                implicitHeight: Math.max(22, footerConnectionLabel.implicitHeight + 6)
+                Layout.preferredWidth: implicitWidth
+                Layout.maximumWidth: maxBadgeW
+                Accessible.role: Accessible.StaticText
+                Accessible.name: root.connectionStateBadgeText
+                Accessible.description: telemetry.statusMessage
+
+                QQC2.Label {
+                    id: footerConnectionLabel
+                    objectName: "footerConnectionLabel"
+                    anchors.left: parent.left
+                    anchors.right: parent.right
+                    anchors.verticalCenter: parent.verticalCenter
+                    anchors.leftMargin: 7
+                    anchors.rightMargin: 7
+                    text: root.connectionStateBadgeText
+                    font.pointSize: root.fontCaptionPt
+                    font.bold: true
+                    color: Kirigami.Theme.textColor
+                    elide: Text.ElideRight
+                }
+
+                HoverHandler { id: footerConnHover }
+                QQC2.ToolTip.visible: footerConnHover.hovered
+                QQC2.ToolTip.text: root.connectionStateBadgeText + " — " + telemetry.statusMessage
+            }
 
             QQC2.Label {
                 id: footerStatusLabel
                 objectName: "footerStatusLabel"
-                text: telemetry.loggedIn
-                    ? telemetry.accessibleSummary
-                    : telemetry.statusMessage
+                text: root.footerStatusSummaryText
                 font.pointSize: Math.max(8.0, root.baseFontPt * 0.85)
                 color: Kirigami.Theme.textColor
                 elide: Text.ElideRight
                 Layout.fillWidth: true
                 Layout.preferredWidth: 0
                 Accessible.role: Accessible.StatusBar
-                Accessible.name: text
-                Accessible.description: qsTr("Live blood glucose telemetry and accessibility status bar")
+                Accessible.name: root.connectionStateBadgeText + " — " + text
+                Accessible.description: qsTr("Live blood glucose telemetry, connection status, and accessibility status bar")
+                HoverHandler { id: footerSummaryHover }
+                QQC2.ToolTip.visible: footerSummaryHover.hovered
+                QQC2.ToolTip.text: root.connectionStateBadgeText + " • " + root.footerStatusSummaryText
             }
 
             QQC2.ToolButton {
@@ -960,7 +1082,7 @@ Kirigami.ApplicationWindow {
                                     id: loginHaUrlField
                                     objectName: "loginHaUrlField"
                                     Layout.fillWidth: true
-                                    placeholderText: qsTr("https://haos.dingo-dory.ts.net")
+                                    placeholderText: qsTr("http://homeassistant.local:8123")
                                     text: settings.haUrl
                                     Accessible.name: qsTr("Home Assistant URL")
                                 }
@@ -990,6 +1112,33 @@ Kirigami.ApplicationWindow {
 
                             ColumnLayout {
                                 Layout.fillWidth: true
+                                visible: settings.dataSource === "home_assistant" && root.haPatientsModel.length > 0
+                                spacing: 4
+                                QQC2.Label {
+                                    text: qsTr("Patient / Sensor")
+                                    font.bold: true
+                                    color: Kirigami.Theme.textColor
+                                    Layout.fillWidth: true
+                                }
+                                QQC2.ComboBox {
+                                    id: loginHaPatientCombo
+                                    objectName: "loginHaPatientCombo"
+                                    Layout.fillWidth: true
+                                    model: root.haPatientComboOptions
+                                    textRole: "label"
+                                    valueRole: "entity_id"
+                                    currentIndex: root.haPatientComboIndexForEntity(settings.haSensorEntityId)
+                                    Accessible.name: qsTr("Home Assistant Patient Selection")
+                                    onActivated: {
+                                        loginHaEntityField.text = currentValue
+                                        settingsHaEntityField.text = currentValue
+                                        telemetry.selectHaPatient(currentValue)
+                                    }
+                                }
+                            }
+
+                            ColumnLayout {
+                                Layout.fillWidth: true
                                 visible: settings.dataSource === "home_assistant"
                                 spacing: 4
                                 QQC2.Label {
@@ -1002,7 +1151,7 @@ Kirigami.ApplicationWindow {
                                     id: loginHaEntityField
                                     objectName: "loginHaEntityField"
                                     Layout.fillWidth: true
-                                    placeholderText: qsTr("Auto-discover (e.g. sensor.russell_milliner_measurement)")
+                                    placeholderText: qsTr("Auto-discover (e.g. sensor.patient_glucose_measurement)")
                                     text: settings.haSensorEntityId
                                     Accessible.name: qsTr("Home Assistant Glucose Sensor Entity ID")
                                 }
@@ -1315,6 +1464,36 @@ Kirigami.ApplicationWindow {
                                     leftPadding: 6
                                     rightPadding: 6
                                     onClicked: settings.updateOverlayVisible(!settings.overlayVisible)
+                                }
+                            }
+
+                            RowLayout {
+                                Layout.fillWidth: true
+                                visible: settings.dataSource === "home_assistant" && root.haPatientsModel.length > 1
+                                spacing: 8
+
+                                QQC2.Label {
+                                    text: qsTr("Active Patient:")
+                                    font.bold: true
+                                    font.pointSize: root.fontCompactPt
+                                    color: Kirigami.Theme.textColor
+                                }
+
+                                QQC2.ComboBox {
+                                    id: dashboardHaPatientCombo
+                                    objectName: "dashboardHaPatientCombo"
+                                    Layout.fillWidth: true
+                                    font.pointSize: root.fontCompactPt
+                                    model: root.haPatientComboOptions
+                                    textRole: "compact_label"
+                                    valueRole: "entity_id"
+                                    currentIndex: root.haPatientComboIndexForEntity(settings.haSensorEntityId)
+                                    Accessible.name: qsTr("Select Home Assistant Patient")
+                                    onActivated: {
+                                        settingsHaEntityField.text = currentValue
+                                        loginHaEntityField.text = currentValue
+                                        telemetry.selectHaPatient(currentValue)
+                                    }
                                 }
                             }
 
@@ -3208,7 +3387,7 @@ Kirigami.ApplicationWindow {
                                 id: settingsHaUrlField
                                 objectName: "settingsHaUrlField"
                                 Layout.fillWidth: true
-                                placeholderText: qsTr("https://haos.dingo-dory.ts.net")
+                                placeholderText: qsTr("http://homeassistant.local:8123")
                                 text: settings.haUrl
                                 Accessible.name: qsTr("Home Assistant URL")
                             }
@@ -3240,6 +3419,33 @@ Kirigami.ApplicationWindow {
                             Layout.fillWidth: true
                             spacing: 12
                             QQC2.Label {
+                                text: qsTr("Patient / Sensor:")
+                                wrapMode: Text.WordWrap
+                                Layout.minimumWidth: Math.min(220, implicitWidth)
+                                Layout.preferredWidth: Math.max(220, Math.min(280, implicitWidth))
+                                color: Kirigami.Theme.textColor
+                            }
+                            QQC2.ComboBox {
+                                id: settingsHaPatientCombo
+                                objectName: "settingsHaPatientCombo"
+                                Layout.fillWidth: true
+                                model: root.haPatientComboOptions
+                                textRole: "label"
+                                valueRole: "entity_id"
+                                currentIndex: root.haPatientComboIndexForEntity(settings.haSensorEntityId)
+                                Accessible.name: qsTr("Home Assistant Patient or Sensor Selection")
+                                onActivated: {
+                                    settingsHaEntityField.text = currentValue
+                                    loginHaEntityField.text = currentValue
+                                    telemetry.selectHaPatient(currentValue)
+                                }
+                            }
+                        }
+
+                        RowLayout {
+                            Layout.fillWidth: true
+                            spacing: 12
+                            QQC2.Label {
                                 text: qsTr("Sensor Entity ID (optional):")
                                 wrapMode: Text.WordWrap
                                 Layout.minimumWidth: Math.min(220, implicitWidth)
@@ -3250,7 +3456,7 @@ Kirigami.ApplicationWindow {
                                 id: settingsHaEntityField
                                 objectName: "settingsHaEntityField"
                                 Layout.fillWidth: true
-                                placeholderText: qsTr("Auto-discover (e.g. sensor.russell_milliner_measurement)")
+                                placeholderText: qsTr("Auto-discover (e.g. sensor.patient_glucose_measurement)")
                                 text: settings.haSensorEntityId
                                 Accessible.name: qsTr("Home Assistant Glucose Sensor Entity ID")
                             }

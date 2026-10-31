@@ -494,14 +494,73 @@ impl LibreLinkUpApp {
 
     fn footer(&mut self, ui: &mut egui::Ui, state: &Shared) {
         let (_, _, stale, age_text) = reading_status(state);
-        let summary = accessible_glucose_announcement(
-            &state.snapshot,
-            &state.settings,
-            stale,
-            &age_text,
-        );
+        let summary = if state.logged_in {
+            accessible_glucose_announcement(
+                &state.snapshot,
+                &state.settings,
+                stale,
+                &age_text,
+            )
+        } else {
+            state.status.clone()
+        };
+        let source_label = if state.demo {
+            "Sample Data (Demo)".to_string()
+        } else if state.settings.data_source == "home_assistant" {
+            let trimmed = state.settings.ha_url.trim();
+            let host = trimmed
+                .strip_prefix("https://")
+                .or_else(|| trimmed.strip_prefix("http://"))
+                .unwrap_or(trimmed)
+                .split('/')
+                .next()
+                .unwrap_or("");
+            if host.is_empty() {
+                "Home Assistant".to_string()
+            } else {
+                format!("Home Assistant ({host})")
+            }
+        } else {
+            format!("LibreLinkUp ({})", state.settings.country.to_uppercase())
+        };
+        let (conn_badge, conn_color) = if state.busy {
+            (
+                format!("⟳ Syncing • {source_label}"),
+                Color32::from_rgb(234, 179, 8),
+            )
+        } else if state.demo {
+            (
+                format!("● Connected • {source_label}"),
+                Color32::from_rgb(2, 132, 199),
+            )
+        } else if state.logged_in {
+            if stale {
+                (
+                    format!("⚠ Connected • {source_label}"),
+                    Color32::from_rgb(245, 158, 11),
+                )
+            } else {
+                (
+                    format!("● Connected • {source_label}"),
+                    Color32::from_rgb(34, 197, 94),
+                )
+            }
+        } else {
+            (
+                format!("○ Disconnected • {source_label}"),
+                Color32::from_rgb(100, 116, 139),
+            )
+        };
         let cur_zoom = clamp_ui_zoom_percent(state.settings.ui_text_scale);
         ui.horizontal(|ui| {
+            ui.label(
+                RichText::new(&conn_badge)
+                    .small()
+                    .strong()
+                    .color(conn_color),
+            )
+            .on_hover_text(&state.status);
+            ui.separator();
             ui.label(RichText::new(&summary).small());
             ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
                 if ui
@@ -567,9 +626,6 @@ impl LibreLinkUpApp {
                 ui.selectable_value(&mut self.tab, tab, label);
             }
             ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
-                if ui.button("🗕").on_hover_text("Hide to the system tray").clicked() {
-                    self.ui_handle.hide_main_window();
-                }
                 let refresh = ui.add_enabled(state.logged_in && !state.busy && !state.demo, egui::Button::new("🔄"));
                 if refresh.on_hover_text("Refresh glucose now").clicked() {
                     self.send(Command::RefreshNow);
@@ -676,7 +732,7 @@ impl LibreLinkUpApp {
                         ui.label("HA URL");
                         ui.add(
                             egui::TextEdit::singleline(&mut self.ha_url_input)
-                                .hint_text("https://haos.dingo-dory.ts.net")
+                                .hint_text("http://homeassistant.local:8123")
                                 .desired_width(280.0),
                         );
                         ui.end_row();
@@ -692,10 +748,43 @@ impl LibreLinkUpApp {
                                 .desired_width(280.0),
                         );
                         ui.end_row();
+                        if !state.discovered_ha_patients.is_empty() {
+                            ui.label("Patient / Sensor");
+                            let selected_label = state
+                                .discovered_ha_patients
+                                .iter()
+                                .find(|p| p.entity_id.eq_ignore_ascii_case(self.ha_entity_input.trim()))
+                                .map(|p| p.label.as_str())
+                                .unwrap_or("Auto-discover (First Active Sensor)");
+                            egui::ComboBox::from_id_salt("login_ha_patient_combo")
+                                .selected_text(selected_label)
+                                .width(280.0)
+                                .show_ui(ui, |ui| {
+                                    if ui
+                                        .selectable_label(
+                                            self.ha_entity_input.trim().is_empty(),
+                                            "Auto-discover (First Active Sensor)",
+                                        )
+                                        .clicked()
+                                    {
+                                        self.ha_entity_input.clear();
+                                        self.send(Command::SelectHaPatient(String::new()));
+                                    }
+                                    for p in &state.discovered_ha_patients {
+                                        let is_sel =
+                                            p.entity_id.eq_ignore_ascii_case(self.ha_entity_input.trim());
+                                        if ui.selectable_label(is_sel, &p.label).clicked() {
+                                            self.ha_entity_input = p.entity_id.clone();
+                                            self.send(Command::SelectHaPatient(p.entity_id.clone()));
+                                        }
+                                    }
+                                });
+                            ui.end_row();
+                        }
                         ui.label("Sensor Entity ID");
                         ui.add(
                             egui::TextEdit::singleline(&mut self.ha_entity_input)
-                                .hint_text("Auto-discover (e.g. sensor.russell_milliner_measurement)")
+                                .hint_text("Auto-discover (e.g. sensor.patient_glucose_measurement)")
                                 .desired_width(280.0),
                         );
                         ui.end_row();
@@ -841,7 +930,44 @@ impl LibreLinkUpApp {
                     ui.end_row();
                     let name = format!("{} {}", snap.first_name, snap.last_name).trim().to_string();
                     ui.label("Patient");
-                    ui.label(if name.is_empty() { "—".to_string() } else { name });
+                    if s.data_source == "home_assistant" && state.discovered_ha_patients.len() > 1 {
+                        let cur_ent = s.ha_sensor_entity_id.trim();
+                        let selected_label = state
+                            .discovered_ha_patients
+                            .iter()
+                            .find(|p| p.entity_id.eq_ignore_ascii_case(cur_ent))
+                            .map(|p| format!("{} ({})", p.patient_name, p.reading_display))
+                            .unwrap_or_else(|| {
+                                if name.is_empty() {
+                                    "Auto-discover".to_string()
+                                } else {
+                                    format!("{name} (Auto)")
+                                }
+                            });
+                        egui::ComboBox::from_id_salt("dashboard_ha_patient_combo")
+                            .selected_text(selected_label)
+                            .show_ui(ui, |ui| {
+                                if ui
+                                    .selectable_label(
+                                        cur_ent.is_empty(),
+                                        "Auto-discover (First Active Sensor)",
+                                    )
+                                    .clicked()
+                                {
+                                    self.ha_entity_input.clear();
+                                    self.send(Command::SelectHaPatient(String::new()));
+                                }
+                                for p in &state.discovered_ha_patients {
+                                    let is_sel = p.entity_id.eq_ignore_ascii_case(cur_ent);
+                                    if ui.selectable_label(is_sel, &p.label).clicked() {
+                                        self.ha_entity_input = p.entity_id.clone();
+                                        self.send(Command::SelectHaPatient(p.entity_id.clone()));
+                                    }
+                                }
+                            });
+                    } else {
+                        ui.label(if name.is_empty() { "—".to_string() } else { name });
+                    }
                     ui.end_row();
                     ui.label("Sensor");
                     let sensor_txt = snap.format_sensor_status(now);
@@ -1337,7 +1463,7 @@ impl LibreLinkUpApp {
                     ui.label("Home Assistant URL");
                     ui.add(
                         egui::TextEdit::singleline(&mut self.ha_url_input)
-                            .hint_text("https://haos.dingo-dory.ts.net")
+                            .hint_text("http://homeassistant.local:8123")
                             .desired_width(300.0),
                     );
                     ui.end_row();
@@ -1353,10 +1479,43 @@ impl LibreLinkUpApp {
                             .desired_width(300.0),
                     );
                     ui.end_row();
+                    ui.label("Patient / Sensor");
+                    let selected_label = state
+                        .discovered_ha_patients
+                        .iter()
+                        .find(|p| p.entity_id.eq_ignore_ascii_case(self.ha_entity_input.trim()))
+                        .map(|p| p.label.as_str())
+                        .unwrap_or("Auto-discover (First Active Sensor)");
+                    egui::ComboBox::from_id_salt("settings_ha_patient_combo")
+                        .selected_text(selected_label)
+                        .width(300.0)
+                        .show_ui(ui, |ui| {
+                            if ui
+                                .selectable_label(
+                                    self.ha_entity_input.trim().is_empty(),
+                                    "Auto-discover (First Active Sensor)",
+                                )
+                                .clicked()
+                            {
+                                self.ha_entity_input.clear();
+                                s.ha_sensor_entity_id.clear();
+                                self.send(Command::SelectHaPatient(String::new()));
+                            }
+                            for p in &state.discovered_ha_patients {
+                                let is_sel =
+                                    p.entity_id.eq_ignore_ascii_case(self.ha_entity_input.trim());
+                                if ui.selectable_label(is_sel, &p.label).clicked() {
+                                    self.ha_entity_input = p.entity_id.clone();
+                                    s.ha_sensor_entity_id = p.entity_id.clone();
+                                    self.send(Command::SelectHaPatient(p.entity_id.clone()));
+                                }
+                            }
+                        });
+                    ui.end_row();
                     ui.label("Sensor Entity ID (optional)");
                     ui.add(
                         egui::TextEdit::singleline(&mut self.ha_entity_input)
-                            .hint_text("Auto-discover (e.g. sensor.russell_milliner_measurement)")
+                            .hint_text("Auto-discover (e.g. sensor.patient_glucose_measurement)")
                             .desired_width(300.0),
                     );
                     ui.end_row();

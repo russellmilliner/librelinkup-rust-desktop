@@ -753,6 +753,38 @@ impl qobject::TelemetryController {
         )
     }
 
+    /// Selects a specific Home Assistant patient glucose sensor entity (or empty string for
+    /// auto-discover), persists the setting immediately, and triggers a fresh CGM poll if
+    /// connected to Home Assistant.
+    pub fn select_ha_patient(mut self: Pin<&mut Self>, entity_id: QString) {
+        let clean_entity = entity_id.to_string().trim().to_string();
+        let should_refresh = with_state(|s| {
+            s.ha_sensor_entity_id = clean_entity.clone();
+            s.active_refresh = None;
+            let _ = ops::persist_settings(s);
+            s.data_source == "home_assistant"
+                && s.logged_in
+                && s.creds
+                    .as_ref()
+                    .is_some_and(|c| c.has_valid_session_for(&s.data_source, &s.ha_url))
+        });
+        log_info(
+            "API",
+            format!(
+                "Selected Home Assistant patient sensor entity: '{}'",
+                if clean_entity.is_empty() {
+                    "auto-discover"
+                } else {
+                    &clean_entity
+                }
+            ),
+        );
+        self.as_mut().sync();
+        if should_refresh {
+            self.as_mut().refresh_glucose_now();
+        }
+    }
+
     /// Starts an asynchronous CGM refresh (no-op if one is already running).
     pub fn refresh_glucose_now(mut self: Pin<&mut Self>) {
         if with_state(|s| s.active_refresh.is_some() || s.login_in_flight) {
@@ -863,6 +895,9 @@ impl qobject::TelemetryController {
                     s.snapshot = snap;
                     s.status_message = "Live CGM telemetry active".to_string();
                     if let Some(ref states_arr) = ha_states {
+                        let discovered = crate::api::discover_ha_patients(states_arr);
+                        s.ha_discovered_patients_json =
+                            serde_json::to_string(&discovered).unwrap_or_else(|_| "[]".to_string());
                         if s.ha_sync_medications {
                             let has_ha_meds_entity = states_arr.iter().any(|e| {
                                 e.get("entity_id")
@@ -927,9 +962,25 @@ impl qobject::TelemetryController {
     pub fn load_demo_sample_data(mut self: Pin<&mut Self>) {
         let now = now_epoch();
         let snap = build_demo_snapshot(now);
+        let demo_ha_patients = vec![
+            crate::api::HaPatientOption {
+                entity_id: "sensor.alex_patient_measurement".to_string(),
+                patient_name: "Alex Patient".to_string(),
+                reading_display: "112 mg/dL".to_string(),
+                label: "Alex Patient (112 mg/dL) — sensor.alex_patient_measurement".to_string(),
+            },
+            crate::api::HaPatientOption {
+                entity_id: "sensor.sam_patient_measurement".to_string(),
+                patient_name: "Sam Patient".to_string(),
+                reading_display: "138 mg/dL".to_string(),
+                label: "Sam Patient (138 mg/dL) — sensor.sam_patient_measurement".to_string(),
+            },
+        ];
         with_state(|s| {
             s.glucose_history.ingest_snapshot(&snap, now);
             s.medication_store = crate::medications::build_demo_medication_store(now);
+            s.ha_discovered_patients_json =
+                serde_json::to_string(&demo_ha_patients).unwrap_or_else(|_| "[]".to_string());
             s.snapshot = snap;
             s.last_successful_fetch_epoch = Some(now);
             s.logged_in = true;

@@ -372,10 +372,10 @@ pub struct AppSettings {
     pub stats_window: String,
     /// Active telemetry data source: `"librelinkup"` (default) or `"home_assistant"`.
     pub data_source: String,
-    /// Base URL for the Home Assistant instance (e.g. `"https://haos.dingo-dory.ts.net"`).
+    /// Base URL for the Home Assistant instance (e.g. `"http://homeassistant.local:8123"`).
     pub ha_url: String,
     /// Optional explicit Home Assistant glucose sensor entity ID (e.g.
-    /// `"sensor.russell_milliner_measurement"`). Empty = auto-discover LibreLink sensor.
+    /// `"sensor.patient_glucose_measurement"`). Empty = auto-discover LibreLink sensor.
     pub ha_sensor_entity_id: String,
     /// Two-way synchronization of medications and dose logs with Home Assistant
     /// (`sensor.librelinkup_medications` and `librelinkup_medication_dose_logged` event).

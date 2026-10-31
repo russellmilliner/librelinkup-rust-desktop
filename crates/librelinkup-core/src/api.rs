@@ -875,14 +875,14 @@ pub async fn fetch_cgm_snapshot_async(
 // Home Assistant LibreLink Integration REST API Support
 // ---------------------------------------------------------------------------
 
-/// Validates and normalizes a Home Assistant base URL (e.g. `"https://haos.dingo-dory.ts.net"`
-/// or `"http://homeassistant.local:8123"`). Strips any trailing `/` or `/api`.
+/// Validates and normalizes a Home Assistant base URL (e.g. `"http://homeassistant.local:8123"`
+/// or `"https://homeassistant.example.com"`). Strips any trailing `/` or `/api`.
 pub fn validate_ha_base_url(raw_url: &str) -> Result<String, ApiError> {
     let trimmed = raw_url.trim().trim_end_matches('/');
     let trimmed = trimmed.strip_suffix("/api").unwrap_or(trimmed).trim_end_matches('/');
     if trimmed.is_empty() {
         return Err(ApiError::ParseError(
-            "Home Assistant URL is empty. Enter your Home Assistant URL (e.g. https://haos.dingo-dory.ts.net)."
+            "Home Assistant URL is empty. Enter your Home Assistant URL (e.g. http://homeassistant.local:8123)."
                 .to_string(),
         ));
     }
@@ -972,6 +972,138 @@ fn format_rfc3339_as_local_libreview(iso_raw: &str) -> Option<(i64, String)> {
     None
 }
 
+/// A discovered patient / blood-glucose sensor entity from Home Assistant `/api/states`.
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize, PartialEq, Eq)]
+pub struct HaPatientOption {
+    /// Home Assistant sensor entity ID (e.g. `"sensor.alex_patient_measurement"`).
+    pub entity_id: String,
+    /// Human-friendly patient name (e.g. `"Alex Patient"`).
+    pub patient_name: String,
+    /// Current reading string with unit (e.g. `"105 mg/dL"` or `"unavailable"`).
+    pub reading_display: String,
+    /// Combined display label for UI dropdown selectors.
+    pub label: String,
+}
+
+fn is_ha_primary_glucose_sensor(item: &Value) -> bool {
+    let id = item
+        .get("entity_id")
+        .and_then(|v| v.as_str())
+        .unwrap_or("");
+    if !id.starts_with("sensor.")
+        || id.contains("_delta_")
+        || id.ends_with("_rate_of_change")
+        || id.contains("_time_in_range")
+    {
+        return false;
+    }
+    let attrs = item.get("attributes");
+    let dev_class = attrs
+        .and_then(|a| a.get("device_class"))
+        .and_then(|v| v.as_str())
+        .unwrap_or("");
+    let attribution = attrs
+        .and_then(|a| a.get("attribution"))
+        .and_then(|v| v.as_str())
+        .unwrap_or("");
+    dev_class.eq_ignore_ascii_case("blood_glucose_concentration")
+        || (id.ends_with("_measurement")
+            && attribution.to_ascii_lowercase().contains("libreview"))
+}
+
+/// Discovers all patient glucose measurement sensors present in a Home Assistant `/api/states` array.
+pub fn discover_ha_patients(states_arr: &[Value]) -> Vec<HaPatientOption> {
+    let mut options: Vec<(bool, HaPatientOption)> = Vec::new();
+
+    for item in states_arr.iter().filter(|i| is_ha_primary_glucose_sensor(i)) {
+        let Some(entity_id) = item.get("entity_id").and_then(|v| v.as_str()) else {
+            continue;
+        };
+        let without_domain = entity_id.strip_prefix("sensor.").unwrap_or(entity_id);
+        let prefix = without_domain
+            .strip_suffix("_measurement")
+            .or_else(|| without_domain.strip_suffix("_glucose_measurement"))
+            .or_else(|| without_domain.strip_suffix("_glucose"))
+            .unwrap_or(without_domain);
+
+        let mut patient_name = String::new();
+        for ent in states_arr.iter().filter(|e| {
+            e.get("entity_id")
+                .and_then(|v| v.as_str())
+                .is_some_and(|id| id.starts_with(&format!("sensor.{prefix}_application_timestamp")))
+        }) {
+            if let Some(pname) = ent
+                .get("attributes")
+                .and_then(|a| a.get("Patient"))
+                .and_then(|v| v.as_str())
+            {
+                let trimmed = pname.trim();
+                if !trimmed.is_empty() {
+                    patient_name = trimmed.to_string();
+                    break;
+                }
+            }
+        }
+
+        let attrs = item.get("attributes");
+        if patient_name.is_empty() {
+            if let Some(friendly) = attrs
+                .and_then(|a| a.get("friendly_name"))
+                .and_then(|v| v.as_str())
+            {
+                let cleaned = friendly
+                    .trim()
+                    .strip_suffix(" Measurement")
+                    .or_else(|| friendly.trim().strip_suffix(" Glucose"))
+                    .or_else(|| friendly.trim().strip_suffix(" Blood Glucose"))
+                    .unwrap_or(friendly.trim());
+                patient_name = cleaned.trim().to_string();
+            }
+        }
+        if patient_name.is_empty() {
+            patient_name = prefix.replace('_', " ");
+        }
+
+        let raw_state = item
+            .get("state")
+            .and_then(|v| v.as_str())
+            .unwrap_or("")
+            .trim();
+        let numeric_ok = raw_state.parse::<f64>().is_ok_and(|v| v > 0.0);
+        let unit = attrs
+            .and_then(|a| a.get("unit_of_measurement"))
+            .and_then(|v| v.as_str())
+            .unwrap_or("mg/dL")
+            .trim();
+        let reading_display = if numeric_ok {
+            format!("{raw_state} {unit}")
+        } else if raw_state.is_empty() {
+            "unavailable".to_string()
+        } else {
+            raw_state.to_string()
+        };
+        let label = format!("{patient_name} ({reading_display}) — {entity_id}");
+        options.push((
+            numeric_ok,
+            HaPatientOption {
+                entity_id: entity_id.to_string(),
+                patient_name,
+                reading_display,
+                label,
+            },
+        ));
+    }
+
+    options.sort_by(|(num_a, opt_a), (num_b, opt_b)| {
+        num_b
+            .cmp(num_a)
+            .then_with(|| opt_a.patient_name.cmp(&opt_b.patient_name))
+            .then_with(|| opt_a.entity_id.cmp(&opt_b.entity_id))
+    });
+
+    options.into_iter().map(|(_, opt)| opt).collect()
+}
+
 /// Finds the primary glucose measurement entity object inside a Home Assistant `/api/states` array.
 pub fn find_ha_glucose_entity<'a>(
     states_arr: &'a [Value],
@@ -991,31 +1123,7 @@ pub fn find_ha_glucose_entity<'a>(
         )));
     }
 
-    let is_glucose_sensor = |item: &Value| -> bool {
-        let id = item
-            .get("entity_id")
-            .and_then(|v| v.as_str())
-            .unwrap_or("");
-        if !id.starts_with("sensor.")
-            || id.contains("_delta_")
-            || id.ends_with("_rate_of_change")
-            || id.contains("_time_in_range")
-        {
-            return false;
-        }
-        let attrs = item.get("attributes");
-        let dev_class = attrs
-            .and_then(|a| a.get("device_class"))
-            .and_then(|v| v.as_str())
-            .unwrap_or("");
-        let attribution = attrs
-            .and_then(|a| a.get("attribution"))
-            .and_then(|v| v.as_str())
-            .unwrap_or("");
-        dev_class.eq_ignore_ascii_case("blood_glucose_concentration")
-            || (id.ends_with("_measurement")
-                && attribution.to_ascii_lowercase().contains("libreview"))
-    };
+    let is_glucose_sensor = is_ha_primary_glucose_sensor;
 
     let has_numeric_state = |item: &Value| -> bool {
         item.get("state")
@@ -1094,7 +1202,7 @@ pub fn parse_ha_states_and_history(
     };
     let value_mg_dl = to_mg_dl(raw_val);
 
-    // Derive the LibreLink entity prefix (e.g. "sensor.russell_milliner_measurement" -> "russell_milliner")
+    // Derive the LibreLink entity prefix (e.g. "sensor.patient_glucose_measurement" -> "patient_glucose")
     let without_domain = entity_id.strip_prefix("sensor.").unwrap_or(entity_id);
     let prefix = without_domain
         .strip_suffix("_measurement")
@@ -1847,19 +1955,19 @@ mod tests {
     fn parses_home_assistant_librelink_states_and_history() {
         let states = serde_json::json!([
             {
-                "entity_id": "sensor.russell_milliner_measurement",
+                "entity_id": "sensor.alex_patient_measurement",
                 "state": "105",
                 "last_updated": "2026-10-31T15:39:25.298895+00:00",
                 "attributes": {
                     "unit_of_measurement": "mg/dL",
                     "device_class": "blood_glucose_concentration",
-                    "friendly_name": "Russell Milliner Measurement",
+                    "friendly_name": "Alex Patient Measurement",
                     "icon": "mdi:arrow-right",
                     "attribution": "Data provided by https://libreview.com"
                 }
             },
             {
-                "entity_id": "sensor.russell_milliner_trend_2",
+                "entity_id": "sensor.alex_patient_trend_2",
                 "state": "Rising",
                 "attributes": {
                     "trend_arrow": "↗",
@@ -1867,18 +1975,18 @@ mod tests {
                 }
             },
             {
-                "entity_id": "sensor.russell_milliner_last_measurement_timestamp_2",
+                "entity_id": "sensor.alex_patient_last_measurement_timestamp_2",
                 "state": "2026-10-31T15:39:25+00:00",
                 "attributes": {
                     "device_class": "timestamp"
                 }
             },
             {
-                "entity_id": "sensor.russell_milliner_application_timestamp_2",
+                "entity_id": "sensor.alex_patient_application_timestamp_2",
                 "state": "2026-10-30T02:31:26+00:00",
                 "attributes": {
                     "Patient ID": "84ab9cce-7a4f-11ed-9dfe-0242ac110006",
-                    "Patient": "Russell Milliner",
+                    "Patient": "Alex Patient",
                     "Serial number": "40TUAM8CTE0",
                     "Activation date": "2026-10-30T02:31:26+00:00",
                     "Sensor lifespan days": 15,
@@ -1886,14 +1994,14 @@ mod tests {
                 }
             },
             {
-                "entity_id": "sensor.russell_milliner_expiration_timestamp_2",
+                "entity_id": "sensor.alex_patient_expiration_timestamp_2",
                 "state": "2026-11-14T02:31:26+00:00",
                 "attributes": {
                     "device_class": "timestamp"
                 }
             },
             {
-                "entity_id": "sensor.main_bed_russell_milliner_time_in_range_24h",
+                "entity_id": "sensor.main_bed_alex_patient_time_in_range_24h",
                 "state": "99.3",
                 "attributes": {
                     "target_low_mgdl": 72,
@@ -1907,17 +2015,38 @@ mod tests {
                     "snooze_until_epoch": 1793500000,
                     "updated_at_epoch": 1793496400
                 }
+            },
+            {
+                "entity_id": "sensor.sam_patient_measurement",
+                "state": "142",
+                "last_updated": "2026-10-31T15:40:00.000000+00:00",
+                "attributes": {
+                    "unit_of_measurement": "mg/dL",
+                    "device_class": "blood_glucose_concentration",
+                    "friendly_name": "Sam Patient Measurement",
+                    "attribution": "Data provided by https://libreview.com"
+                }
+            },
+            {
+                "entity_id": "sensor.sam_patient_application_timestamp",
+                "state": "2026-10-28T10:00:00+00:00",
+                "attributes": {
+                    "Patient ID": "99bb1122-3344-5566-7788-99aabbccddee",
+                    "Patient": "Sam Patient",
+                    "Serial number": "SAM998877",
+                    "Sensor lifespan days": 14
+                }
             }
         ]);
 
         let history = serde_json::json!([[
             {
-                "entity_id": "sensor.russell_milliner_measurement",
+                "entity_id": "sensor.alex_patient_measurement",
                 "state": "98",
                 "last_changed": "2026-10-31T15:24:25+00:00"
             },
             {
-                "entity_id": "sensor.russell_milliner_measurement",
+                "entity_id": "sensor.alex_patient_measurement",
                 "state": "102",
                 "last_changed": "2026-10-31T15:34:25+00:00"
             }
@@ -1926,8 +2055,8 @@ mod tests {
         let snap = parse_ha_states_and_history(&states, Some(&history), "").expect("parse HA states");
         assert_eq!(snap.value_mg_dl, 105.0);
         assert_eq!(snap.trend_arrow, 4); // ↗ Rising
-        assert_eq!(snap.first_name, "Russell");
-        assert_eq!(snap.last_name, "Milliner");
+        assert_eq!(snap.first_name, "Alex");
+        assert_eq!(snap.last_name, "Patient");
         assert_eq!(snap.patient_id, "84ab9cce-7a4f-11ed-9dfe-0242ac110006");
         assert_eq!(snap.target_low_mg_dl, 72.0);
         assert_eq!(snap.target_high_mg_dl, 175.0);
@@ -1939,8 +2068,25 @@ mod tests {
         assert_eq!(snap.graph_points.len(), 3);
         assert!(snap.measured_at_epoch.is_some());
 
-        // Cross-device alert snooze parsing
+        // Multi-patient discovery & selection
         let states_arr = states.as_array().unwrap();
+        let patients = discover_ha_patients(states_arr);
+        assert_eq!(patients.len(), 2);
+        assert_eq!(patients[0].entity_id, "sensor.alex_patient_measurement");
+        assert_eq!(patients[0].patient_name, "Alex Patient");
+        assert_eq!(patients[0].reading_display, "105 mg/dL");
+        assert_eq!(patients[1].entity_id, "sensor.sam_patient_measurement");
+        assert_eq!(patients[1].patient_name, "Sam Patient");
+        assert_eq!(patients[1].reading_display, "142 mg/dL");
+
+        let sam_snap = parse_ha_states_and_history(&states, None, "sensor.sam_patient_measurement")
+            .expect("select Sam Patient");
+        assert_eq!(sam_snap.value_mg_dl, 142.0);
+        assert_eq!(sam_snap.first_name, "Sam");
+        assert_eq!(sam_snap.last_name, "Patient");
+        assert_eq!(sam_snap.sensor_serial, "SAM998877");
+
+        // Cross-device alert snooze parsing
         let remote_snooze = parse_ha_remote_snooze(states_arr, 1793400000);
         assert_eq!(remote_snooze, Some((1793500000, 1793496400)));
         // When local is newer, remote is ignored

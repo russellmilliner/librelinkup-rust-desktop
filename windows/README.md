@@ -84,6 +84,17 @@ A borderless, translucent, always-on-top desktop widget (`276×88` default, conf
   - **12-Hour Glucose Graph Markers (`💊`)**: Doses logged within the last 12 hours are plotted directly on the 12-hour glucose trend graph as purple diamond markers (`#a855f7`) with vertical guide lines and medication labels.
   - **Recent Dose History**: View and manage your recent dose logs (with timestamps, dosages, and concurrent glucose values).
 
+### 6. Home Assistant LibreLink Integration & Accessibility
+- **Local LAN / Tailscale CGM Polling & Multi-Patient Selector**:
+  - Switch **Telemetry Source** to **Home Assistant (LibreLink)** in **Settings** (or on the Sign-In card) to pull live glucose readings, trend arrows, target ranges, and 12-hour history from your Home Assistant instance (`http://homeassistant.local:8123`).
+  - Automatically discovers all `blood_glucose_concentration` / LibreLink `sensor.*_measurement` entities and provides a **Patient / Sensor** dropdown selector in **Settings**, **Sign In**, and on the **Dashboard** when multiple patients exist in Home Assistant.
+- **Sensor Warmup & Expiry Countdown**:
+  - Displays 60-minute sensor warmup countdowns and remaining sensor lifespan (`14d` / `15d Plus`) with serial number and configurable desktop expiry warnings (`sensor_expiry_alert_hours`).
+- **Two-Way Medication Sync (`sensor.librelinkup_medications`) & Cross-Device Alert Snooze (`sensor.librelinkup_alert_snooze`)**:
+  - Bi-directionally syncs medication schedules, logged/skipped doses (`librelinkup_medication_dose_logged` event), and alert snooze state (`librelinkup_alert_snooze_changed` event) across all connected desktops and Home Assistant.
+- **Accessibility (`WCAG AA/AAA`), UI Zoom (`75%`–`175%`) & Status Bar Connection Badge**:
+  - Bottom status bar shows a live **Connection & Data Source Badge** (`● Connected • Home Assistant (...)`, `● Connected • LibreLinkUp (US)`, `● Connected • Sample Data (Demo)`), screen-reader summary (`AccessKit`), **High Contrast** toggle, and `-` / `100%` / `+` **UI Zoom** controls (`Ctrl++`, `Ctrl+-`, `Ctrl+0`, `Ctrl+Wheel`).
+
 ---
 
 ## Security, Privacy & Windows Data Paths

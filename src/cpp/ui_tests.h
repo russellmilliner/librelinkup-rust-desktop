@@ -637,7 +637,7 @@ inline QString librelinkup_run_ui_overflow_tests() {
             }
         }
 
-        // 3) Verify minimize-to-tray button (buttonToTray) never overflows mainHeaderToolBar or mainWin
+        // 3) Verify rightmost header button (buttonRefreshNow) never overflows mainHeaderToolBar or mainWin
         // when restored from tray across minimum, default, and large window sizes.
         for (const QSize& restoreSz : testSizes) {
             mainWin->resize(restoreSz);
@@ -647,18 +647,18 @@ inline QString librelinkup_run_ui_overflow_tests() {
             QMetaObject::invokeMethod(settingsCtrl, "showMainWindow", Qt::DirectConnection);
             librelinkup_uitest::pump_events(60);
 
-            QQuickItem* btnTray = mainWin->findChild<QQuickItem*>(QStringLiteral("buttonToTray"));
-            if (!btnTray || !btnTray->isVisible()) {
+            QQuickItem* btnRefresh = mainWin->findChild<QQuickItem*>(QStringLiteral("buttonRefreshNow"));
+            if (!btnRefresh || !btnRefresh->isVisible()) {
                 violations.append(
-                    QStringLiteral("[RestoreFromTray %1x%2] buttonToTray is missing or not visible")
+                    QStringLiteral("[RestoreFromTray %1x%2] buttonRefreshNow is missing or not visible")
                         .arg(restoreSz.width()).arg(restoreSz.height())
                 );
             } else {
-                const QPointF topLeft = btnTray->mapToScene(QPointF(0, 0));
-                const qreal rightEdge = topLeft.x() + btnTray->width();
+                const QPointF topLeft = btnRefresh->mapToScene(QPointF(0, 0));
+                const qreal rightEdge = topLeft.x() + btnRefresh->width();
                 if (topLeft.x() < 0.0 || rightEdge > mainWin->width() + 1.0) {
                     violations.append(
-                        QStringLiteral("[RestoreFromTray %1x%2] buttonToTray [x=%3..%4] overflows window width (%5)")
+                        QStringLiteral("[RestoreFromTray %1x%2] buttonRefreshNow [x=%3..%4] overflows window width (%5)")
                             .arg(restoreSz.width())
                             .arg(restoreSz.height())
                             .arg(topLeft.x(), 0, 'f', 1)
@@ -902,7 +902,17 @@ inline QString librelinkup_run_ui_overflow_tests() {
         QMetaObject::invokeMethod(settingsCtrl, "updateHaSyncMedications", Qt::DirectConnection, Q_ARG(bool, true));
         QMetaObject::invokeMethod(settingsCtrl, "updateHaSyncSnooze", Qt::DirectConnection, Q_ARG(bool, true));
         QMetaObject::invokeMethod(settingsCtrl, "updateSensorExpiryAlertHours", Qt::DirectConnection, Q_ARG(qint32, 24));
+        QMetaObject::invokeMethod(ctrl, "selectHaPatient", Qt::DirectConnection, Q_ARG(QString, QStringLiteral("sensor.sam_patient_measurement")));
         sync_all();
+        if (settingsCtrl->property("haSensorEntityId").toString() != QStringLiteral("sensor.sam_patient_measurement")) {
+            violations.append(QStringLiteral("Expected selectHaPatient to set haSensorEntityId='sensor.sam_patient_measurement'"));
+        }
+        QMetaObject::invokeMethod(ctrl, "selectHaPatient", Qt::DirectConnection, Q_ARG(QString, QString()));
+        sync_all();
+
+        if (mainWin->findChild<QQuickItem*>(QStringLiteral("buttonToTray"))) {
+            violations.append(QStringLiteral("buttonToTray should be removed from main window header"));
+        }
 
         // 2. Verify QAccessible interface names on key controls & cards
         const QStringList requiredAccessibleObjects = {
@@ -913,13 +923,14 @@ inline QString librelinkup_run_ui_overflow_tests() {
             QStringLiteral("glucoseCanvas"),
             QStringLiteral("headerKofiBadge"),
             QStringLiteral("buttonRefreshNow"),
-            QStringLiteral("buttonToTray"),
             QStringLiteral("mainFooterBar"),
+            QStringLiteral("footerConnectionBadge"),
             QStringLiteral("footerStatusLabel"),
             QStringLiteral("footerHighContrastButton"),
             QStringLiteral("zoomOutButton"),
             QStringLiteral("zoomResetButton"),
             QStringLiteral("zoomInButton"),
+            QStringLiteral("settingsHaPatientCombo"),
             QStringLiteral("haSyncMedicationsSwitch"),
             QStringLiteral("haSyncSnoozeSwitch"),
             QStringLiteral("sensorExpiryAlertSpin")
@@ -956,6 +967,15 @@ inline QString librelinkup_run_ui_overflow_tests() {
                 if (accName.isEmpty()) {
                     violations.append(QStringLiteral("Accessible.name is empty on overlay QQuickItem '%1'").arg(objName));
                 }
+            }
+        }
+        if (QQuickItem* connLbl = mainWin->findChild<QQuickItem*>(QStringLiteral("footerConnectionLabel"))) {
+            const QString connTxt = connLbl->property("text").toString();
+            if (!connTxt.contains(QStringLiteral("Connected")) || !connTxt.contains(QStringLiteral("Sample Data"))) {
+                violations.append(
+                    QStringLiteral("Expected footerConnectionLabel to show 'Connected' and source 'Sample Data', got '%1'")
+                        .arg(connTxt)
+                );
             }
         }
 
@@ -1151,8 +1171,10 @@ inline QString librelinkup_run_ui_overflow_tests() {
         QDir dir(screenshotDir);
         dir.mkpath(QStringLiteral("."));
 
-        // 1. Main Window - Dashboard (Dark theme, 980x680, with interactive graph point hover active)
+        // 1. Main Window - Dashboard (Dark theme, 980x680, with interactive graph point hover & HA multi-patient selector active)
         QMetaObject::invokeMethod(ctrl, "loadDemoSampleData", Qt::DirectConnection);
+        QMetaObject::invokeMethod(settingsCtrl, "updateDataSource", Qt::DirectConnection, Q_ARG(QString, QStringLiteral("home_assistant")));
+        QMetaObject::invokeMethod(ctrl, "selectHaPatient", Qt::DirectConnection, Q_ARG(QString, QStringLiteral("sensor.alex_patient_measurement")));
         QMetaObject::invokeMethod(ctrl, "updateThemeMode", Qt::DirectConnection, Q_ARG(QString, QStringLiteral("dark")));
         sync_all();
         mainWin->resize(980, 680);
@@ -1185,9 +1207,28 @@ inline QString librelinkup_run_ui_overflow_tests() {
         // 3. Main Window - General, Tray & Overlay Settings (Dark theme, 980x680)
         mainWin->setProperty("activeTab", QStringLiteral("general"));
         sync_all();
+        if (QQuickItem* genFlick = mainWin->findChild<QQuickItem*>(QStringLiteral("generalScrollView"))) {
+            genFlick->setProperty("contentY", 0.0);
+        }
         librelinkup_uitest::pump_events(60);
         QImage settingsImg = mainWin->grabWindow();
         settingsImg.save(dir.filePath(QStringLiteral("app-settings.png")));
+
+        // 4. Main Window - Home Assistant LibreLink Integration & Multi-Patient Settings (Dark theme, 980x680)
+        if (QQuickItem* genFlick = mainWin->findChild<QQuickItem*>(QStringLiteral("generalScrollView"))) {
+            const qreal maxScroll = std::max<qreal>(
+                0.0,
+                genFlick->property("contentHeight").toReal() - genFlick->height()
+            );
+            genFlick->setProperty("contentY", maxScroll);
+        }
+        sync_all();
+        librelinkup_uitest::pump_events(60);
+        QImage haSettingsImg = mainWin->grabWindow();
+        haSettingsImg.save(dir.filePath(QStringLiteral("app-home-assistant.png")));
+        QMetaObject::invokeMethod(ctrl, "selectHaPatient", Qt::DirectConnection, Q_ARG(QString, QString()));
+        QMetaObject::invokeMethod(settingsCtrl, "updateDataSource", Qt::DirectConnection, Q_ARG(QString, QStringLiteral("librelinkup")));
+        sync_all();
 
         // 4. Desktop Overlay Widget (Dark Slate Theme & Classic Status-Color Theme side-by-side)
         if (QQuickWindow* ovWin = qobject_cast<QQuickWindow*>(librelinkup::find_overlay_window())) {

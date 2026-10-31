@@ -8,10 +8,7 @@
 
 ## 1. What the app is
 
-A desktop CGM (continuous glucose monitor) client for Abbott's **LibreLinkUp** service. It
-logs in as a *follower* account, polls `/llu/connections/<patientId>/graph`, renders the
-latest reading plus a 12-hour trend, and raises desktop alerts (low/high/urgent-low/signal
-loss) and medication reminders.
+A desktop CGM (continuous glucose monitor) client for Abbott's **LibreLinkUp** service and the **Home Assistant LibreLink integration**. It can either log in as a LibreLinkUp *follower* account (polling `/llu/connections/<patientId>/graph`) or connect to a user-configured Home Assistant instance (polling `/api/states` and `/api/history/period/...`, with automatic multi-patient discovery, sensor warmup/expiry countdowns, two-way medication/dose sync via `sensor.librelinkup_medications`, and cross-device alert snooze sync via `sensor.librelinkup_alert_snooze`), rendering the latest reading plus a 12-hour trend and raising desktop alerts and medication reminders.
 
 There are **two front-ends** over one shared core:
 

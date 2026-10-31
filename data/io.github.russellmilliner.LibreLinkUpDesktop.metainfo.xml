@@ -14,6 +14,8 @@
     </p>
     <ul>
       <li>Zero tracking, zero analytics, and zero advertisements — forever</li>
+      <li>Home Assistant LibreLink integration with automatic multi-patient discovery and selector, sensor warmup/expiry countdown, two-way medication &amp; dose sync, and cross-device alert snooze synchronization</li>
+      <li>Accessibility support with WCAG AA/AAA High Contrast mode, full-window UI zoom (75%–175%), screen-reader announcements, and status bar connection badge</li>
       <li>AES-256-GCM and PBKDF2-HMAC-SHA256 encrypted vaults for credentials, 90-day glucose history, and medications</li>
       <li>Medications tab with Once Daily, Twice Daily, Weekly (day-of-week), and As-Needed schedules, 1-click dose logging, interactive desktop due-dose reminders, and 12-hour glucose graph dose markers</li>
       <li>90-day Glycemic Analytics computing ADAG Estimated A1C (eA1C), Bergenstal GMI, Time in Range (TIR%), and CV% across 12h, 7d, 14d, 30d, and 90d windows</li>
@@ -33,7 +35,11 @@
   <screenshots>
     <screenshot type="default">
       <image>https://raw.githubusercontent.com/russellmilliner/librelinkup-rust-desktop/main/docs/screenshots/app-dashboard.png</image>
-      <caption>Live blood glucose dashboard, eA1C/GMI analytics, and 12-hour interactive trend graph with medication markers</caption>
+      <caption>Live blood glucose dashboard, multi-patient selector, sensor expiry countdown, eA1C/GMI analytics, and 12-hour trend graph</caption>
+    </screenshot>
+    <screenshot>
+      <image>https://raw.githubusercontent.com/russellmilliner/librelinkup-rust-desktop/main/docs/screenshots/app-home-assistant.png</image>
+      <caption>Home Assistant LibreLink integration with multi-patient selector, two-way medication sync, and cross-device alert snooze</caption>
     </screenshot>
     <screenshot>
       <image>https://raw.githubusercontent.com/russellmilliner/librelinkup-rust-desktop/main/docs/screenshots/app-medications.png</image>
@@ -41,7 +47,7 @@
     </screenshot>
     <screenshot>
       <image>https://raw.githubusercontent.com/russellmilliner/librelinkup-rust-desktop/main/docs/screenshots/app-settings.png</image>
-      <caption>Appearance, system tray badge, and floating desktop overlay settings</caption>
+      <caption>Appearance, accessibility UI zoom and High Contrast mode, system tray badge, and floating desktop overlay settings</caption>
     </screenshot>
   </screenshots>
   <url type="homepage">https://github.com/russellmilliner/librelinkup-rust-desktop</url>

@@ -56,13 +56,16 @@ Start-Process -FilePath "$env:TEMP\LibreLinkUp-Setup-0.5.1-x64.exe"
 
 ## Screenshots
 
-### Main Application — Live Glucose Dashboard, eA1C/GMI Pill & 12-Hour Interactive Graph (with Medication Markers)
+### Main Application — Live Glucose Dashboard, Multi-Patient Selector, Sensor Countdown & 12-Hour Interactive Graph
 ![Main Application Dashboard](docs/screenshots/app-dashboard.png)
+
+### Home Assistant LibreLink Integration — Multi-Patient Discovery, Two-Way Medication Sync & Cross-Device Alert Snooze
+![Home Assistant LibreLink Integration](docs/screenshots/app-home-assistant.png)
 
 ### Medications Tab — Scheduled Checklist, Dose Logging & Estimated A1C (eA1C / GMI / TIR%)
 ![Medications, Dose Log & Estimated A1C](docs/screenshots/app-medications.png)
 
-### General, System Tray & Desktop Overlay Settings
+### General, Accessibility Zoom (`75%`–`175%`), High Contrast & Desktop Overlay Settings
 ![General & Overlay Settings](docs/screenshots/app-settings.png)
 
 ### Floating Desktop Overlay Widget (Dark Slate & Status Color Themes)
@@ -70,6 +73,37 @@ Start-Process -FilePath "$env:TEMP\LibreLinkUp-Setup-0.5.1-x64.exe"
 
 ### System Tray Icons (Default SVG Drop & Live Glucose Value Badges)
 ![System Tray Icons](docs/screenshots/tray-icons.png)
+
+---
+
+## Home Assistant LibreLink Integration & Smart-Home Sync
+
+In addition to polling the Abbott LibreLinkUp Cloud API directly, **LibreLinkUp Rust Desktop** can connect to your **Home Assistant** instance (over your local LAN or Tailscale) and pull live CGM telemetry from the Home Assistant **LibreLink** integration:
+
+### 1. Local LAN / Tailscale CGM Polling & Multi-Patient Selector
+- **Direct Home Assistant Polling (`/api/states` & `/api/history/period`)**:
+  - Fetches current blood glucose (`mg/dL` or `mmol/L`), trend arrow (`sensor.<prefix>_trend*`), measurement timestamp, target thresholds (`sensor.*_time_in_range_24h`), and 12-hour historical graph points directly from your Home Assistant server.
+  - Supports one-click import from `~/.config/home-assistant.env` (`HA_URL` and `HA_TOKEN`) and stores your Long-Lived Access Token inside the AES-256-GCM encrypted credential vault.
+- **Automatic Multi-Patient Discovery & Instant Switching**:
+  - Automatically scans `/api/states` for all `blood_glucose_concentration` / LibreLink `sensor.*_measurement` entities, resolving each patient's friendly name and live reading (e.g., `Alex Patient (112 mg/dL) — sensor.alex_patient_measurement`).
+  - Exposes a **Patient / Sensor** dropdown selector in **Settings**, the **Sign-In Card**, and directly on the **Dashboard (`Active Patient`)** whenever 2 or more patients are present in Home Assistant so you can switch patients with one click.
+
+### 2. Sensor Warmup & Expiry Countdown (`14d` / `15d Plus`)
+- Reads `sensor.<prefix>_application_timestamp` and `sensor.<prefix>_expiration_timestamp` (including `Serial number`, `Activation date`, `Sensor lifespan days`, and `Sensor plus model` attributes) from Home Assistant.
+- Displays a live **Sensor Status** row on the Dashboard:
+  - **60-Minute Warmup Countdown**: `Warmup (42 min left)` during the initial 60 minutes after sensor activation.
+  - **Remaining Sensor Lifespan**: `12d 18h remaining (40TUAM8CTE0)` during active operation, or `Expiring in 14h 20m` / `Expired 2h 10m ago`.
+- **Configurable Sensor Expiry Warning (`sensor_expiry_alert_hours`)**: Triggers a desktop notification when remaining sensor life drops below your configured threshold (`0`–`168` hours, default `24` hours).
+
+### 3. Two-Way Medication & Dose Synchronization (`sensor.librelinkup_medications`)
+- When **Two-way Medication & Dose Sync with Home Assistant** is enabled:
+  - Pushes your scheduled medications and dose logs to `sensor.librelinkup_medications` on Home Assistant (`POST /api/states/sensor.librelinkup_medications`) and fires a `librelinkup_medication_dose_logged` event (`POST /api/events/librelinkup_medication_dose_logged`) whenever a dose is marked **Taken** or **Skipped**.
+  - Merges remote medication schedule additions/edits and dose logs from `sensor.librelinkup_medications` back into your local encrypted vault on every poll so multiple desktops and Home Assistant automations stay in sync.
+
+### 4. Cross-Device Alert Snooze Synchronization (`sensor.librelinkup_alert_snooze`)
+- When **Cross-Device Alert Snooze Synchronization via Home Assistant** is enabled:
+  - Snoozing or canceling an alert on any desktop (or via a desktop notification button) publishes `sensor.librelinkup_alert_snooze` (`state: "snoozed"` or `"active"`, with `snooze_until_epoch` and `updated_at_epoch`) and fires `librelinkup_alert_snooze_changed` on Home Assistant.
+  - Polls `sensor.librelinkup_alert_snooze` (and optional `input_datetime.librelinkup_snooze_until` helpers) so snoozing an alarm on one desktop or via a Home Assistant dashboard/voice assistant immediately silences non-urgent alerts across all connected desktops.
 
 ---
 
@@ -116,7 +150,14 @@ The **Medications** tab (available in the top navigation bar on both Linux KDE P
 
 - **Zero Tracking & Zero Advertisements — Forever**:
   - Contains **no advertisements, no user tracking, no telemetry beacons, no analytics SDKs, and no third-party data collection — and never will.**
-  - Outbound network connections are strictly limited to the 12 allowlisted LibreView regional endpoints (`https://api[-<region>].libreview.io/llu`) and GitHub Releases (`russellmilliner/librelinkup-rust-desktop`) when checking for signed application updates.
+  - Outbound network connections are strictly limited to the 12 allowlisted LibreView regional endpoints (`https://api[-<region>].libreview.io/llu`), your own configured Home Assistant instance (when enabled), and GitHub Releases (`russellmilliner/librelinkup-rust-desktop`) when checking for signed application updates.
+- **Home Assistant LibreLink Integration & Smart-Home Sync**:
+  - **Local LAN / Tailscale CGM Polling & Multi-Patient Selector**: Pulls live CGM readings, trend arrows, target ranges, and 12-hour history from your Home Assistant LibreLink integration, automatically discovers all patient glucose sensors, and provides a one-click **Patient / Sensor** dropdown selector on the Dashboard, Settings, and Sign-In views.
+  - **Sensor Warmup & Expiry Countdown**: Displays 60-minute sensor warmup countdowns, remaining sensor life (`14d` / `15d Plus`), sensor serial number, and configurable desktop expiry warnings (`sensor_expiry_alert_hours`, default `24h`).
+  - **Two-Way Medication & Dose Sync (`sensor.librelinkup_medications`)**: Bi-directionally syncs medication schedules and dose logs across desktops and Home Assistant, and fires `librelinkup_medication_dose_logged` events for smart-home automations.
+  - **Cross-Device Alert Snooze Sync (`sensor.librelinkup_alert_snooze`)**: Synchronizes alert snooze timestamps across all desktops and Home Assistant (`sensor.librelinkup_alert_snooze` / `input_datetime.librelinkup_snooze_until`).
+- **Accessibility (`WCAG AA/AAA`), Full-Window UI Zoom (`75%`–`175%`) & Status Bar**:
+  - **Bottom Status & Accessibility Bar**: Displays a color-coded **Connection & Data Source Badge** (`● Connected • Home Assistant (...)`, `● Connected • LibreLinkUp (US)`, `● Connected • Sample Data (Demo)`, `○ Disconnected • ...`), live screen-reader summary (`QAccessible` / AT-SPI2 / AccessKit), one-click **High Contrast** toggle (`WCAG AAA` borders and contrast), and `-` / `100%` / `+` **UI Zoom** buttons (`Ctrl++`, `Ctrl+-`, `Ctrl+0`, `Ctrl+Wheel`) that proportionally scale all typography and cards across the entire application.
 - **Medications Tab & 90-Day Glycemic Analytics (`eA1C` / `GMI` / `TIR%`)**:
   - **Estimated A1C (`eA1C`), `GMI` & Time in Range (`TIR %`)**: Computes ADAG `eA1C` (`%` and IFCC `mmol/mol`), Bergenstal `GMI` (`%` and `mmol/mol`), `TIR %`, `% Below`, `% Above`, Mean Glucose, `Min–Max`, and `CV %` across `12h`, `7d`, `14d`, `30d`, and `90d` windows from your encrypted 90-day local history vault (`glucose_history.enc.json`).
   - **Scheduled & As-Needed (`PRN`) Medication Tracking**: Supports `Once Daily`, `Twice Daily`, `Weekly` (with a **Day of Week** `Monday`–`Sunday` selector), and `As Needed (PRN)` schedules, in-place medication editing (`✏`), 1-click dose logging (`✓ Taken` / `⏭ Skipped` / `Log Dose`) recording concurrent blood glucose, interactive desktop due-dose reminders, and purple `💊` diamond markers on the 12-hour glucose graph.
@@ -129,8 +170,8 @@ The **Medications** tab (available in the top navigation bar on both Linux KDE P
 - **Single System Tray Icon, Primary-Screen Centering & Persistent Window Placement**:
   - Uses KDE's `StatusNotifierWatcher` on Linux and the Windows notification area (`tray-icon`) on Windows.
   - On first launch (when no saved screen position exists), the main window automatically centers on your primary monitor; thereafter, its screen, position, and size are persisted across restarts and tray restores (`window_screen_name`, `window_x`, `window_y`, `window_width`, `window_height`).
-  - Adaptive header bar automatically collapses button text to icons on narrower windows and re-verifies layout geometry when restored from the system tray so the **Minimize to Tray** button never overflows the window edge.
-  - Hides the main window cleanly when minimized or closed to tray so no Task Manager / Taskbar entry remains when only the floating overlay or tray icon is active.
+  - Adaptive header bar automatically collapses button text to icons on narrower windows and re-verifies layout geometry when restored from the system tray so header buttons never overflow the window edge.
+  - Closing the main window (`✕`) hides it cleanly to the system tray so no Task Manager / Taskbar entry remains when only the floating overlay or tray icon is active.
   - Supports `--minimized` / `--autostart` / `START_MINIMIZED=1` to launch silently in the tray at sign-in (via the XDG Background portal / autostart desktop entry on Linux, and `HKCU\Software\Microsoft\Windows\CurrentVersion\Run` on Windows).
 - **Ploopy High-Resolution Wheel Scrolling & Wide High-Contrast Scrollbars**:
   - **Zero-Deadzone Micro-Step Scrolling (`LibreLinkUpWheelScrollFilter`)**: Converts `REL_WHEEL_HI_RES` v120 micro-steps (`angleDelta * 0.50`) linearly with zero velocity deadzone and suppresses hover/tooltip re-evaluations during active wheel gestures so high-resolution scroll devices (Ploopy Trackball / Ploopy Knob) scroll smoothly at 60+ FPS.

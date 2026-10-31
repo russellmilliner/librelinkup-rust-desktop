@@ -12,7 +12,7 @@ data**. That makes the data in this app unusually sensitive:
 
 | Data | Sensitivity | Where it lives |
 |---|---|---|
-| LibreView bearer token + account id | full account access | `credentials.enc.json` (AES-256-GCM) |
+| LibreView bearer token + account id + optional Home Assistant token | full account access | `credentials.enc.json` (AES-256-GCM) |
 | Optional account password | full account access | same vault, only if the user opts in |
 | Patient name, patient id | PII | same vault |
 | 90-day glucose history | **PHI** | `glucose_history.enc.json` (AES-256-GCM) |

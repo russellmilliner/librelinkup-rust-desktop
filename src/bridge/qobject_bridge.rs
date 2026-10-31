@@ -100,6 +100,7 @@ pub struct SettingsControllerRust {
     pub data_source: QString,
     pub ha_url: QString,
     pub ha_sensor_entity_id: QString,
+    pub ha_discovered_patients_json: QString,
     pub ha_token_configured: bool,
     pub ha_sync_medications: bool,
     pub ha_sync_snooze: bool,
@@ -274,6 +275,9 @@ pub mod qobject {
         fn auto_fill_home_assistant_from_env(self: Pin<&mut TelemetryController>) -> bool;
 
         #[qinvokable]
+        fn select_ha_patient(self: Pin<&mut TelemetryController>, entity_id: QString);
+
+        #[qinvokable]
         fn refresh_glucose_now(self: Pin<&mut TelemetryController>);
 
         /// Next poll delay in milliseconds, jittered by +/-10% so restarts and multiple
@@ -391,6 +395,7 @@ pub mod qobject {
         #[qproperty(QString, data_source)]
         #[qproperty(QString, ha_url)]
         #[qproperty(QString, ha_sensor_entity_id)]
+        #[qproperty(QString, ha_discovered_patients_json)]
         #[qproperty(bool, ha_token_configured)]
         #[qproperty(bool, ha_sync_medications)]
         #[qproperty(bool, ha_sync_snooze)]

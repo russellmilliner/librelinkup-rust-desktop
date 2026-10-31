@@ -12,9 +12,9 @@ use librelinkup_core::analytics::{
     load_default_glucose_history, save_default_glucose_history, GlucoseHistoryStore, StatsWindow,
 };
 use librelinkup_core::api::{
-    authenticate_async, fetch_ha_states_array_async, normalize_country_code,
+    authenticate_async, discover_ha_patients, fetch_ha_states_array_async, normalize_country_code,
     parse_ha_remote_snooze, publish_ha_medications_state_async, publish_ha_snooze_state_async,
-    validate_ha_base_url,
+    validate_ha_base_url, HaPatientOption,
 };
 use librelinkup_core::crypto::{
     clear_credentials_at_path, load_credentials_with_secret, save_credentials_with_secret,
@@ -62,6 +62,7 @@ pub struct Shared {
     pub last_history_persist_epoch: i64,
     pub vault_ok: bool,
     pub ha_token_configured: bool,
+    pub discovered_ha_patients: Vec<HaPatientOption>,
     pub checking_updates: bool,
     pub installing_update: bool,
     pub last_notified_update_version: String,
@@ -80,6 +81,7 @@ pub enum Command {
         ha_sensor_entity_id: String,
     },
     AutoFillHomeAssistantFromEnv,
+    SelectHaPatient(String),
     Logout,
     RefreshNow,
     /// Persist new settings (and re-evaluate alerts / tray).
@@ -353,6 +355,24 @@ impl Service {
                 ha_sensor_entity_id,
             } => self.save_ha_config(data_source, ha_url, ha_token, ha_sensor_entity_id),
             Command::AutoFillHomeAssistantFromEnv => self.auto_fill_ha_env(),
+            Command::SelectHaPatient(entity_id) => {
+                let clean = entity_id.trim().to_string();
+                let should_refresh = {
+                    let mut s = lock(&self.shared);
+                    s.settings.ha_sensor_entity_id = clean.clone();
+                    let _ = save_default_settings(&s.settings);
+                    s.settings.data_source == "home_assistant" && s.logged_in && !s.demo
+                };
+                log_info(
+                    "API",
+                    format!(
+                        "Selected Home Assistant patient sensor entity: '{}'",
+                        if clean.is_empty() { "auto-discover" } else { &clean }
+                    ),
+                );
+                self.notifier.state_changed();
+                should_refresh
+            }
             Command::Logout => {
                 let _ = clear_credentials_at_path(&credentials_file_path());
                 self.creds = None;
@@ -1023,6 +1043,7 @@ impl Service {
                         }
                     }
                     if let Some(ref states) = ha_states {
+                        s.discovered_ha_patients = discover_ha_patients(states);
                         if s.settings.ha_sync_medications {
                             if s.medication_store.merge_from_ha_states(states) {
                                 let _ = save_default_medications(&s.medication_store);

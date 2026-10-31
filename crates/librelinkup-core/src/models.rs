@@ -216,6 +216,11 @@ pub struct AppSettings {
     pub overlay_y: i32,
     pub overlay_width: i32,
     pub overlay_height: i32,
+    pub window_screen_name: String,
+    pub window_x: i32,
+    pub window_y: i32,
+    pub window_width: i32,
+    pub window_height: i32,
     pub show_glucose_in_tray_icon: bool,
     pub show_glucose_in_tray_tooltip: bool,
     pub tray_icon_theme: String,
@@ -268,6 +273,11 @@ impl Default for AppSettings {
             overlay_y: -1,
             overlay_width: 276,
             overlay_height: 88,
+            window_screen_name: String::new(),
+            window_x: -1,
+            window_y: -1,
+            window_width: 980,
+            window_height: 680,
             show_glucose_in_tray_icon: true,
             show_glucose_in_tray_tooltip: true,
             tray_icon_theme: "auto".to_string(),
@@ -714,6 +724,10 @@ mod alert_tests {
         assert_eq!(def.poll_interval_seconds, 60);
         assert!(!def.remember_password);
         assert_eq!(def.stats_window, "14d");
+        assert_eq!(def.window_x, -1);
+        assert_eq!(def.window_y, -1);
+        assert_eq!(def.window_width, 980);
+        assert_eq!(def.window_height, 680);
         assert_eq!(clamp_poll_interval(15), 60);
         assert_eq!(clamp_poll_interval(60), 60);
         assert_eq!(clamp_poll_interval(99999), 3600);

@@ -32,12 +32,134 @@ inline QPointer<QWindow>& main_window_ref() {
 inline QWindow* find_main_window();
 inline QWindow* find_overlay_window();
 inline void update_tray_window_actions();
+inline void record_main_window_placement(QWindow* win, bool persistToSettings = true);
+
+struct MainWindowPlacementState {
+    QString screenName;
+    int relX = -1;
+    int relY = -1;
+    int width = 980;
+    int height = 680;
+    bool hasPlacement = false;
+    bool applying = false;
+
+    static MainWindowPlacementState& instance() {
+        static MainWindowPlacementState st;
+        return st;
+    }
+
+    bool hasSavedPosition() const {
+        return relX >= 0 && relY >= 0;
+    }
+
+    void applyToWindow(QWindow* win, bool preserveCurrentSize = false) {
+        if (!win || applying) {
+            return;
+        }
+        applying = true;
+        QScreen* targetScreen = nullptr;
+        if (hasSavedPosition()) {
+            const QString cleanName = screenName.trimmed();
+            if (!cleanName.isEmpty()) {
+                for (QScreen* sc : QGuiApplication::screens()) {
+                    if (sc && sc->name().compare(cleanName, Qt::CaseInsensitive) == 0) {
+                        targetScreen = sc;
+                        break;
+                    }
+                }
+            }
+            if (!targetScreen) {
+                targetScreen = QGuiApplication::primaryScreen()
+                    ? QGuiApplication::primaryScreen()
+                    : win->screen();
+            }
+        } else {
+            // First launch with no saved screen position: always center on the primary screen.
+            targetScreen = QGuiApplication::primaryScreen()
+                ? QGuiApplication::primaryScreen()
+                : win->screen();
+        }
+        if (!targetScreen) {
+            applying = false;
+            return;
+        }
+
+        const QRect scGeom = targetScreen->geometry();
+        const QRect avail = targetScreen->availableGeometry().isValid()
+            ? targetScreen->availableGeometry()
+            : scGeom;
+        if (!avail.isValid()) {
+            applying = false;
+            return;
+        }
+
+        const int minW = std::max(780, win->minimumWidth());
+        const int minH = std::max(540, win->minimumHeight());
+        const int baseW = preserveCurrentSize
+            ? std::max(minW, win->width())
+            : (width >= minW ? width : std::max(minW, win->width()));
+        const int baseH = preserveCurrentSize
+            ? std::max(minH, win->height())
+            : (height >= minH ? height : std::max(minH, win->height()));
+
+        const int w = std::clamp(baseW, minW, std::max(minW, avail.width()));
+        const int h = std::clamp(baseH, minH, std::max(minH, avail.height()));
+
+        int globalX = avail.left() + (avail.width() - w) / 2;
+        int globalY = avail.top() + (avail.height() - h) / 2;
+        if (hasSavedPosition()) {
+            globalX = scGeom.x() + relX;
+            globalY = scGeom.y() + relY;
+        }
+
+        const int minX = avail.left();
+        const int maxX = std::max(avail.left(), avail.right() - w + 1);
+        const int minY = avail.top();
+        const int maxY = std::max(avail.top(), avail.bottom() - h + 1);
+        const int clampedX = std::clamp(globalX, minX, maxX);
+        const int clampedY = std::clamp(globalY, minY, maxY);
+
+        if (win->screen() != targetScreen) {
+            win->setScreen(targetScreen);
+        }
+        if (win->width() != w || win->height() != h) {
+            win->resize(w, h);
+        }
+        if (win->x() != clampedX || win->y() != clampedY) {
+            win->setPosition(clampedX, clampedY);
+        }
+        applying = false;
+    }
+};
 
 inline void ensure_window_hooks(QWindow* win) {
     if (!win || win->property("_llu_minimize_hooked").toBool()) {
         return;
     }
     win->setProperty("_llu_minimize_hooked", true);
+
+    QTimer* geomSaveTimer = new QTimer(win);
+    geomSaveTimer->setSingleShot(true);
+    geomSaveTimer->setInterval(250);
+    QObject::connect(geomSaveTimer, &QTimer::timeout, win, [win]() {
+        if (win && win->isVisible() && !(win->windowStates() & Qt::WindowMinimized)
+            && qEnvironmentVariable("QT_QPA_PLATFORM") != QStringLiteral("offscreen")) {
+            record_main_window_placement(win, true);
+        }
+    });
+    auto scheduleGeomSave = [win, geomSaveTimer]() {
+        if (!win || MainWindowPlacementState::instance().applying) {
+            return;
+        }
+        if (win->isVisible() && !(win->windowStates() & Qt::WindowMinimized)
+            && qEnvironmentVariable("QT_QPA_PLATFORM") != QStringLiteral("offscreen")) {
+            geomSaveTimer->start();
+        }
+    };
+    QObject::connect(win, &QWindow::xChanged, win, [scheduleGeomSave](int) { scheduleGeomSave(); });
+    QObject::connect(win, &QWindow::yChanged, win, [scheduleGeomSave](int) { scheduleGeomSave(); });
+    QObject::connect(win, &QWindow::widthChanged, win, [scheduleGeomSave](int) { scheduleGeomSave(); });
+    QObject::connect(win, &QWindow::heightChanged, win, [scheduleGeomSave](int) { scheduleGeomSave(); });
 
     // When minimized, hide to tray and clear WindowMinimized state so there is
     // only ever a single icon in the system tray (never duplicate tray/taskbar icons).
@@ -95,6 +217,11 @@ inline void clamp_window_to_screen(QWindow* win) {
     if (!win) {
         return;
     }
+    if (win->objectName() == QStringLiteral("librelinkupMainWindow")
+        && !MainWindowPlacementState::instance().hasSavedPosition()) {
+        MainWindowPlacementState::instance().applyToWindow(win, true);
+        return;
+    }
     QScreen* sc = win->screen();
     if (!sc) {
         sc = QGuiApplication::screenAt(win->geometry().center());
@@ -122,6 +249,79 @@ inline void clamp_window_to_screen(QWindow* win) {
     }
     if (win->x() != clampedX || win->y() != clampedY) {
         win->setPosition(clampedX, clampedY);
+    }
+}
+
+inline void restore_main_window_placement(
+    const QString& screen_name,
+    int x,
+    int y,
+    int width,
+    int height
+) {
+    auto& st = MainWindowPlacementState::instance();
+    st.screenName = screen_name.trimmed();
+    st.relX = x;
+    st.relY = y;
+    st.width = width > 0 ? width : 980;
+    st.height = height > 0 ? height : 680;
+    st.hasPlacement = true;
+
+    if (QWindow* win = find_main_window()) {
+        st.applyToWindow(win, false);
+    }
+}
+
+inline void record_main_window_placement(QWindow* win, bool persistToSettings) {
+    if (!win) {
+        return;
+    }
+    auto& st = MainWindowPlacementState::instance();
+    if (st.applying) {
+        return;
+    }
+    QScreen* sc = QGuiApplication::screenAt(win->geometry().center());
+    if (!sc) {
+        sc = win->screen() ? win->screen() : QGuiApplication::primaryScreen();
+    }
+    if (!sc) {
+        return;
+    }
+    const QRect scGeom = sc->geometry();
+    const QRect avail = sc->availableGeometry().isValid() ? sc->availableGeometry() : scGeom;
+    const int minW = std::max(780, win->minimumWidth());
+    const int minH = std::max(540, win->minimumHeight());
+    const int w = std::clamp(win->width(), minW, std::max(minW, avail.width()));
+    const int h = std::clamp(win->height(), minH, std::max(minH, avail.height()));
+    const int minX = avail.left();
+    const int maxX = std::max(avail.left(), avail.right() - w + 1);
+    const int minY = avail.top();
+    const int maxY = std::max(avail.top(), avail.bottom() - h + 1);
+    const int clampedX = std::clamp(win->x(), minX, maxX);
+    const int clampedY = std::clamp(win->y(), minY, maxY);
+    const int relX = std::max(0, clampedX - scGeom.x());
+    const int relY = std::max(0, clampedY - scGeom.y());
+
+    st.screenName = sc->name();
+    st.relX = relX;
+    st.relY = relY;
+    st.width = w;
+    st.height = h;
+    st.hasPlacement = true;
+
+    if (persistToSettings) {
+        if (QObject* settingsCtrl = win->findChild<QObject*>(QStringLiteral("librelinkupSettingsController"))) {
+            QMetaObject::invokeMethod(
+                settingsCtrl,
+                "saveMainWindowPlacement",
+                Qt::DirectConnection,
+                Q_ARG(QString, sc->name()),
+                Q_ARG(int, relX),
+                Q_ARG(int, relY),
+                Q_ARG(int, w),
+                Q_ARG(int, h)
+            );
+        }
     }
 }
 
@@ -490,17 +690,23 @@ inline void show_main_window() {
         if (win->windowStates() & Qt::WindowMinimized) {
             win->setWindowStates(win->windowStates() & ~Qt::WindowMinimized);
         }
-        clamp_window_to_screen(win);
+        MainWindowPlacementState::instance().applyToWindow(win, true);
         win->showNormal();
         win->show();
+        MainWindowPlacementState::instance().applyToWindow(win, true);
         win->raise();
         win->requestActivate();
+        QMetaObject::invokeMethod(win, "recheckHeaderWidth", Qt::QueuedConnection);
     }
     update_tray_window_actions();
 }
 
 inline void hide_main_window_to_tray() {
     if (QWindow* win = find_main_window()) {
+        if (win->isVisible() && !(win->windowStates() & Qt::WindowMinimized)) {
+            const bool persist = qEnvironmentVariable("QT_QPA_PLATFORM") != QStringLiteral("offscreen");
+            record_main_window_placement(win, persist);
+        }
         win->hide();
         if (win->windowStates() & Qt::WindowMinimized) {
             win->setWindowStates(win->windowStates() & ~Qt::WindowMinimized);
@@ -548,6 +754,16 @@ inline void librelinkup_restore_overlay_placement(
             librelinkup::update_tray_window_actions();
         });
     }
+}
+
+inline void librelinkup_restore_main_window_placement(
+    const QString& screen_name,
+    std::int32_t x,
+    std::int32_t y,
+    std::int32_t width,
+    std::int32_t height
+) {
+    librelinkup::restore_main_window_placement(screen_name, x, y, width, height);
 }
 
 inline void librelinkup_apply_overlay_all_desktops(bool on_all_desktops) {

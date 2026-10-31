@@ -30,13 +30,32 @@ Kirigami.ApplicationWindow {
     function measureHeaderAndFitWindow() {
         fullHeaderWidth = 0 // force full labels for the measurement
         Qt.callLater(function() {
-            fullHeaderWidth = Math.ceil(headerRow.implicitWidth)
+            if (headerRow.implicitWidth > 0) {
+                fullHeaderWidth = Math.ceil(headerRow.implicitWidth)
+            }
             const needed = fullHeaderWidth + headerSideMargins
             const maxWidth = Screen.desktopAvailableWidth > 0 ? Screen.desktopAvailableWidth - 40 : needed
             if (root.width < needed) {
                 root.width = Math.min(needed, maxWidth)
             }
         })
+    }
+
+    function recheckHeaderWidth() {
+        if (!root.headerCompact && headerRow.implicitWidth > 0) {
+            const measured = Math.ceil(headerRow.implicitWidth)
+            if (measured > root.fullHeaderWidth) {
+                root.fullHeaderWidth = measured
+            }
+        } else if (root.fullHeaderWidth <= 0) {
+            measureHeaderAndFitWindow()
+        }
+    }
+
+    onVisibleChanged: {
+        if (visible) {
+            recheckHeaderWidth()
+        }
     }
 
     Component.onCompleted: measureHeaderAndFitWindow()
@@ -237,16 +256,27 @@ Kirigami.ApplicationWindow {
     }
 
     header: QQC2.ToolBar {
+        id: mainHeaderToolBar
         objectName: "mainHeaderToolBar"
+        leftPadding: 0
+        rightPadding: 0
         implicitHeight: headerRow.implicitHeight + 12
 
         RowLayout {
             id: headerRow
             objectName: "mainHeaderRow"
             anchors.fill: parent
-            anchors.leftMargin: 8
-            anchors.rightMargin: 8
-            spacing: 2
+            anchors.leftMargin: 6
+            anchors.rightMargin: 6
+            spacing: 1
+            onImplicitWidthChanged: {
+                if (!root.headerCompact && headerRow.implicitWidth > 0) {
+                    const measured = Math.ceil(headerRow.implicitWidth)
+                    if (measured > root.fullHeaderWidth) {
+                        root.fullHeaderWidth = measured
+                    }
+                }
+            }
 
             Rectangle {
                 objectName: "vaultStatusBadge"

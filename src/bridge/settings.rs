@@ -55,6 +55,11 @@ impl Default for SettingsControllerRust {
             overlay_y: -1,
             overlay_width: 276,
             overlay_height: 88,
+            window_screen_name: QString::default(),
+            window_x: -1,
+            window_y: -1,
+            window_width: 980,
+            window_height: 680,
             show_glucose_in_tray_icon: true,
             show_glucose_in_tray_tooltip: true,
             autostart_enabled: true,
@@ -114,6 +119,11 @@ impl qobject::SettingsController {
                 s.overlay_y,
                 s.overlay_width,
                 s.overlay_height,
+                s.window_screen_name.clone(),
+                s.window_x,
+                s.window_y,
+                s.window_width,
+                s.window_height,
                 s.show_glucose_in_tray_icon,
                 s.show_glucose_in_tray_tooltip,
                 s.autostart_enabled,
@@ -160,6 +170,11 @@ impl qobject::SettingsController {
             overlay_y,
             overlay_w,
             overlay_h,
+            window_screen,
+            window_x,
+            window_y,
+            window_w,
+            window_h,
             tray_icon,
             tray_tooltip,
             autostart,
@@ -230,6 +245,16 @@ impl qobject::SettingsController {
         sync_val!(self, set_overlay_y, overlay_y, overlay_y);
         sync_val!(self, set_overlay_width, overlay_width, overlay_w);
         sync_val!(self, set_overlay_height, overlay_height, overlay_h);
+        sync_str!(
+            self,
+            set_window_screen_name,
+            window_screen_name,
+            window_screen
+        );
+        sync_val!(self, set_window_x, window_x, window_x);
+        sync_val!(self, set_window_y, window_y, window_y);
+        sync_val!(self, set_window_width, window_width, window_w);
+        sync_val!(self, set_window_height, window_height, window_h);
         sync_val!(
             self,
             set_show_glucose_in_tray_icon,
@@ -570,6 +595,42 @@ impl qobject::SettingsController {
                     "Saved overlay placement: screen='{clean_screen}' pos=({x},{y}) size={w}x{h}"
                 ),
             );
+            self.as_mut().sync();
+        }
+    }
+
+    pub fn save_main_window_placement(
+        mut self: Pin<&mut Self>,
+        screen_name: QString,
+        x: i32,
+        y: i32,
+        width: i32,
+        height: i32,
+    ) {
+        let clean_screen = screen_name.to_string().trim().to_string();
+        let w = width.clamp(780, 3840);
+        let h = height.clamp(540, 2160);
+        let changed = with_state(|s| {
+            if s.window_screen_name != clean_screen
+                || s.window_x != x
+                || s.window_y != y
+                || s.window_width != w
+                || s.window_height != h
+            {
+                if !clean_screen.is_empty() {
+                    s.window_screen_name = clean_screen.clone();
+                }
+                s.window_x = x;
+                s.window_y = y;
+                s.window_width = w;
+                s.window_height = h;
+                true
+            } else {
+                false
+            }
+        });
+        if changed {
+            let _ = with_state(|s| ops::persist_settings(s));
             self.as_mut().sync();
         }
     }

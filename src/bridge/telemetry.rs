@@ -104,20 +104,39 @@ impl qobject::TelemetryController {
             ),
         );
 
-        let (theme, ov_screen, ov_x, ov_y, ov_w, ov_h, ov_all, autostart, minimized) =
-            with_state(|s| {
-                (
-                    s.theme_mode.clone(),
-                    s.overlay_screen_name.clone(),
-                    s.overlay_x,
-                    s.overlay_y,
-                    s.overlay_width,
-                    s.overlay_height,
-                    s.overlay_on_all_desktops,
-                    s.autostart_enabled,
-                    s.start_minimized,
-                )
-            });
+        let (
+            theme,
+            ov_screen,
+            ov_x,
+            ov_y,
+            ov_w,
+            ov_h,
+            ov_all,
+            win_screen,
+            win_x,
+            win_y,
+            win_w,
+            win_h,
+            autostart,
+            minimized,
+        ) = with_state(|s| {
+            (
+                s.theme_mode.clone(),
+                s.overlay_screen_name.clone(),
+                s.overlay_x,
+                s.overlay_y,
+                s.overlay_width,
+                s.overlay_height,
+                s.overlay_on_all_desktops,
+                s.window_screen_name.clone(),
+                s.window_x,
+                s.window_y,
+                s.window_width,
+                s.window_height,
+                s.autostart_enabled,
+                s.start_minimized,
+            )
+        });
 
         let q_theme = QString::from(theme.as_str());
         qobject::librelinkup_apply_app_theme(&q_theme);
@@ -127,6 +146,13 @@ impl qobject::TelemetryController {
             ov_y,
             ov_w,
             ov_h,
+        );
+        qobject::librelinkup_restore_main_window_placement(
+            &QString::from(win_screen.as_str()),
+            win_x,
+            win_y,
+            win_w,
+            win_h,
         );
         qobject::librelinkup_apply_overlay_all_desktops(ov_all);
 

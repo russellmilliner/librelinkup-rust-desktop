@@ -172,6 +172,20 @@ inline void inspect_item_tree(
     }
 }
 
+inline void inspect_window_tree(
+    QQuickWindow* win,
+    const QString& contextLabel,
+    QStringList& violations
+) {
+    if (!win) {
+        return;
+    }
+    if (QQuickItem* headerItem = qobject_cast<QQuickItem*>(win->property("header").value<QObject*>())) {
+        inspect_item_tree(headerItem, win, contextLabel, violations);
+    }
+    inspect_item_tree(win->contentItem(), win, contextLabel, violations);
+}
+
 inline void pump_events(int ms = 40) {
     QCoreApplication::processEvents(QEventLoop::AllEvents, ms);
     QThread::msleep(10);
@@ -275,13 +289,14 @@ inline QString librelinkup_run_ui_overflow_tests() {
                 .arg(sz.width())
                 .arg(sz.height())
                 .arg(tab);
-            librelinkup_uitest::inspect_item_tree(mainWin->contentItem(), mainWin, ctx, violations);
+            librelinkup_uitest::inspect_window_tree(mainWin, ctx, violations);
         }
     }
 
     // State B: Logged in (Demo sample data loaded -> Hero Card, Details Card, 12-Hour Graph)
     // across both Dark and Light themes and all sizes/tabs
     QMetaObject::invokeMethod(ctrl, "loadDemoSampleData", Qt::DirectConnection);
+    sync_all();
     librelinkup_uitest::pump_events(50);
 
     for (const QString& theme : {QStringLiteral("dark"), QStringLiteral("light")}) {
@@ -291,6 +306,7 @@ inline QString librelinkup_run_ui_overflow_tests() {
             Qt::DirectConnection,
             Q_ARG(QString, theme)
         );
+        sync_all();
         librelinkup_uitest::pump_events(40);
 
         for (const QSize& sz : testSizes) {
@@ -304,7 +320,7 @@ inline QString librelinkup_run_ui_overflow_tests() {
                     .arg(sz.width())
                     .arg(sz.height())
                     .arg(tab);
-                librelinkup_uitest::inspect_item_tree(mainWin->contentItem(), mainWin, ctx, violations);
+                librelinkup_uitest::inspect_window_tree(mainWin, ctx, violations);
 
                 if (tab == QStringLiteral("medications")) {
                     if (QQuickItem* schedCombo = mainWin->findChild<QQuickItem*>(QStringLiteral("medScheduleCombo"))) {
@@ -546,6 +562,73 @@ inline QString librelinkup_run_ui_overflow_tests() {
         librelinkup_uitest::pump_events(40);
         if (!librelinkup::TrayManager::instance().isTrayIconVisible()) {
             violations.append(QStringLiteral("Tray icon should be visible when main window is shown"));
+        }
+
+        // Verify main window placement:
+        // 1) When no saved screen position exists (relX=-1, relY=-1), main window centers on primary screen.
+        librelinkup::restore_main_window_placement(QStringLiteral(""), -1, -1, 980, 680);
+        librelinkup_uitest::pump_events(30);
+        if (QScreen* prim = QGuiApplication::primaryScreen()) {
+            const QRect avail = prim->availableGeometry().isValid() ? prim->availableGeometry() : prim->geometry();
+            const int expectedX = avail.left() + (avail.width() - mainWin->width()) / 2;
+            const int expectedY = avail.top() + (avail.height() - mainWin->height()) / 2;
+            if (std::abs(mainWin->x() - expectedX) > 2 || std::abs(mainWin->y() - expectedY) > 2) {
+                violations.append(
+                    QStringLiteral("MainWindow with no saved position should center on primary screen at (%1,%2); got (%3,%4)")
+                        .arg(expectedX).arg(expectedY).arg(mainWin->x()).arg(mainWin->y())
+                );
+            }
+        }
+
+        // 2) When a saved screen position exists, main window restores to that position (clamped to screen bounds).
+        librelinkup::restore_main_window_placement(QStringLiteral(""), 14, 40, 780, 540);
+        librelinkup_uitest::pump_events(30);
+        if (QScreen* sc = mainWin->screen()) {
+            const QRect scGeom = sc->geometry();
+            if (std::abs((mainWin->x() - scGeom.x()) - 14) > 2 ||
+                std::abs((mainWin->y() - scGeom.y()) - 40) > 2) {
+                violations.append(
+                    QStringLiteral("MainWindow failed to restore saved position (14,40); got (%1,%2)")
+                        .arg(mainWin->x() - scGeom.x()).arg(mainWin->y() - scGeom.y())
+                );
+            }
+        }
+
+        // 3) Verify minimize-to-tray button (buttonToTray) never overflows mainHeaderToolBar or mainWin
+        // when restored from tray across minimum, default, and large window sizes.
+        for (const QSize& restoreSz : testSizes) {
+            mainWin->resize(restoreSz);
+            librelinkup_uitest::pump_events(30);
+            QMetaObject::invokeMethod(settingsCtrl, "hideMainWindow", Qt::DirectConnection);
+            librelinkup_uitest::pump_events(30);
+            QMetaObject::invokeMethod(settingsCtrl, "showMainWindow", Qt::DirectConnection);
+            librelinkup_uitest::pump_events(60);
+
+            QQuickItem* btnTray = mainWin->findChild<QQuickItem*>(QStringLiteral("buttonToTray"));
+            if (!btnTray || !btnTray->isVisible()) {
+                violations.append(
+                    QStringLiteral("[RestoreFromTray %1x%2] buttonToTray is missing or not visible")
+                        .arg(restoreSz.width()).arg(restoreSz.height())
+                );
+            } else {
+                const QPointF topLeft = btnTray->mapToScene(QPointF(0, 0));
+                const qreal rightEdge = topLeft.x() + btnTray->width();
+                if (topLeft.x() < 0.0 || rightEdge > mainWin->width() + 1.0) {
+                    violations.append(
+                        QStringLiteral("[RestoreFromTray %1x%2] buttonToTray [x=%3..%4] overflows window width (%5)")
+                            .arg(restoreSz.width())
+                            .arg(restoreSz.height())
+                            .arg(topLeft.x(), 0, 'f', 1)
+                            .arg(rightEdge, 0, 'f', 1)
+                            .arg(mainWin->width())
+                    );
+                }
+            }
+            librelinkup_uitest::inspect_window_tree(
+                mainWin,
+                QStringLiteral("RestoreFromTray %1x%2").arg(restoreSz.width()).arg(restoreSz.height()),
+                violations
+            );
         }
 
         ovWin->hide();

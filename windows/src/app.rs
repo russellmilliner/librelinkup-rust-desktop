@@ -239,6 +239,34 @@ pub fn build_tray_view(state: &Shared) -> TrayView {
 
 impl eframe::App for LibreLinkUpApp {
     fn logic(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
+        if self.ui_handle.window_visible.load(Ordering::SeqCst) {
+            if let Some(outer) = ctx.input(|i| i.viewport().outer_rect) {
+                let wx = outer.min.x.round() as i32;
+                let wy = outer.min.y.round() as i32;
+                let ww = outer.width().round() as i32;
+                let wh = outer.height().round() as i32;
+                if wx >= 0 && wy >= 0 && ww >= 640 && wh >= 480 {
+                    let updated = self.shared.lock().ok().and_then(|mut s| {
+                        if (s.settings.window_x - wx).abs() > 2
+                            || (s.settings.window_y - wy).abs() > 2
+                            || (s.settings.window_width - ww).abs() > 2
+                            || (s.settings.window_height - wh).abs() > 2
+                        {
+                            s.settings.window_x = wx;
+                            s.settings.window_y = wy;
+                            s.settings.window_width = ww;
+                            s.settings.window_height = wh;
+                            Some(s.settings.clone())
+                        } else {
+                            None
+                        }
+                    });
+                    if let Some(new_settings) = updated {
+                        self.send(Command::SaveSettings(Box::new(new_settings)));
+                    }
+                }
+            }
+        }
         // Closing the main window hides it to the tray; Quit (tray menu) really exits.
         if ctx.input(|i| i.viewport().close_requested()) && !self.ui_handle.quitting.load(Ordering::SeqCst) {
             ctx.send_viewport_cmd(ViewportCommand::CancelClose);

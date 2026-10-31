@@ -70,6 +70,11 @@ pub struct SettingsControllerRust {
     pub overlay_y: i32,
     pub overlay_width: i32,
     pub overlay_height: i32,
+    pub window_screen_name: QString,
+    pub window_x: i32,
+    pub window_y: i32,
+    pub window_width: i32,
+    pub window_height: i32,
     pub show_glucose_in_tray_icon: bool,
     pub show_glucose_in_tray_tooltip: bool,
     pub autostart_enabled: bool,
@@ -138,6 +143,13 @@ pub mod qobject {
         fn librelinkup_show_main_window();
         fn librelinkup_hide_main_window();
         fn librelinkup_restore_overlay_placement(
+            screen_name: &QString,
+            x: i32,
+            y: i32,
+            width: i32,
+            height: i32,
+        );
+        fn librelinkup_restore_main_window_placement(
             screen_name: &QString,
             x: i32,
             y: i32,
@@ -323,6 +335,11 @@ pub mod qobject {
         #[qproperty(i32, overlay_y)]
         #[qproperty(i32, overlay_width)]
         #[qproperty(i32, overlay_height)]
+        #[qproperty(QString, window_screen_name)]
+        #[qproperty(i32, window_x)]
+        #[qproperty(i32, window_y)]
+        #[qproperty(i32, window_width)]
+        #[qproperty(i32, window_height)]
         #[qproperty(bool, show_glucose_in_tray_icon)]
         #[qproperty(bool, show_glucose_in_tray_tooltip)]
         #[qproperty(bool, autostart_enabled)]
@@ -393,6 +410,16 @@ pub mod qobject {
 
         #[qinvokable]
         fn save_overlay_placement(
+            self: Pin<&mut SettingsController>,
+            screen_name: QString,
+            x: i32,
+            y: i32,
+            width: i32,
+            height: i32,
+        );
+
+        #[qinvokable]
+        fn save_main_window_placement(
             self: Pin<&mut SettingsController>,
             screen_name: QString,
             x: i32,

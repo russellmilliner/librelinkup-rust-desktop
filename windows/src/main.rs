@@ -129,18 +129,29 @@ fn main() {
 }
 
 fn run(renderer: eframe::Renderer, start_minimized: bool) -> eframe::Result {
+    let initial_settings = librelinkup_core::models::load_default_settings();
+    let has_saved_window_pos = initial_settings.window_x >= 0 && initial_settings.window_y >= 0;
+    let init_w = initial_settings.window_width.clamp(640, 3840) as f32;
+    let init_h = initial_settings.window_height.clamp(480, 2160) as f32;
     let icon = eframe::icon_data::from_png_bytes(ICON_256).ok();
     let mut viewport = egui::ViewportBuilder::default()
         .with_title(platform::MAIN_WINDOW_TITLE)
-        .with_inner_size([960.0, 720.0])
+        .with_inner_size([init_w, init_h])
         .with_min_inner_size([640.0, 480.0])
         .with_visible(!start_minimized);
+    if has_saved_window_pos {
+        viewport = viewport.with_position([
+            initial_settings.window_x as f32,
+            initial_settings.window_y as f32,
+        ]);
+    }
     if let Some(icon) = icon {
         viewport = viewport.with_icon(icon);
     }
     let options = eframe::NativeOptions {
         viewport,
         renderer,
+        centered: !has_saved_window_pos,
         persist_window: true,
         ..Default::default()
     };

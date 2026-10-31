@@ -34,6 +34,11 @@ pub fn current_settings(state: &AppState) -> AppSettings {
     s.overlay_y = state.overlay_y;
     s.overlay_width = state.overlay_width.clamp(230, 600);
     s.overlay_height = state.overlay_height.clamp(80, 260);
+    s.window_screen_name = state.window_screen_name.clone();
+    s.window_x = state.window_x;
+    s.window_y = state.window_y;
+    s.window_width = state.window_width.clamp(780, 3840);
+    s.window_height = state.window_height.clamp(540, 2160);
     s.show_glucose_in_tray_icon = state.show_glucose_in_tray_icon;
     s.show_glucose_in_tray_tooltip = state.show_glucose_in_tray_tooltip;
     s.autostart_enabled = state.autostart_enabled;

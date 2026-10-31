@@ -193,16 +193,24 @@ inline std::int32_t librelinkup_run_app(bool start_minimized) {
         librelinkup::ensure_window_hooks(win);
         win->setIcon(initialIcon);
 
-        QObject* ctrl = win->findChild<QObject*>(QStringLiteral("librelinkupAppController"));
-        if (ctrl) {
-            const bool ovVis = ctrl->property("overlayVisible").toBool();
-            const bool ovOnly = ctrl->property("overlayOnlyMode").toBool();
-            const QString ovScreen = ctrl->property("overlayScreenName").toString();
-            const int ovX = ctrl->property("overlayX").toInt();
-            const int ovY = ctrl->property("overlayY").toInt();
-            const int ovW = ctrl->property("overlayWidth").toInt();
-            const int ovH = ctrl->property("overlayHeight").toInt();
+        QObject* settingsCtrl = win->findChild<QObject*>(QStringLiteral("librelinkupSettingsController"));
+        if (settingsCtrl) {
+            const bool ovVis = settingsCtrl->property("overlayVisible").toBool();
+            const bool ovOnly = settingsCtrl->property("overlayOnlyMode").toBool();
+            const QString ovScreen = settingsCtrl->property("overlayScreenName").toString();
+            const int ovX = settingsCtrl->property("overlayX").toInt();
+            const int ovY = settingsCtrl->property("overlayY").toInt();
+            const int ovW = settingsCtrl->property("overlayWidth").toInt();
+            const int ovH = settingsCtrl->property("overlayHeight").toInt();
             librelinkup::restore_overlay_placement(ovScreen, ovX, ovY, ovW, ovH);
+
+            const QString winScreen = settingsCtrl->property("windowScreenName").toString();
+            const int winX = settingsCtrl->property("windowX").toInt();
+            const int winY = settingsCtrl->property("windowY").toInt();
+            const int winW = settingsCtrl->property("windowWidth").toInt();
+            const int winH = settingsCtrl->property("windowHeight").toInt();
+            librelinkup::restore_main_window_placement(winScreen, winX, winY, winW, winH);
+
             if (ovVis && ovOnly) {
                 start_minimized = true;
             }
@@ -226,8 +234,9 @@ inline std::int32_t librelinkup_run_app(bool start_minimized) {
                 }
             });
         } else {
-            librelinkup::clamp_window_to_screen(win);
+            librelinkup::MainWindowPlacementState::instance().applyToWindow(win, false);
             win->show();
+            librelinkup::MainWindowPlacementState::instance().applyToWindow(win, true);
             win->raise();
             win->requestActivate();
             librelinkup::update_tray_window_actions();

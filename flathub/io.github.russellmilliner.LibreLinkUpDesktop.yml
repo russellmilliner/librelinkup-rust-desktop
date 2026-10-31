@@ -40,6 +40,6 @@ modules:
       # `flatpak-cargo-generator.py Cargo.lock -o flathub/cargo-sources.json`.
       - type: git
         url: https://github.com/russellmilliner/librelinkup-rust-desktop.git
-        tag: v0.5.0
-        commit: b67740eac93d6fed8696e3522d43c1af3eab9e61
+        tag: v0.5.1
+        commit: 1a97d4314f8464827ca4c77b8f057e31f31f5a12
       - cargo-sources.json

@@ -163,6 +163,7 @@ inline std::int32_t librelinkup_run_app(bool start_minimized) {
     static char* argv[] = {arg0, nullptr};
 
     QApplication app(argc, argv);
+    librelinkup::install_wheel_scroll_filter();
     QGuiApplication::setApplicationName(QStringLiteral("LibreLinkUp Rust Desktop"));
     QGuiApplication::setApplicationDisplayName(QStringLiteral("LibreLinkUp Rust Desktop"));
     QGuiApplication::setDesktopFileName(QStringLiteral("io.github.russellmilliner.LibreLinkUpDesktop"));

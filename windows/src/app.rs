@@ -363,6 +363,17 @@ fn apply_theme(ctx: &egui::Context, mode: &str) {
         _ => egui::ThemePreference::System,
     };
     ctx.set_theme(pref);
+    ctx.all_styles_mut(|style| {
+        style.spacing.scroll.bar_width = 10.0;
+        style.spacing.scroll.floating = false;
+        style.spacing.scroll.foreground_color = true;
+        style.spacing.scroll.dormant_background_opacity = 0.45;
+        style.spacing.scroll.active_background_opacity = 0.75;
+        style.spacing.scroll.interact_background_opacity = 0.85;
+        style.spacing.scroll.dormant_handle_opacity = 0.80;
+        style.spacing.scroll.active_handle_opacity = 0.95;
+        style.spacing.scroll.interact_handle_opacity = 1.0;
+    });
 }
 
 impl LibreLinkUpApp {

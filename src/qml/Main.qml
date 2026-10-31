@@ -58,6 +58,41 @@ Kirigami.ApplicationWindow {
         }
     }
 
+    component HighContrastScrollBar: QQC2.ScrollBar {
+        id: hcScrollBar
+        objectName: "highContrastScrollBar"
+        policy: size < 1.0 ? QQC2.ScrollBar.AlwaysOn : QQC2.ScrollBar.AsNeeded
+        interactive: true
+        minimumSize: 0.14
+        implicitWidth: orientation === Qt.Vertical ? 12 : parent ? parent.width : 100
+        implicitHeight: orientation === Qt.Horizontal ? 12 : parent ? parent.height : 100
+        padding: 2
+
+        background: Rectangle {
+            implicitWidth: hcScrollBar.orientation === Qt.Vertical ? 12 : 100
+            implicitHeight: hcScrollBar.orientation === Qt.Horizontal ? 12 : 100
+            radius: 6
+            color: Qt.alpha(Kirigami.Theme.textColor, 0.16)
+            border.width: 1
+            border.color: Qt.alpha(Kirigami.Theme.textColor, 0.32)
+            visible: hcScrollBar.size < 1.0
+        }
+
+        contentItem: Rectangle {
+            implicitWidth: hcScrollBar.orientation === Qt.Vertical ? 8 : 48
+            implicitHeight: hcScrollBar.orientation === Qt.Horizontal ? 8 : 48
+            radius: 4
+            visible: hcScrollBar.size < 1.0
+            color: hcScrollBar.pressed
+                ? Kirigami.Theme.highlightColor
+                : (hcScrollBar.hovered
+                    ? Qt.lighter(Kirigami.Theme.highlightColor, 1.15)
+                    : Qt.alpha(Kirigami.Theme.textColor, 0.68))
+            border.width: 1
+            border.color: Qt.alpha(Kirigami.Theme.backgroundColor, 0.55)
+        }
+    }
+
     Component.onCompleted: measureHeaderAndFitWindow()
     property string activeTab: "dashboard"
     readonly property alias controller: telemetry
@@ -546,13 +581,19 @@ Kirigami.ApplicationWindow {
             // Login Card when not signed in
             QQC2.ScrollView {
                 id: loginScrollView
+                objectName: "loginScrollView"
                 anchors.fill: parent
                 visible: !telemetry.loggedIn
                 clip: true
                 contentWidth: availableWidth
+                contentHeight: loginCard.implicitHeight + 24
+                QQC2.ScrollBar.vertical: HighContrastScrollBar {
+                    id: loginVerticalScrollBar
+                    objectName: "loginVerticalScrollBar"
+                }
 
                 Item {
-                    width: loginScrollView.availableWidth
+                    width: Math.max(120, loginScrollView.availableWidth - 16)
                     height: Math.max(loginScrollView.height, loginCard.implicitHeight + 24)
                     implicitHeight: loginCard.implicitHeight + 24
 
@@ -1616,11 +1657,16 @@ Kirigami.ApplicationWindow {
             visible: root.activeTab === "medications"
             clip: true
             contentWidth: availableWidth
+            contentHeight: medicationsContentColumn.implicitHeight + 16
+            QQC2.ScrollBar.vertical: HighContrastScrollBar {
+                id: medicationsVerticalScrollBar
+                objectName: "medicationsVerticalScrollBar"
+            }
 
             ColumnLayout {
                 id: medicationsContentColumn
                 objectName: "medicationsContentColumn"
-                width: Math.min(medicationsScrollView.availableWidth, 760)
+                width: Math.min(Math.max(120, medicationsScrollView.availableWidth - 16), 760)
                 spacing: 14
 
                 Kirigami.Heading {
@@ -2211,11 +2257,16 @@ Kirigami.ApplicationWindow {
             visible: root.activeTab === "general"
             clip: true
             contentWidth: availableWidth
+            contentHeight: generalContentColumn.implicitHeight + 16
+            QQC2.ScrollBar.vertical: HighContrastScrollBar {
+                id: generalVerticalScrollBar
+                objectName: "generalVerticalScrollBar"
+            }
 
             ColumnLayout {
                 id: generalContentColumn
                 objectName: "generalContentColumn"
-                width: Math.min(generalScrollView.availableWidth, 760)
+                width: Math.min(Math.max(120, generalScrollView.availableWidth - 16), 760)
                 spacing: 14
 
                 Kirigami.Heading {
@@ -2496,11 +2547,16 @@ Kirigami.ApplicationWindow {
             visible: root.activeTab === "alerts"
             clip: true
             contentWidth: availableWidth
+            contentHeight: alertsContentColumn.implicitHeight + 16
+            QQC2.ScrollBar.vertical: HighContrastScrollBar {
+                id: alertsVerticalScrollBar
+                objectName: "alertsVerticalScrollBar"
+            }
 
             ColumnLayout {
                 id: alertsContentColumn
                 objectName: "alertsContentColumn"
-                width: Math.min(alertsScrollView.availableWidth, 760)
+                width: Math.min(Math.max(120, alertsScrollView.availableWidth - 16), 760)
                 spacing: 14
 
                 Kirigami.Heading {
@@ -2757,11 +2813,16 @@ Kirigami.ApplicationWindow {
             visible: root.activeTab === "account"
             clip: true
             contentWidth: availableWidth
+            contentHeight: accountContentColumn.implicitHeight + 16
+            QQC2.ScrollBar.vertical: HighContrastScrollBar {
+                id: accountVerticalScrollBar
+                objectName: "accountVerticalScrollBar"
+            }
 
             ColumnLayout {
                 id: accountContentColumn
                 objectName: "accountContentColumn"
-                width: Math.min(accountScrollView.availableWidth, 760)
+                width: Math.min(Math.max(120, accountScrollView.availableWidth - 16), 760)
                 spacing: 14
 
                 Kirigami.Heading {

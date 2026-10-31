@@ -15,12 +15,48 @@ Item {
     function openAboutWindow() {
     }
 
+    component HighContrastScrollBar: QQC2.ScrollBar {
+        id: hcScrollBar
+        objectName: "highContrastScrollBar"
+        policy: size < 1.0 ? QQC2.ScrollBar.AlwaysOn : QQC2.ScrollBar.AsNeeded
+        interactive: true
+        minimumSize: 0.14
+        implicitWidth: orientation === Qt.Vertical ? 12 : parent ? parent.width : 100
+        implicitHeight: orientation === Qt.Horizontal ? 12 : parent ? parent.height : 100
+        padding: 2
+
+        background: Rectangle {
+            implicitWidth: hcScrollBar.orientation === Qt.Vertical ? 12 : 100
+            implicitHeight: hcScrollBar.orientation === Qt.Horizontal ? 12 : 100
+            radius: 6
+            color: Qt.alpha(Kirigami.Theme.textColor, 0.16)
+            border.width: 1
+            border.color: Qt.alpha(Kirigami.Theme.textColor, 0.32)
+            visible: hcScrollBar.size < 1.0
+        }
+
+        contentItem: Rectangle {
+            implicitWidth: hcScrollBar.orientation === Qt.Vertical ? 8 : 48
+            implicitHeight: hcScrollBar.orientation === Qt.Horizontal ? 8 : 48
+            radius: 4
+            visible: hcScrollBar.size < 1.0
+            color: hcScrollBar.pressed
+                ? Kirigami.Theme.highlightColor
+                : (hcScrollBar.hovered
+                    ? Qt.lighter(Kirigami.Theme.highlightColor, 1.15)
+                    : Qt.alpha(Kirigami.Theme.textColor, 0.68))
+            border.width: 1
+            border.color: Qt.alpha(Kirigami.Theme.backgroundColor, 0.55)
+        }
+    }
+
     ColumnLayout {
         anchors.fill: parent
         spacing: 10
 
         QQC2.ScrollView {
             id: aboutScroll
+            objectName: "aboutScrollView"
             implicitHeight: 0
             Layout.fillWidth: true
             Layout.fillHeight: true
@@ -28,9 +64,15 @@ Item {
             Layout.preferredHeight: 0
             clip: true
             contentWidth: availableWidth
+            contentHeight: aboutContentColumn.implicitHeight + 16
+            QQC2.ScrollBar.vertical: HighContrastScrollBar {
+                id: aboutVerticalScrollBar
+                objectName: "aboutVerticalScrollBar"
+            }
 
             ColumnLayout {
-                width: Math.min(aboutScroll.availableWidth, 760)
+                id: aboutContentColumn
+                width: Math.min(Math.max(120, aboutScroll.availableWidth - 16), 760)
                 spacing: 14
 
                 Rectangle {

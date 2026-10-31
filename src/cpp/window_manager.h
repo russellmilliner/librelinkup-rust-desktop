@@ -1,25 +1,35 @@
 #pragma once
 
+#include <QCoreApplication>
 #include <QCursor>
 #include <QDBusConnection>
 #include <QDBusMessage>
 #include <QDBusReply>
+#include <QDateTime>
 #include <QDir>
 #include <QFile>
 #include <QFileDevice>
 #include <QGuiApplication>
+#include <QHoverEvent>
 #include <QMetaObject>
+#include <QMouseEvent>
 #include <QObject>
 #include <QPoint>
+#include <QPointF>
 #include <QPointer>
+#include <QQuickItem>
+#include <QQuickWindow>
 #include <QRect>
 #include <QScreen>
 #include <QUuid>
 #include <QStandardPaths>
 #include <QString>
 #include <QTimer>
+#include <QVariant>
+#include <QWheelEvent>
 #include <QWindow>
 #include <algorithm>
+#include <cmath>
 #include <cstdint>
 
 namespace librelinkup {
@@ -726,6 +736,333 @@ inline void show_about_window() {
     show_main_window();
     if (QWindow* mainWin = find_main_window()) {
         QMetaObject::invokeMethod(mainWin, "openAboutDialog", Qt::QueuedConnection);
+    }
+}
+
+/// Application-wide high-resolution wheel scroll filter for Qt Quick (`QQuickFlickable` /
+/// `ListView` / `QQC2.ScrollView`).
+///
+/// High-resolution scroll devices (such as Ploopy Trackball / Ploopy Knob sending
+/// `REL_WHEEL_HI_RES` v120 micro-steps where `angleDelta.y()` is small e.g. `±2`..`±15`
+/// with `Qt::NoScrollPhase`) get swallowed by Qt Quick's default `QQuickFlickable`
+/// velocity deadzone and trigger expensive hover re-evaluations on every micro-step.
+///
+/// This filter:
+/// 1. Linearly converts `angleDelta()` (`dyPx = angle.y() * 0.50`, i.e. `60 px` per `120`
+///    v120 units, or `pixelDelta()` fallback) with zero deadzone.
+/// 2. Updates `contentY` / `contentX` directly on the deepest scrollable `QQuickFlickable`
+///    under the cursor (locking onto that flickable during a continuous 350 ms scroll gesture).
+/// 3. Suppresses scene-graph `HoverEnter`, `HoverMove`, and `ToolTip` events during active
+///    wheel scrolling so 1000 Hz Ploopy micro-steps scroll at 60+ FPS without lag or tooltips.
+class LibreLinkUpWheelScrollFilter : public QObject {
+public:
+    explicit LibreLinkUpWheelScrollFilter(QObject* parent = nullptr)
+        : QObject(parent)
+    {
+        m_hoverRestoreTimer.setSingleShot(true);
+        m_hoverRestoreTimer.setInterval(400);
+        QObject::connect(&m_hoverRestoreTimer, &QTimer::timeout, this, [this]() {
+            restoreHoverAfterScroll();
+        });
+    }
+
+protected:
+    bool eventFilter(QObject* watched, QEvent* event) override {
+        if (!event) {
+            return QObject::eventFilter(watched, event);
+        }
+
+        const QEvent::Type et = event->type();
+
+        // While actively wheel-scrolling, suppress HoverEnter/HoverMove/ToolTip events on scene
+        // items so QQuickWindow does not re-evaluate hover states or pop up tooltips on every
+        // high-frequency Ploopy micro-step.
+        if (m_wheelScrollingActive) {
+            if (et == QEvent::HoverEnter || et == QEvent::HoverMove || et == QEvent::ToolTip) {
+                return true;
+            }
+            if (et == QEvent::MouseMove) {
+                auto* me = static_cast<QMouseEvent*>(event);
+                const QPointF delta = me->globalPosition() - m_lastWheelGlobalPos;
+                if (std::hypot(delta.x(), delta.y()) <= 3.0) {
+                    return true;
+                }
+                restoreHoverAfterScroll();
+            }
+        }
+
+        if (et != QEvent::Wheel) {
+            return QObject::eventFilter(watched, event);
+        }
+
+        auto* quickWin = qobject_cast<QQuickWindow*>(watched);
+        if (!quickWin || !quickWin->contentItem()) {
+            return QObject::eventFilter(watched, event);
+        }
+
+        // Do not intercept wheel events on the floating desktop overlay window, which uses
+        // the mouse wheel to adjust overlay background opacity.
+        if (quickWin->objectName() == QStringLiteral("librelinkupOverlayWindow")) {
+            return QObject::eventFilter(watched, event);
+        }
+
+        auto* we = static_cast<QWheelEvent*>(event);
+        if ((we->modifiers() & Qt::ControlModifier) != 0) {
+            return QObject::eventFilter(watched, event);
+        }
+
+        const QPoint angle = we->angleDelta();
+        const QPoint pixel = we->pixelDelta();
+        qreal dyPx = 0.0;
+        qreal dxPx = 0.0;
+        if (!angle.isNull()) {
+            // Standard wheel notch = 120 units -> 60 px; Ploopy hi-res micro-step = 2..15 units -> 1..7.5 px.
+            dyPx = static_cast<qreal>(angle.y()) * 0.50;
+            dxPx = static_cast<qreal>(angle.x()) * 0.50;
+        } else if (!pixel.isNull()) {
+            dyPx = static_cast<qreal>(pixel.y());
+            dxPx = static_cast<qreal>(pixel.x());
+        }
+        if (qFuzzyIsNull(dyPx) && qFuzzyIsNull(dxPx)) {
+            return QObject::eventFilter(watched, event);
+        }
+
+        beginWheelScrollHoverSuppression(quickWin, we);
+
+        const qint64 nowMs = QDateTime::currentMSecsSinceEpoch();
+        const QPointF cursorDelta = we->position() - m_lastWheelScenePos;
+        if (m_lockedFlickable
+            && (nowMs - m_lastWheelLockMs) <= 350
+            && std::hypot(cursorDelta.x(), cursorDelta.y()) <= 4.0
+            && isItemEffectivelyVisible(m_lockedFlickable)) {
+            if (scrollFlickableDirect(m_lockedFlickable, dxPx, dyPx)) {
+                m_lastWheelLockMs = nowMs;
+                m_lastWheelScenePos = we->position();
+                we->accept();
+                return true;
+            }
+        }
+
+        QQuickItem* hitFlickable = nullptr;
+        if (findAndScrollFlickableAt(quickWin->contentItem(), we->position(), dxPx, dyPx, &hitFlickable)) {
+            m_lockedFlickable = hitFlickable;
+            m_lastWheelLockMs = nowMs;
+            m_lastWheelScenePos = we->position();
+            we->accept();
+            return true;
+        }
+
+        return QObject::eventFilter(watched, event);
+    }
+
+private:
+    QPointer<QQuickWindow> m_scrollWindow;
+    QPointer<QQuickItem> m_lockedFlickable;
+    QPointF m_lastWheelScenePos;
+    QPointF m_lastWheelGlobalPos;
+    Qt::KeyboardModifiers m_lastWheelModifiers = Qt::NoModifier;
+    qint64 m_lastWheelLockMs = 0;
+    bool m_wheelScrollingActive = false;
+    bool m_sendingSyntheticHover = false;
+    QTimer m_hoverRestoreTimer;
+
+    void beginWheelScrollHoverSuppression(QQuickWindow* win, QWheelEvent* we) {
+        m_scrollWindow = win;
+        m_lastWheelScenePos = we->position();
+        m_lastWheelGlobalPos = we->globalPosition();
+        m_lastWheelModifiers = we->modifiers();
+        if (!m_wheelScrollingActive && !m_sendingSyntheticHover) {
+            m_sendingSyntheticHover = true;
+            QHoverEvent leaveEv(QEvent::HoverLeave, QPointF(-10000.0, -10000.0), m_lastWheelGlobalPos, m_lastWheelScenePos, m_lastWheelModifiers);
+            QCoreApplication::sendEvent(win, &leaveEv);
+            m_sendingSyntheticHover = false;
+            m_wheelScrollingActive = true;
+        }
+        m_hoverRestoreTimer.start();
+    }
+
+    void restoreHoverAfterScroll() {
+        if (!m_wheelScrollingActive) {
+            return;
+        }
+        m_hoverRestoreTimer.stop();
+        m_wheelScrollingActive = false;
+        m_lockedFlickable = nullptr;
+        if (m_scrollWindow && m_scrollWindow->isVisible() && !m_sendingSyntheticHover) {
+            m_sendingSyntheticHover = true;
+            const QPoint globalPos = QCursor::pos();
+            const QPointF scenePos = m_scrollWindow->mapFromGlobal(globalPos);
+            QHoverEvent moveEv(QEvent::HoverMove, scenePos, QPointF(globalPos), scenePos, m_lastWheelModifiers);
+            QCoreApplication::sendEvent(m_scrollWindow.data(), &moveEv);
+            m_sendingSyntheticHover = false;
+        }
+    }
+
+    static bool isItemEffectivelyVisible(QQuickItem* item) {
+        for (QQuickItem* cur = item; cur != nullptr; cur = cur->parentItem()) {
+            if (!cur->isVisible() || !cur->isEnabled() || cur->opacity() <= 0.01) {
+                return false;
+            }
+        }
+        return true;
+    }
+
+    static bool isInteractiveWheelControl(QQuickItem* item) {
+        if (!item) {
+            return false;
+        }
+        return item->inherits("QQuickSlider")
+            || item->inherits("QQuickSpinBox")
+            || item->inherits("QQuickDial")
+            || item->inherits("QQuickTumbler")
+            || item->inherits("QQuickComboBox");
+    }
+
+    static bool scrollFlickableDirect(QQuickItem* flick, qreal dxPx, qreal dyPx) {
+        if (!flick || !flick->inherits("QQuickFlickable")) {
+            return false;
+        }
+        const bool interactive = flick->property("interactive").toBool();
+        if (!interactive && !flick->inherits("QQuickItemView")) {
+            return false;
+        }
+
+        const qreal viewH = flick->height();
+        const qreal contentH = flick->property("contentHeight").toReal();
+        const qreal topMargin = flick->property("topMargin").toReal();
+        const qreal bottomMargin = flick->property("bottomMargin").toReal();
+        const qreal originY = flick->property("originY").toReal();
+        const qreal curY = flick->property("contentY").toReal();
+
+        const qreal viewW = flick->width();
+        const qreal contentW = flick->property("contentWidth").toReal();
+        const qreal leftMargin = flick->property("leftMargin").toReal();
+        const qreal rightMargin = flick->property("rightMargin").toReal();
+        const qreal originX = flick->property("originX").toReal();
+        const qreal curX = flick->property("contentX").toReal();
+
+        bool scrolled = false;
+
+        if (!qFuzzyIsNull(dyPx) && viewH > 0.0 && (contentH + topMargin + bottomMargin) > viewH + 0.5) {
+            const qreal minY = originY - topMargin;
+            const qreal maxY = std::max(minY, originY + contentH + bottomMargin - viewH);
+            const qreal nextY = std::clamp(curY - dyPx, minY, maxY);
+            if (!qFuzzyCompare(nextY + 1.0, curY + 1.0)) {
+                QMetaObject::invokeMethod(flick, "cancelFlick", Qt::DirectConnection);
+                flick->setProperty("contentY", nextY);
+                scrolled = true;
+            } else if ((dyPx > 0.0 && curY <= minY + 0.5) || (dyPx < 0.0 && curY >= maxY - 0.5)) {
+                // Already at the boundary of this flickable; consume if it is the primary view.
+                scrolled = true;
+            }
+        }
+
+        if (!scrolled && !qFuzzyIsNull(dxPx) && viewW > 0.0 && (contentW + leftMargin + rightMargin) > viewW + 0.5) {
+            const qreal minX = originX - leftMargin;
+            const qreal maxX = std::max(minX, originX + contentW + rightMargin - viewW);
+            const qreal nextX = std::clamp(curX - dxPx, minX, maxX);
+            if (!qFuzzyCompare(nextX + 1.0, curX + 1.0)) {
+                QMetaObject::invokeMethod(flick, "cancelFlick", Qt::DirectConnection);
+                flick->setProperty("contentX", nextX);
+                scrolled = true;
+            } else if ((dxPx > 0.0 && curX <= minX + 0.5) || (dxPx < 0.0 && curX >= maxX - 0.5)) {
+                scrolled = true;
+            }
+        }
+
+        return scrolled;
+    }
+
+    static bool findAndScrollFlickableAt(
+        QQuickItem* item,
+        const QPointF& scenePos,
+        qreal dxPx,
+        qreal dyPx,
+        QQuickItem** outFlickable = nullptr
+    ) {
+        if (!item || !item->isVisible() || !item->isEnabled() || item->opacity() <= 0.01) {
+            return false;
+        }
+
+        const QPointF localPos = item->mapFromScene(scenePos);
+        const bool insideSelf = item->contains(localPos);
+
+        if (item->clip() && !insideSelf) {
+            return false;
+        }
+
+        // If hovering directly over an interactive wheel control (Slider, SpinBox, ComboBox),
+        // let that control or the outer scroll view handle it appropriately.
+        if (insideSelf && isInteractiveWheelControl(item)) {
+            return false;
+        }
+
+        // Check children in reverse paint/z order (topmost visual child first).
+        QList<QQuickItem*> children = item->childItems();
+        std::stable_sort(children.begin(), children.end(), [](const QQuickItem* a, const QQuickItem* b) {
+            return a->z() < b->z();
+        });
+        for (int i = children.size() - 1; i >= 0; --i) {
+            if (findAndScrollFlickableAt(children.at(i), scenePos, dxPx, dyPx, outFlickable)) {
+                return true;
+            }
+        }
+
+        if (!insideSelf) {
+            return false;
+        }
+
+        // If the cursor is directly over a HighContrastScrollBar or QQuickScrollBar,
+        // scroll its attached Flickable (either parentItem() for ListView or
+        // parentItem()->property("contentItem") for QQC2.ScrollView).
+        if (item->objectName().contains(QStringLiteral("ScrollBar"), Qt::CaseInsensitive)
+            || item->inherits("QQuickScrollBar")) {
+            if (QQuickItem* p = item->parentItem()) {
+                if (scrollFlickableDirect(p, dxPx, dyPx)) {
+                    if (outFlickable) {
+                        *outFlickable = p;
+                    }
+                    return true;
+                }
+                if (QQuickItem* ci = qobject_cast<QQuickItem*>(p->property("contentItem").value<QObject*>())) {
+                    if (scrollFlickableDirect(ci, dxPx, dyPx)) {
+                        if (outFlickable) {
+                            *outFlickable = ci;
+                        }
+                        return true;
+                    }
+                }
+            }
+        }
+
+        // If this item is a QQC2.ScrollView, check its internal contentItem QQuickFlickable.
+        if (item->inherits("QQuickScrollView")) {
+            if (QQuickItem* ci = qobject_cast<QQuickItem*>(item->property("contentItem").value<QObject*>())) {
+                if (scrollFlickableDirect(ci, dxPx, dyPx)) {
+                    if (outFlickable) {
+                        *outFlickable = ci;
+                    }
+                    return true;
+                }
+            }
+        }
+
+        if (scrollFlickableDirect(item, dxPx, dyPx)) {
+            if (outFlickable) {
+                *outFlickable = item;
+            }
+            return true;
+        }
+
+        return false;
+    }
+};
+
+inline void install_wheel_scroll_filter() {
+    static LibreLinkUpWheelScrollFilter* s_filter = nullptr;
+    if (!s_filter && QCoreApplication::instance()) {
+        s_filter = new LibreLinkUpWheelScrollFilter(QCoreApplication::instance());
+        QCoreApplication::instance()->installEventFilter(s_filter);
     }
 }
 

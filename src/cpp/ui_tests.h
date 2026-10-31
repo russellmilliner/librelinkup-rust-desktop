@@ -211,6 +211,7 @@ inline QString librelinkup_run_ui_overflow_tests() {
         ownedApp.reset(new QApplication(argc, argv));
         app = ownedApp.get();
     }
+    librelinkup::install_wheel_scroll_filter();
 
     // Surface the actual QML diagnostics: a silent "failed to load" is undebuggable in CI.
     QQmlApplicationEngine engine;
@@ -667,6 +668,139 @@ inline QString librelinkup_run_ui_overflow_tests() {
     }
     QMetaObject::invokeMethod(ctrl, "snoozeAlerts", Qt::DirectConnection, Q_ARG(int, 0));
     librelinkup_uitest::pump_events(20);
+
+    // State F: Verify Wide High-Contrast Scrollbars & Ploopy High-Resolution Wheel Scrolling
+    {
+        mainWin->resize(780, 540);
+        mainWin->show();
+        librelinkup_uitest::pump_events(40);
+
+        const QStringList scrollBarNames = {
+            QStringLiteral("loginVerticalScrollBar"),
+            QStringLiteral("medicationsVerticalScrollBar"),
+            QStringLiteral("generalVerticalScrollBar"),
+            QStringLiteral("alertsVerticalScrollBar"),
+            QStringLiteral("accountVerticalScrollBar"),
+            QStringLiteral("logVerticalScrollBar"),
+            QStringLiteral("aboutVerticalScrollBar")
+        };
+        for (const QString& sbName : scrollBarNames) {
+            QQuickItem* sb = mainWin->findChild<QQuickItem*>(sbName);
+            if (!sb) {
+                violations.append(QStringLiteral("Missing HighContrastScrollBar '%1'").arg(sbName));
+                continue;
+            }
+            if (sb->implicitWidth() < 11.5) {
+                violations.append(
+                    QStringLiteral("HighContrastScrollBar '%1' implicitWidth (%2) should be >= 12px")
+                        .arg(sbName).arg(sb->implicitWidth(), 0, 'f', 1)
+                );
+            }
+            if (sb->property("minimumSize").toReal() < 0.13) {
+                violations.append(
+                    QStringLiteral("HighContrastScrollBar '%1' minimumSize (%2) should be >= 0.14")
+                        .arg(sbName).arg(sb->property("minimumSize").toReal(), 0, 'f', 2)
+                );
+            }
+        }
+
+        // Test 1: Ploopy micro-step wheel scrolling on medicationsScrollView (780x540)
+        mainWin->setProperty("activeTab", QStringLiteral("medications"));
+        sync_all();
+        librelinkup_uitest::pump_events(40);
+        if (QQuickItem* medScroll = mainWin->findChild<QQuickItem*>(QStringLiteral("medicationsScrollView"))) {
+            QQuickItem* medFlick = qobject_cast<QQuickItem*>(medScroll->property("contentItem").value<QObject*>());
+            if (!medFlick) {
+                violations.append(QStringLiteral("medicationsScrollView contentItem is not a QQuickFlickable"));
+            } else {
+                medFlick->setProperty("contentY", 0.0);
+                librelinkup_uitest::pump_events(20);
+                const QPointF centerScene = medScroll->mapToScene(QPointF(medScroll->width() * 0.5, medScroll->height() * 0.5));
+                const QPointF globalPt = mainWin->mapToGlobal(centerScene.toPoint());
+                // Simulate single Ploopy hi-res micro-step down: angleDelta.y = -12 -> +6.0px contentY
+                QWheelEvent microDown(
+                    centerScene,
+                    globalPt,
+                    QPoint(0, 0),
+                    QPoint(0, -12),
+                    Qt::NoButton,
+                    Qt::NoModifier,
+                    Qt::NoScrollPhase,
+                    false
+                );
+                QCoreApplication::sendEvent(mainWin, &microDown);
+                librelinkup_uitest::pump_events(15);
+                const qreal afterDownY = medFlick->property("contentY").toReal();
+                if (std::abs(afterDownY - 6.0) > 0.5) {
+                    violations.append(
+                        QStringLiteral("Ploopy micro-step wheel down on medicationsScrollView expected contentY=6.0, got %1")
+                            .arg(afterDownY, 0, 'f', 2)
+                    );
+                }
+            }
+        }
+
+        // Test 2: Ploopy micro-step wheel scrolling on logListView (logs tab) + scroll preservation on refresh
+        // Generate enough log entries by toggling demo / refresh logs so logListView is scrollable at 780x540
+        for (int i = 0; i < 18; ++i) {
+            QMetaObject::invokeMethod(ctrl, "loadDemoSampleData", Qt::DirectConnection);
+        }
+        mainWin->setProperty("activeTab", QStringLiteral("logs"));
+        sync_all();
+        librelinkup_uitest::pump_events(50);
+
+        if (QQuickItem* logList = mainWin->findChild<QQuickItem*>(QStringLiteral("logListView"))) {
+            const qreal contentH = logList->property("contentHeight").toReal();
+            const qreal viewH = logList->height();
+            if (contentH <= viewH + 10.0) {
+                violations.append(
+                    QStringLiteral("logListView should be scrollable in test (contentHeight=%1, height=%2)")
+                        .arg(contentH, 0, 'f', 1).arg(viewH, 0, 'f', 1)
+                );
+            } else {
+                const qreal initialBottomY = logList->property("contentY").toReal();
+                const QPointF centerScene = logList->mapToScene(QPointF(logList->width() * 0.5, logList->height() * 0.5));
+                const QPointF globalPt = mainWin->mapToGlobal(centerScene.toPoint());
+                // Simulate Ploopy hi-res micro-step up: angleDelta.y = +16 -> -8.0px contentY
+                QWheelEvent microUp(
+                    centerScene,
+                    globalPt,
+                    QPoint(0, 0),
+                    QPoint(0, 16),
+                    Qt::NoButton,
+                    Qt::NoModifier,
+                    Qt::NoScrollPhase,
+                    false
+                );
+                QCoreApplication::sendEvent(mainWin, &microUp);
+                librelinkup_uitest::pump_events(15);
+                const qreal afterUpY = logList->property("contentY").toReal();
+                if (std::abs((initialBottomY - afterUpY) - 8.0) > 0.5) {
+                    violations.append(
+                        QStringLiteral("Ploopy micro-step wheel up on logListView expected delta=-8.0, got %1 -> %2")
+                            .arg(initialBottomY, 0, 'f', 2).arg(afterUpY, 0, 'f', 2)
+                    );
+                }
+
+                // Scroll up to top (contentY = 0) and verify background log event does NOT reset scroll to bottom
+                logList->setProperty("contentY", 0.0);
+                librelinkup_uitest::pump_events(15);
+                QMetaObject::invokeMethod(ctrl, "loadDemoSampleData", Qt::DirectConnection);
+                QMetaObject::invokeMethod(settingsCtrl, "refreshEventLogs", Qt::DirectConnection);
+                sync_all();
+                librelinkup_uitest::pump_events(30);
+                const qreal afterRefreshY = logList->property("contentY").toReal();
+                if (afterRefreshY > 5.0) {
+                    violations.append(
+                        QStringLiteral("logListView scroll position was yanked from 0.0 to %1 on background log update")
+                            .arg(afterRefreshY, 0, 'f', 1)
+                    );
+                }
+            }
+        }
+        mainWin->setProperty("activeTab", QStringLiteral("dashboard"));
+        librelinkup_uitest::pump_events(25);
+    }
 
     const QString screenshotDir = qEnvironmentVariable("LLU_EXPORT_SCREENSHOTS_DIR").trimmed();
     if (!screenshotDir.isEmpty()) {

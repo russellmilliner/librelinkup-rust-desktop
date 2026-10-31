@@ -70,7 +70,48 @@ Item {
         return "#94a3b8"
     }
 
-    function refreshModel() {
+    component HighContrastScrollBar: QQC2.ScrollBar {
+        id: hcScrollBar
+        objectName: "highContrastScrollBar"
+        policy: size < 1.0 ? QQC2.ScrollBar.AlwaysOn : QQC2.ScrollBar.AsNeeded
+        interactive: true
+        minimumSize: 0.14
+        implicitWidth: orientation === Qt.Vertical ? 12 : parent ? parent.width : 100
+        implicitHeight: orientation === Qt.Horizontal ? 12 : parent ? parent.height : 100
+        padding: 2
+
+        background: Rectangle {
+            implicitWidth: hcScrollBar.orientation === Qt.Vertical ? 12 : 100
+            implicitHeight: hcScrollBar.orientation === Qt.Horizontal ? 12 : 100
+            radius: 6
+            color: Qt.alpha(Kirigami.Theme.textColor, 0.16)
+            border.width: 1
+            border.color: Qt.alpha(Kirigami.Theme.textColor, 0.32)
+            visible: hcScrollBar.size < 1.0
+        }
+
+        contentItem: Rectangle {
+            implicitWidth: hcScrollBar.orientation === Qt.Vertical ? 8 : 48
+            implicitHeight: hcScrollBar.orientation === Qt.Horizontal ? 8 : 48
+            radius: 4
+            visible: hcScrollBar.size < 1.0
+            color: hcScrollBar.pressed
+                ? Kirigami.Theme.highlightColor
+                : (hcScrollBar.hovered
+                    ? Qt.lighter(Kirigami.Theme.highlightColor, 1.15)
+                    : Qt.alpha(Kirigami.Theme.textColor, 0.68))
+            border.width: 1
+            border.color: Qt.alpha(Kirigami.Theme.backgroundColor, 0.55)
+        }
+    }
+
+    function refreshModel(forceScrollToEnd) {
+        const prevCount = logListView.count
+        const prevContentY = logListView.contentY
+        const wasAtBottom = prevCount === 0
+            || logListView.contentHeight <= logListView.height
+            || logListView.atYEnd
+            || (prevContentY >= logListView.contentHeight - logListView.height - 24)
         filteredLogModel.clear()
         if (!controller) return
         const raw = controller.eventLogJson || "[]"
@@ -100,7 +141,14 @@ Item {
                 })
             }
             if (logListView.count > 0) {
-                logListView.positionViewAtEnd()
+                if (forceScrollToEnd || wasAtBottom) {
+                    logListView.positionViewAtEnd()
+                } else {
+                    logListView.contentY = Math.min(
+                        prevContentY,
+                        Math.max(0, logListView.contentHeight - logListView.height)
+                    )
+                }
             }
         } catch (e) {}
     }
@@ -118,7 +166,7 @@ Item {
         if (controller) {
             controller.refreshEventLogs()
         }
-        refreshModel()
+        refreshModel(true)
     }
 
     onVisibleChanged: {
@@ -295,16 +343,17 @@ Item {
                 model: filteredLogModel
                 spacing: 4
                 clip: true
+                cacheBuffer: 2000
                 boundsBehavior: Flickable.StopAtBounds
-                QQC2.ScrollBar.vertical: QQC2.ScrollBar {
+                QQC2.ScrollBar.vertical: HighContrastScrollBar {
                     id: logVerticalScrollBar
-                    policy: QQC2.ScrollBar.AsNeeded
+                    objectName: "logVerticalScrollBar"
                 }
 
                 delegate: Rectangle {
                     id: logDelegateCard
                     objectName: "logDelegateCard"
-                    width: Math.max(120, logListView.width - 16)
+                    width: Math.max(120, logListView.width - 18)
                     readonly property real contentRowHeight: Math.max(
                         metaRow.height,
                         messageLabel.contentHeight,

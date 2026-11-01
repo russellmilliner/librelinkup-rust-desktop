@@ -15,6 +15,7 @@ finish-args:
   - --device=dri
   - --talk-name=org.kde.StatusNotifierWatcher
   - --talk-name=org.freedesktop.Notifications
+  - --talk-name=org.kde.KWin
   - --filesystem=xdg-config/kdeglobals:ro
 modules:
   - name: librelinkup-kde

@@ -45,9 +45,9 @@ There are **two front-ends** over one shared core:
                 │ C++ shims (src/cpp/*.h)
    ┌────────────▼─────────────────────────────────────────────┐
    │ tray_manager.h  QSystemTrayIcon, freedesktop notifications│
-   │ window_manager.h overlay placement, KWin all-desktops     │
-   │ audio_portal.h  paplay/pw-play fallback chain             │
-   │ icon_renderer.h live glucose badge rendering              │
+   │ window_manager.h Wayland KWin D-Bus scripting + X11 WM   │
+   │ audio_portal.h  Wayland platform init + paplay/pw-play   │
+   │ icon_renderer.h live glucose badge + blood drop watermark│
    │ ui_tests.h      headless QML layout/behaviour assertions  │
    └──────────────────────────────────────────────────────────┘
 ```
@@ -175,7 +175,9 @@ High and Stale are not.** Signal loss must not raise an un-dismissable critical 
 | **I-9** | Background results are generation-tagged before touching state | prevents resurrecting a signed-out session |
 | **I-10** | Polling is clamped to ≥60 s **and** jittered | LibreView rate-limits; lock-step instances trip it |
 | **I-11** | `TrayManager` reads state from `TrayPayload` (never `SettingsController` properties on `m_controller`) | `m_controller` is `TelemetryController`; reading missing properties returns `false` and can trigger queued-invocation feedback loops |
-| **I-12** | `OverlayWidget` tooltips must render in external top-level `librelinkupOverlayTooltipWindow` (never in-scene `QQC2.ToolTip`) | in-scene `QQuickPopup` tooltips clip to the `276×88` overlay window and obscure the action buttons |
+| **I-12** | `OverlayWidget` tooltips must render in external top-level `librelinkupOverlayTooltipWindow` (`transientParent == nullptr`, never in-scene `QQC2.ToolTip`) | in-scene `QQuickPopup` tooltips clip to the `276×88` overlay window, and `xdg_positioner` clamps transient child popups back inside their parent on Wayland |
+| **I-13** | Native Wayland (`QT_QPA_PLATFORM=wayland`) uses KWin D-Bus scripting (`org.kde.KWin` `/Scripting`) + `QWindow::startSystemMove()` + `/LibreLinkUpKWin` callbacks | Wayland clients cannot set or read global screen coordinates directly; KWin scripts enforce `noBorder`, `keepAbove`, `skipTaskbar/Pager/Switcher`, `onAllDesktops`, and multi-monitor coordinate persistence without XWayland |
+| **I-14** | System tray glucose badge (`build_glucose_badge_icon`) always renders the blood drop + ECG logo behind dark-outlined white text | keeps the application's signature blood drop emblem recognizable at all times while preserving high-contrast numeral legibility |
 
 ---
 

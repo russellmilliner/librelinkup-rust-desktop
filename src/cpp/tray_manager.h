@@ -58,6 +58,16 @@ public:
         ensureInitialized();
         if (m_menu) {
             updateWindowActionsVisibility();
+            if (is_wayland_platform()) {
+                m_menu->winId();
+                if (QWindow* menuWin = m_menu->windowHandle()) {
+                    if (QWindow* ovWin = find_overlay_window(); ovWin && ovWin->isVisible()) {
+                        menuWin->setTransientParent(ovWin);
+                    } else if (QWindow* mainWin = find_main_window(); mainWin && mainWin->isVisible()) {
+                        menuWin->setTransientParent(mainWin);
+                    }
+                }
+            }
             m_menu->popup(QCursor::pos());
         }
     }
@@ -669,6 +679,26 @@ inline void NotificationActionWatcher::onActionInvoked(uint id, const QString& a
 inline void NotificationActionWatcher::onNotificationClosed(uint id, uint reason) {
     Q_UNUSED(reason);
     TrayManager::instance().handleNotificationClosed(id);
+}
+
+inline void NotificationActionWatcher::onKWinOverlayGeometry(
+    const QString& screenName,
+    int globalX,
+    int globalY,
+    int width,
+    int height
+) {
+    handle_kwin_overlay_geometry(screenName, globalX, globalY, width, height);
+}
+
+inline void NotificationActionWatcher::onKWinMainWindowGeometry(
+    const QString& screenName,
+    int globalX,
+    int globalY,
+    int width,
+    int height
+) {
+    handle_kwin_main_window_geometry(screenName, globalX, globalY, width, height);
 }
 
 inline void update_tray_window_actions() {

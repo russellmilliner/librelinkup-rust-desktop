@@ -149,10 +149,15 @@ inline std::int32_t librelinkup_run_app(bool start_minimized) {
     if (!std::getenv("QT_QUICK_CONTROLS_STYLE")) {
         qputenv("QT_QUICK_CONTROLS_STYLE", "org.kde.breeze");
     }
-    // Use XCB (XWayland/X11) by default when DISPLAY is available so KDE Plasma KWin
-    // allows saving/restoring exact multi-monitor overlay coordinates and Qt::Tool taskbar skipping.
-    if (std::getenv("DISPLAY") && !std::getenv("LIBRELINKUP_USE_WAYLAND") && !std::getenv("QT_QPA_PLATFORM")) {
-        qputenv("QT_QPA_PLATFORM", "xcb");
+    // Use native Wayland by default when WAYLAND_DISPLAY is present; KWin D-Bus scripting
+    // (org.kde.KWin /Scripting) and QWindow::startSystemMove() handle exact multi-monitor
+    // coordinates, frameless overlay borders, taskbar skipping, and virtual desktop pinning.
+    if (!std::getenv("QT_QPA_PLATFORM")) {
+        if (std::getenv("WAYLAND_DISPLAY") && !std::getenv("LIBRELINKUP_USE_X11")) {
+            qputenv("QT_QPA_PLATFORM", "wayland");
+        } else if (std::getenv("DISPLAY")) {
+            qputenv("QT_QPA_PLATFORM", "xcb");
+        }
     }
     if (start_minimized) {
         qputenv("LIBRELINKUP_START_MINIMIZED", "1");
@@ -164,6 +169,7 @@ inline std::int32_t librelinkup_run_app(bool start_minimized) {
 
     QApplication app(argc, argv);
     librelinkup::install_wheel_scroll_filter();
+    librelinkup::ensure_kwin_dbus_bridge();
     QGuiApplication::setApplicationName(QStringLiteral("LibreLinkUp Rust Desktop"));
     QGuiApplication::setApplicationDisplayName(QStringLiteral("LibreLinkUp Rust Desktop"));
     QGuiApplication::setDesktopFileName(QStringLiteral("io.github.russellmilliner.LibreLinkUpDesktop"));

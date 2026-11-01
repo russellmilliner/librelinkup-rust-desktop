@@ -17,7 +17,7 @@ Window {
     flags: Qt.Tool
         | Qt.FramelessWindowHint
         | Qt.WindowStaysOnTopHint
-        | (onAllDesktops ? Qt.BypassWindowManagerHint : Qt.Widget)
+        | Qt.BypassWindowManagerHint
     color: "transparent"
     visible: Boolean(settings && settings.overlayVisible)
 
@@ -65,7 +65,8 @@ Window {
     Window {
         id: overlayTooltipWindow
         objectName: "librelinkupOverlayTooltipWindow"
-        flags: Qt.ToolTip
+        title: qsTr("LibreLinkUp Rust Desktop Overlay Tooltip")
+        flags: Qt.Tool
             | Qt.FramelessWindowHint
             | Qt.WindowStaysOnTopHint
             | Qt.WindowTransparentForInput
@@ -141,6 +142,8 @@ Window {
             anchors.fill: parent
             acceptedButtons: Qt.LeftButton | Qt.RightButton
             property bool dragging: false
+            property real pressX: 0
+            property real pressY: 0
 
             onPressed: function(mouse) {
                 if (mouse.button === Qt.RightButton) {
@@ -150,13 +153,20 @@ Window {
                     return
                 }
                 if (mouse.button === Qt.LeftButton && overlayWindow.settings) {
-                    dragging = true
+                    pressX = mouse.x
+                    pressY = mouse.y
+                    dragging = false
                     overlayWindow.settings.beginOverlayDrag()
                 }
             }
             onPositionChanged: function(mouse) {
-                if (dragging && (mouse.buttons & Qt.LeftButton) && overlayWindow.settings) {
-                    overlayWindow.settings.updateOverlayDrag()
+                if ((mouse.buttons & Qt.LeftButton) && overlayWindow.settings) {
+                    if (!dragging && Math.hypot(mouse.x - pressX, mouse.y - pressY) >= 4) {
+                        dragging = true
+                    }
+                    if (dragging) {
+                        overlayWindow.settings.updateOverlayDrag()
+                    }
                 }
             }
             onReleased: function() {

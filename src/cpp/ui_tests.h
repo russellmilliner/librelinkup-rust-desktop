@@ -569,6 +569,9 @@ inline QString librelinkup_run_ui_overflow_tests() {
         if (!ovTooltipWin) {
             violations.append(QStringLiteral("Missing librelinkupOverlayTooltipWindow on OverlayWidget"));
         } else {
+            if (ovTooltipWin->transientParent() != nullptr) {
+                violations.append(QStringLiteral("librelinkupOverlayTooltipWindow must have null transientParent"));
+            }
             const QStringList overlayButtons = {
                 QStringLiteral("overlayThemeToggleBtn"),
                 QStringLiteral("overlayAllDesktopsBtn"),
@@ -657,6 +660,24 @@ inline QString librelinkup_run_ui_overflow_tests() {
         }
         if (!librelinkup::TrayManager::instance().isTrayIconVisible()) {
             violations.append(QStringLiteral("Tray icon must always remain visible when only the overlay is showing"));
+        }
+        // Verify glucose badge tray icon always renders the blood drop logo in the background
+        {
+            const QIcon badgeIcon = librelinkup::build_glucose_badge_icon(
+                QStringLiteral("118"),
+                QStringLiteral("→"),
+                QStringLiteral("#22c55e")
+            );
+            const QImage img = badgeIcon.pixmap(64, 64).toImage();
+            const QColor dropTipCol = img.pixelColor(32, 9);
+            const QColor cornerBgCol = img.pixelColor(10, 9);
+            if (dropTipCol.lightness() <= cornerBgCol.lightness() + 15) {
+                violations.append(
+                    QStringLiteral("Tray badge icon must render the blood drop logo in the background (dropTip lightness=%1, bg lightness=%2)")
+                        .arg(dropTipCol.lightness())
+                        .arg(cornerBgCol.lightness())
+                );
+            }
         }
         if (!settingsCtrl->property("overlayOnlyMode").toBool()) {
             violations.append(QStringLiteral("overlayOnlyMode should be true when main window is hidden while overlay is visible"));

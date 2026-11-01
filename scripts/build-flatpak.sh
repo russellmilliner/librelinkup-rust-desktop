@@ -52,14 +52,14 @@ flatpak build-finish "$WORK_DIR/build-dir" \
   --command=librelinkup-kde \
   --share=ipc \
   --share=network \
-  --socket=x11 \
   --socket=wayland \
+  --socket=fallback-x11 \
   --socket=pulseaudio \
-  --env=QT_QPA_PLATFORM=xcb \
   --device=dri \
   --talk-name=org.kde.StatusNotifierWatcher \
   --talk-name=org.freedesktop.Notifications \
   --talk-name=org.freedesktop.Flatpak \
+  --talk-name=org.kde.KWin \
   --filesystem=xdg-config/kdeglobals:ro \
   --filesystem=xdg-config/home-assistant.env:ro \
   --filesystem=xdg-config/librelinkup-kde:create \

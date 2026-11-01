@@ -2,6 +2,21 @@
 
 All notable changes and bumped dependencies for `russellmilliner/librelinkup-rust-desktop` are documented in this file.
 
+## [v0.5.5](https://github.com/russellmilliner/librelinkup-rust-desktop/releases/tag/v0.5.5) — 2026-11-01
+
+### Highlights
+- Run natively on Wayland via KWin D-Bus scripting + startSystemMove, harden frameless desktop overlay against KWin Breeze decorations, and always render the blood drop logo in the system tray glucose badge icon
+
+### Commits
+- feat(wayland,tray): run natively on Wayland via KWin scripting and keep blood drop logo in tray badge (03cbd67)
+- chore(deps): update dependencies (unicode-properties 0.1.5) (42ccd3e)
+
+### 📦 Bumped Dependencies (1 package)
+
+| Package | Previous | Updated | Scope |
+| :--- | :--- | :--- | :--- |
+| `unicode-properties` | `0.1.4` | **`0.1.5`** | Lockfile (`windows/Cargo.lock`) |
+
 ## [v0.5.4-deps](https://github.com/russellmilliner/librelinkup-rust-desktop/releases/tag/v0.5.4-deps) — 2026-11-01
 
 ### 📦 Bumped Dependencies (1 package)

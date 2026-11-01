@@ -56,6 +56,11 @@
   <url type="donation">https://ko-fi.com/russellmilliner</url>
   <content_rating type="oars-1.1" />
   <releases>
+    <release version="0.5.5" date="2026-11-01">
+      <description>
+        <p>Run natively on Wayland via KWin D-Bus scripting + startSystemMove, harden frameless desktop overlay against KWin Breeze decorations, and always render the blood drop logo in the system tray glucose badge icon</p>
+      </description>
+    </release>
     <release version="0.5.4" date="2026-10-31">
       <description>
         <p>Render desktop overlay tooltips in an external top-level window so they never get cropped by the 276x88 overlay bounds or cover the overlay buttons</p>

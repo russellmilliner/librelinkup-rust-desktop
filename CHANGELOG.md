@@ -2,6 +2,22 @@
 
 All notable changes and bumped dependencies for `russellmilliner/librelinkup-rust-desktop` are documented in this file.
 
+## [v0.5.6](https://github.com/russellmilliner/librelinkup-rust-desktop/releases/tag/v0.5.6) — 2026-11-03
+
+### Highlights
+- Update dependencies: async-compression 0.4.52, async-executor 1.14.1, async-lock 3.5.0, cc 1.11.0, compression-codecs 0.4.47, crc32fast 1.5.4
+
+### 📦 Bumped Dependencies (6 packages)
+
+| Package | Previous | Updated | Scope |
+| :--- | :--- | :--- | :--- |
+| `async-compression` | `0.4.51` | **`0.4.52`** | Lockfile (`windows/Cargo.lock`) |
+| `async-executor` | `1.14.0` | **`1.14.1`** | Lockfile (`windows/Cargo.lock`) |
+| `async-lock` | `3.4.2` | **`3.5.0`** | Lockfile (`windows/Cargo.lock`) |
+| `cc` | `1.10.0` | **`1.11.0`** | Lockfile (`windows/Cargo.lock`) |
+| `compression-codecs` | `0.4.46` | **`0.4.47`** | Lockfile (`windows/Cargo.lock`) |
+| `crc32fast` | `1.5.3` | **`1.5.4`** | Lockfile (`windows/Cargo.lock`) |
+
 ## [v0.5.5](https://github.com/russellmilliner/librelinkup-rust-desktop/releases/tag/v0.5.5) — 2026-11-01
 
 ### Highlights

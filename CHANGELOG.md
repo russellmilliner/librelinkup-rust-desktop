@@ -2,6 +2,14 @@
 
 All notable changes and bumped dependencies for `russellmilliner/librelinkup-rust-desktop` are documented in this file.
 
+## [v0.5.7](https://github.com/russellmilliner/librelinkup-rust-desktop/releases/tag/v0.5.7) — 2026-11-03
+
+### Highlights
+- Scale the entire desktop overlay widget (background, border, text, trend badge, and action buttons) uniformly via FBO layer opacity and ui.set_opacity() when adjusting overlay transparency
+
+### Commits
+- fix(overlay): apply overlayOpacityPercent to entire overlay widget layer (cdd7734)
+
 ## [v0.5.6](https://github.com/russellmilliner/librelinkup-rust-desktop/releases/tag/v0.5.6) — 2026-11-03
 
 ### Highlights

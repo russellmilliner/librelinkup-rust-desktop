@@ -56,6 +56,11 @@
   <url type="donation">https://ko-fi.com/russellmilliner</url>
   <content_rating type="oars-1.1" />
   <releases>
+    <release version="0.5.7" date="2026-11-03">
+      <description>
+        <p>Scale the entire desktop overlay widget (background, border, text, trend badge, and action buttons) uniformly via FBO layer opacity and ui.set_opacity() when adjusting overlay transparency</p>
+      </description>
+    </release>
     <release version="0.5.6" date="2026-11-03">
       <description>
         <p>Update dependencies: async-compression 0.4.52, async-executor 1.14.1, async-lock 3.5.0, cc 1.11.0, compression-codecs 0.4.47, crc32fast 1.5.4</p>

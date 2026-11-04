@@ -31,9 +31,34 @@ Window {
     onOnAllDesktopsChanged: allDesktopsCanvas.requestPaint()
     readonly property int opacityPercent: settings ? Math.max(20, Math.min(100, settings.overlayOpacityPercent)) : 88
     readonly property real opacityAlpha: opacityPercent / 100.0
+    property bool opacityHudVisible: false
     readonly property color statusAccentColor: Qt.color(telemetry ? telemetry.rangeColorHex : "#22c55e")
     readonly property color lightOverlayBgColor: Qt.darker(statusAccentColor, 1.42)
     readonly property color lightOverlayBorderColor: Qt.darker(statusAccentColor, 1.95)
+
+    Timer {
+        id: opacityHudTimer
+        interval: 900
+        repeat: false
+        onTriggered: overlayWindow.opacityHudVisible = false
+    }
+
+    function handleOpacityWheel(wheel) {
+        if (!overlayWindow.settings) {
+            return
+        }
+        const dy = wheel.angleDelta.y !== 0 ? wheel.angleDelta.y : wheel.pixelDelta.y
+        if (dy === 0) {
+            return
+        }
+        const step = dy > 0 ? 5 : -5
+        const nextVal = Math.max(20, Math.min(100, overlayWindow.opacityPercent + step))
+        overlayWindow.settings.updateOverlayOpacityPercent(nextVal)
+        overlayWindow.opacityHudVisible = true
+        opacityHudTimer.restart()
+        wheel.accepted = true
+    }
+
     readonly property string hoveredTooltipText: {
         if (!overlayWindow.visible || dragMouseArea.dragging) {
             return ""
@@ -56,6 +81,9 @@ Window {
         }
         if (closeBtnMouse.containsMouse) {
             return qsTr("Hide Desktop Overlay")
+        }
+        if (overlayWindow.opacityHudVisible) {
+            return qsTr("Overlay Opacity: %1%").arg(overlayWindow.opacityPercent)
         }
         return ""
     }
@@ -116,24 +144,16 @@ Window {
         anchors.fill: parent
         radius: 14
         clip: true
+        opacity: overlayWindow.opacityAlpha
+        layer.enabled: overlayWindow.opacityAlpha < 0.999
         Accessible.role: Accessible.Pane
         Accessible.name: telemetry ? telemetry.accessibleSummary : qsTr("LibreLinkUp Glucose Overlay")
         Accessible.description: qsTr("Floating desktop glucose overlay. Double-click to open main window, right-click for menu, scroll wheel to adjust opacity.")
         color: overlayWindow.isDarkOverlay
-            ? Qt.rgba(0.06, 0.09, 0.16, overlayWindow.opacityAlpha)
-            : Qt.rgba(
-                overlayWindow.lightOverlayBgColor.r,
-                overlayWindow.lightOverlayBgColor.g,
-                overlayWindow.lightOverlayBgColor.b,
-                overlayWindow.opacityAlpha
-            )
+            ? Qt.rgba(0.06, 0.09, 0.16, 1.0)
+            : overlayWindow.lightOverlayBgColor
         border.color: overlayWindow.isDarkOverlay
-            ? Qt.rgba(
-                overlayWindow.statusAccentColor.r,
-                overlayWindow.statusAccentColor.g,
-                overlayWindow.statusAccentColor.b,
-                Math.min(1.0, overlayWindow.opacityAlpha + 0.15)
-            )
+            ? overlayWindow.statusAccentColor
             : overlayWindow.lightOverlayBorderColor
         border.width: 2.0
 
@@ -191,11 +211,7 @@ Window {
                 }
             }
             onWheel: function(wheel) {
-                if (overlayWindow.settings) {
-                    const step = wheel.angleDelta.y > 0 ? 5 : -5
-                    const nextVal = Math.max(20, Math.min(100, overlayWindow.opacityPercent + step))
-                    overlayWindow.settings.updateOverlayOpacityPercent(nextVal)
-                }
+                overlayWindow.handleOpacityWheel(wheel)
             }
         }
 
@@ -367,6 +383,9 @@ Window {
                                     overlayWindow.settings.updateOverlayDarkTheme(!overlayWindow.isDarkOverlay)
                                 }
                             }
+                            onWheel: function(wheel) {
+                                overlayWindow.handleOpacityWheel(wheel)
+                            }
                         }
                     }
 
@@ -446,6 +465,9 @@ Window {
                                     overlayWindow.settings.updateOverlayOnAllDesktops(!overlayWindow.onAllDesktops)
                                 }
                             }
+                            onWheel: function(wheel) {
+                                overlayWindow.handleOpacityWheel(wheel)
+                            }
                         }
                     }
 
@@ -488,6 +510,9 @@ Window {
                                 if (overlayWindow.settings) {
                                     overlayWindow.settings.showMainWindow()
                                 }
+                            }
+                            onWheel: function(wheel) {
+                                overlayWindow.handleOpacityWheel(wheel)
                             }
                         }
                     }
@@ -536,6 +561,9 @@ Window {
                                     overlayWindow.settings.popupTrayMenuAtCursor()
                                 }
                             }
+                            onWheel: function(wheel) {
+                                overlayWindow.handleOpacityWheel(wheel)
+                            }
                         }
                     }
 
@@ -578,6 +606,9 @@ Window {
                                 if (overlayWindow.settings) {
                                     overlayWindow.settings.updateOverlayVisible(false)
                                 }
+                            }
+                            onWheel: function(wheel) {
+                                overlayWindow.handleOpacityWheel(wheel)
                             }
                         }
                     }

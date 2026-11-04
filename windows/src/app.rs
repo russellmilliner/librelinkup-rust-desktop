@@ -2026,14 +2026,15 @@ fn overlay_ui(ui: &mut egui::Ui, shared: &SharedState, tx: &UnboundedSender<Comm
         }
     }
 
-    let alpha = (current_opacity as f32 / 100.0 * 255.0) as u8;
+    let opacity_f = (current_opacity as f32 / 100.0).clamp(0.20, 1.0);
+    ui.set_opacity(opacity_f);
     let status_color = hex_color(color_hex);
     let light_fill = darken_color(status_color, 1.42);
     let light_border = darken_color(status_color, 1.95);
     let bg = if s.overlay_dark_theme {
-        Color32::from_rgba_unmultiplied(15, 23, 42, alpha)
+        Color32::from_rgb(15, 23, 42)
     } else {
-        Color32::from_rgba_unmultiplied(light_fill.r(), light_fill.g(), light_fill.b(), alpha)
+        Color32::from_rgb(light_fill.r(), light_fill.g(), light_fill.b())
     };
 
     let painter = ui.painter();

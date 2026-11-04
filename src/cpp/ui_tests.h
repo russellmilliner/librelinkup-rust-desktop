@@ -1064,6 +1064,38 @@ inline QString librelinkup_run_ui_overflow_tests() {
                     violations.append(QStringLiteral("Accessible.name is empty on overlay QQuickItem '%1'").arg(objName));
                 }
             }
+
+            // Verify that overlayOpacityPercent scales the entire overlayPill opacity (not just its border)
+            if (QQuickItem* pill = ovWin->findChild<QQuickItem*>(QStringLiteral("overlayPill"))) {
+                QMetaObject::invokeMethod(
+                    settingsCtrl,
+                    "updateOverlayOpacityPercent",
+                    Qt::DirectConnection,
+                    Q_ARG(int, 40)
+                );
+                sync_all();
+                librelinkup_uitest::pump_events(15);
+                if (std::abs(pill->opacity() - 0.40) > 0.02) {
+                    violations.append(
+                        QStringLiteral("Expected overlayPill.opacity=0.40 when overlayOpacityPercent=40, got %1")
+                            .arg(pill->opacity(), 0, 'f', 2)
+                    );
+                }
+                QMetaObject::invokeMethod(
+                    settingsCtrl,
+                    "updateOverlayOpacityPercent",
+                    Qt::DirectConnection,
+                    Q_ARG(int, 88)
+                );
+                sync_all();
+                librelinkup_uitest::pump_events(15);
+                if (std::abs(pill->opacity() - 0.88) > 0.02) {
+                    violations.append(
+                        QStringLiteral("Expected overlayPill.opacity=0.88 when overlayOpacityPercent=88, got %1")
+                            .arg(pill->opacity(), 0, 'f', 2)
+                    );
+                }
+            }
         }
         if (QQuickItem* connLbl = mainWin->findChild<QQuickItem*>(QStringLiteral("footerConnectionLabel"))) {
             const QString connTxt = connLbl->property("text").toString();

@@ -178,6 +178,7 @@ High and Stale are not.** Signal loss must not raise an un-dismissable critical 
 | **I-12** | `OverlayWidget` tooltips must render in external top-level `librelinkupOverlayTooltipWindow` (`transientParent == nullptr`, never in-scene `QQC2.ToolTip`) | in-scene `QQuickPopup` tooltips clip to the `276×88` overlay window, and `xdg_positioner` clamps transient child popups back inside their parent on Wayland |
 | **I-13** | Native Wayland (`QT_QPA_PLATFORM=wayland`) uses KWin D-Bus scripting (`org.kde.KWin` `/Scripting`) + `QWindow::startSystemMove()` + `/LibreLinkUpKWin` callbacks | Wayland clients cannot set or read global screen coordinates directly; KWin scripts enforce `noBorder`, `keepAbove`, `skipTaskbar/Pager/Switcher`, `onAllDesktops`, and multi-monitor coordinate persistence without XWayland |
 | **I-14** | System tray glucose badge (`build_glucose_badge_icon`) always renders the blood drop + ECG logo behind dark-outlined white text | keeps the application's signature blood drop emblem recognizable at all times while preserving high-contrast numeral legibility |
+| **I-15** | Desktop overlay opacity (`overlayOpacityPercent`, `20%`–`100%`) is applied to the whole widget container (`overlayPill.opacity` + `layer.enabled: opacityAlpha < 0.999` on KDE; `ui.set_opacity()` on Windows) | applying alpha only to the background/border leaves foreground text and buttons at 100% and makes dark-slate fill changes invisible over dark desktop windows |
 
 ---
 

@@ -5,6 +5,7 @@
 #include <QDBusConnection>
 #include <QDBusMessage>
 #include <QDBusReply>
+#include <QDBusServiceWatcher>
 #include <QDateTime>
 #include <QDir>
 #include <QFile>
@@ -444,6 +445,182 @@ inline QString kwin_script_dir() {
     return runtimeDir.isEmpty() ? QDir::tempPath() : runtimeDir;
 }
 
+inline void install_kwin_resident_script() {
+    if (qEnvironmentVariable("QT_QPA_PLATFORM") == QStringLiteral("offscreen")) {
+        return;
+    }
+    QDBusConnection bus = QDBusConnection::sessionBus();
+    if (!bus.isConnected()) {
+        return;
+    }
+    const QString pluginName = QStringLiteral("librelinkup_kwin_resident_watcher");
+    {
+        QDBusMessage unloadMsg = QDBusMessage::createMethodCall(
+            QStringLiteral("org.kde.KWin"),
+            QStringLiteral("/Scripting"),
+            QStringLiteral("org.kde.kwin.Scripting"),
+            QStringLiteral("unloadScript")
+        );
+        unloadMsg << pluginName;
+        bus.call(unloadMsg);
+    }
+
+    const QString dbusAddr = bus.baseService();
+    const QString jsBody = QStringLiteral(
+        "var dbusAddr = '%1';\n"
+        "function enforceLibreLinkUpRules(w) {\n"
+        "  if (!w) return;\n"
+        "  var cap = w.caption ? w.caption.toString() : '';\n"
+        "  if (cap.indexOf('LibreLinkUp Rust Desktop Overlay') === 0) {\n"
+        "    var isTooltip = (cap.indexOf('Tooltip') !== -1);\n"
+        "    var allDesk = isTooltip ? true : (cap.indexOf('[SingleDesktop]') === -1);\n"
+        "    w.noBorder = true;\n"
+        "    w.keepAbove = true;\n"
+        "    w.skipTaskbar = true;\n"
+        "    w.skipPager = true;\n"
+        "    w.skipSwitcher = true;\n"
+        "    w.onAllDesktops = allDesk;\n"
+        "    if (w.minimized) {\n"
+        "      w.minimized = false;\n"
+        "    }\n"
+        "    w._lluDbusAddr = dbusAddr;\n"
+        "    if (!w._lluResidentHooked) {\n"
+        "      w._lluResidentHooked = true;\n"
+        "      if (w.skipTaskbarChanged) {\n"
+        "        w.skipTaskbarChanged.connect(function() {\n"
+        "          if (!w.skipTaskbar) w.skipTaskbar = true;\n"
+        "        });\n"
+        "      }\n"
+        "      if (w.skipPagerChanged) {\n"
+        "        w.skipPagerChanged.connect(function() {\n"
+        "          if (!w.skipPager) w.skipPager = true;\n"
+        "        });\n"
+        "      }\n"
+        "      if (w.skipSwitcherChanged) {\n"
+        "        w.skipSwitcherChanged.connect(function() {\n"
+        "          if (!w.skipSwitcher) w.skipSwitcher = true;\n"
+        "        });\n"
+        "      }\n"
+        "      if (w.keepAboveChanged) {\n"
+        "        w.keepAboveChanged.connect(function() {\n"
+        "          if (!w.keepAbove) w.keepAbove = true;\n"
+        "        });\n"
+        "      }\n"
+        "      if (w.noBorderChanged) {\n"
+        "        w.noBorderChanged.connect(function() {\n"
+        "          if (!w.noBorder) w.noBorder = true;\n"
+        "        });\n"
+        "      }\n"
+        "      if (w.minimizedChanged) {\n"
+        "        w.minimizedChanged.connect(function() {\n"
+        "          if (w.minimized) {\n"
+        "            w.minimized = false;\n"
+        "            w.keepAbove = true;\n"
+        "            w.skipTaskbar = true;\n"
+        "          }\n"
+        "        });\n"
+        "      }\n"
+        "      if (w.captionChanged) {\n"
+        "        w.captionChanged.connect(function() {\n"
+        "          enforceLibreLinkUpRules(w);\n"
+        "        });\n"
+        "      }\n"
+        "      if (!isTooltip && !w._lluMoveHooked && w.interactiveMoveResizeFinished) {\n"
+        "        w._lluMoveHooked = true;\n"
+        "        w.interactiveMoveResizeFinished.connect(function() {\n"
+        "          var outName = (w.output && w.output.name) ? w.output.name.toString() : '';\n"
+        "          var fg = w.frameGeometry;\n"
+        "          if (w._lluDbusAddr) {\n"
+        "            callDBus(w._lluDbusAddr, '/LibreLinkUpKWin', '', 'onKWinOverlayGeometry',\n"
+        "              outName, Math.round(fg.x), Math.round(fg.y), Math.round(fg.width), Math.round(fg.height));\n"
+        "          }\n"
+        "        });\n"
+        "      }\n"
+        "    }\n"
+        "    return;\n"
+        "  }\n"
+        "  if (cap.indexOf('LibreLinkUp Rust Desktop v') === 0) {\n"
+        "    if (w.minimized) {\n"
+        "      w.skipTaskbar = true;\n"
+        "      w.skipPager = true;\n"
+        "      w.skipSwitcher = true;\n"
+        "    } else {\n"
+        "      w.skipTaskbar = false;\n"
+        "      w.skipPager = false;\n"
+        "      w.skipSwitcher = false;\n"
+        "    }\n"
+        "    if (!w._lluMainResidentHooked && w.minimizedChanged) {\n"
+        "      w._lluMainResidentHooked = true;\n"
+        "      w.minimizedChanged.connect(function() {\n"
+        "        if (w.minimized) {\n"
+        "          w.skipTaskbar = true;\n"
+        "          w.skipPager = true;\n"
+        "          w.skipSwitcher = true;\n"
+        "        } else {\n"
+        "          w.skipTaskbar = false;\n"
+        "          w.skipPager = false;\n"
+        "          w.skipSwitcher = false;\n"
+        "        }\n"
+        "      });\n"
+        "    }\n"
+        "  }\n"
+        "}\n"
+        "var list = workspace.stackingOrder || workspace.windowList();\n"
+        "if (list) {\n"
+        "  for (var i = 0; i < list.length; ++i) {\n"
+        "    enforceLibreLinkUpRules(list[i]);\n"
+        "  }\n"
+        "}\n"
+        "if (workspace.windowAdded) {\n"
+        "  workspace.windowAdded.connect(function(w) {\n"
+        "    enforceLibreLinkUpRules(w);\n"
+        "  });\n"
+        "}\n"
+        "if (workspace.windowActivated) {\n"
+        "  workspace.windowActivated.connect(function(w) {\n"
+        "    enforceLibreLinkUpRules(w);\n"
+        "  });\n"
+        "}\n"
+    ).arg(dbusAddr);
+
+    const QString uid = QUuid::createUuid().toString(QUuid::Id128);
+    const QString scriptPath = kwin_script_dir()
+        + QStringLiteral("/.librelinkup-kwin-resident-%1.js").arg(uid);
+    QFile f(scriptPath);
+    if (!f.open(QIODevice::NewOnly | QIODevice::WriteOnly | QIODevice::Text)) {
+        return;
+    }
+    f.setPermissions(QFileDevice::ReadOwner | QFileDevice::WriteOwner);
+    const bool wrote = f.write(jsBody.toUtf8()) >= 0;
+    f.close();
+    if (!wrote) {
+        QFile::remove(scriptPath);
+        return;
+    }
+
+    QDBusMessage loadMsg = QDBusMessage::createMethodCall(
+        QStringLiteral("org.kde.KWin"),
+        QStringLiteral("/Scripting"),
+        QStringLiteral("org.kde.kwin.Scripting"),
+        QStringLiteral("loadScript")
+    );
+    loadMsg << scriptPath << pluginName;
+    QDBusReply<int> loadReply = bus.call(loadMsg);
+    if (loadReply.isValid() && loadReply.value() >= 0) {
+        const QString scriptObj = QStringLiteral("/Scripting/Script%1").arg(loadReply.value());
+        QDBusMessage runMsg = QDBusMessage::createMethodCall(
+            QStringLiteral("org.kde.KWin"),
+            scriptObj,
+            QStringLiteral("org.kde.kwin.Script"),
+            QStringLiteral("run")
+        );
+        bus.call(runMsg, QDBus::NoBlock);
+    }
+    QTimer::singleShot(250, [scriptPath]() {
+        QFile::remove(scriptPath);
+    });
+}
+
 inline void ensure_kwin_dbus_bridge() {
     if (qEnvironmentVariable("QT_QPA_PLATFORM") == QStringLiteral("offscreen")) {
         return;
@@ -473,6 +650,40 @@ inline void ensure_kwin_dbus_bridge() {
     for (const QString& name : stale) {
         QFile::remove(dir.filePath(name));
     }
+
+    install_kwin_resident_script();
+
+    // If kwin_wayland restarts during the session, automatically reload the resident watcher
+    // and re-apply overlay placement/taskbar-exclusion rules.
+    auto* kwinServiceWatcher = new QDBusServiceWatcher(
+        QStringLiteral("org.kde.KWin"),
+        bus,
+        QDBusServiceWatcher::WatchForRegistration,
+        QCoreApplication::instance()
+    );
+    QObject::connect(kwinServiceWatcher, &QDBusServiceWatcher::serviceRegistered, kwinServiceWatcher, [](const QString&) {
+        for (int delayMs : {100, 400, 1000}) {
+            QTimer::singleShot(delayMs, []() {
+                install_kwin_resident_script();
+                if (QWindow* ovWin = find_overlay_window()) {
+                    if (ovWin->isVisible() && OverlayPlacementState::instance().hasPlacement) {
+                        OverlayPlacementState::instance().applyToWindow(ovWin);
+                    }
+                }
+            });
+        }
+    });
+
+    QObject::connect(QCoreApplication::instance(), &QCoreApplication::aboutToQuit, []() {
+        QDBusMessage cleanupMsg = QDBusMessage::createMethodCall(
+            QStringLiteral("org.kde.KWin"),
+            QStringLiteral("/Scripting"),
+            QStringLiteral("org.kde.kwin.Scripting"),
+            QStringLiteral("unloadScript")
+        );
+        cleanupMsg << QStringLiteral("librelinkup_kwin_resident_watcher");
+        QDBusConnection::sessionBus().call(cleanupMsg, QDBus::NoBlock);
+    });
 }
 
 inline void run_kwin_oneshot_script(const QString& jsBody) {
@@ -866,26 +1077,32 @@ inline void ensure_overlay_hooks(QWindow* ovWin) {
             syncTipOnWayland();
         });
     }
-    QObject::connect(ovWin, &QWindow::visibleChanged, ovWin, [ovWin](bool vis) {
-        if (vis) {
-            if (OverlayPlacementState::instance().hasPlacement) {
-                OverlayPlacementState::instance().applyToWindow(ovWin);
-                QTimer::singleShot(30, ovWin, [ovWin]() {
+    auto applyOverlayPlacementAndKWin = [ovWin]() {
+        if (!ovWin || !ovWin->isVisible()) {
+            return;
+        }
+        if (OverlayPlacementState::instance().hasPlacement) {
+            OverlayPlacementState::instance().applyToWindow(ovWin);
+            for (int delayMs : {35, 130, 350, 800}) {
+                QTimer::singleShot(delayMs, ovWin, [ovWin]() {
                     if (ovWin && ovWin->isVisible()) {
                         OverlayPlacementState::instance().applyToWindow(ovWin);
                     }
                 });
-                QTimer::singleShot(120, ovWin, [ovWin]() {
-                    if (ovWin && ovWin->isVisible()) {
-                        OverlayPlacementState::instance().applyToWindow(ovWin);
-                    }
-                });
-            } else {
-                clamp_window_to_screen(ovWin);
             }
+        } else {
+            clamp_window_to_screen(ovWin);
+        }
+    };
+    QObject::connect(ovWin, &QWindow::visibleChanged, ovWin, [applyOverlayPlacementAndKWin](bool vis) {
+        if (vis) {
+            applyOverlayPlacementAndKWin();
         }
         update_tray_window_actions();
     });
+    if (ovWin->isVisible()) {
+        applyOverlayPlacementAndKWin();
+    }
 }
 
 inline QWindow* find_overlay_window() {
@@ -1569,7 +1786,7 @@ inline void librelinkup_restore_overlay_placement(
 ) {
     librelinkup::restore_overlay_placement(screen_name, x, y, width, height);
     const QString scCopy = screen_name;
-    for (int delayMs : {0, 40, 140}) {
+    for (int delayMs : {0, 40, 140, 400, 900}) {
         QTimer::singleShot(delayMs, [scCopy, x, y, width, height]() {
             librelinkup::restore_overlay_placement(scCopy, x, y, width, height);
             librelinkup::update_tray_window_actions();

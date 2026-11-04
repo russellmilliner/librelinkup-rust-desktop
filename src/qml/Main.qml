@@ -346,8 +346,8 @@ Kirigami.ApplicationWindow {
         id: telemetry
         objectName: "librelinkupAppController"
         Component.onCompleted: {
-            telemetry.initialize()
             settings.initialize()
+            telemetry.initialize()
             medications.initialize()
             appSyncTimer.start()
         }

@@ -2,13 +2,18 @@
 
 All notable changes and bumped dependencies for `russellmilliner/librelinkup-rust-desktop` are documented in this file.
 
-## [v0.5.7-deps](https://github.com/russellmilliner/librelinkup-rust-desktop/releases/tag/v0.5.7-deps) — 2026-11-05
+## [v0.5.7-deps](https://github.com/russellmilliner/librelinkup-rust-desktop/releases/tag/v0.5.7-deps) — 2026-11-06
 
-### 📦 Bumped Dependencies (1 package)
+### 📦 Bumped Dependencies (6 packages)
 
 | Package | Previous | Updated | Scope |
 | :--- | :--- | :--- | :--- |
-| `winnow` | `1.0.4` | **`1.0.5`** | Lockfile (`windows/Cargo.lock`) |
+| `cc` | `1.11.0` | **`1.11.1`** | Lockfile (`windows/Cargo.lock`) |
+| `flate2` | `1.1.10` | **`1.1.11`** | Lockfile (`windows/Cargo.lock`) |
+| `serde_spanned` | `1.1.2` | **`1.1.3`** | Lockfile (`windows/Cargo.lock`) |
+| `toml` | `1.2.0+spec-1.1.0` | **`1.2.1+spec-1.1.0`** | Lockfile (`windows/Cargo.lock`) |
+| `toml_datetime` | `1.1.2+spec-1.1.0` | **`1.1.3+spec-1.1.0`** | Lockfile (`windows/Cargo.lock`) |
+| `toml_edit` | `0.25.18+spec-1.1.0` | **`0.25.19+spec-1.1.0`** | Lockfile (`windows/Cargo.lock`) |
 
 ## [v0.5.7](https://github.com/russellmilliner/librelinkup-rust-desktop/releases/tag/v0.5.7) — 2026-11-03
 

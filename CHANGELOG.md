@@ -2,6 +2,30 @@
 
 All notable changes and bumped dependencies for `russellmilliner/librelinkup-rust-desktop` are documented in this file.
 
+## [v0.5.8](https://github.com/russellmilliner/librelinkup-rust-desktop/releases/tag/v0.5.8) — 2026-11-07
+
+### Highlights
+- Ensure Bazzite Flatpak installation via Bazaar/KDE Discover (embedded AppStream catalog & 64x64/128x128 icons, --system/--user scope detection, host-visible update staging) and enforce persistent resident KWin skipTaskbar/skipPager/skipSwitcher rules so the floating desktop overlay never shows an icon in the KDE Plasma Task Manager
+
+### Commits
+- fix(flatpak,wayland): ensure Bazzite Bazaar/Discover Flatpak install & hide overlay from KDE Task Manager (82c49f1)
+- chore(deps): update dependencies (cc 1.11.1, flate2 1.1.11, serde_spanned 1.1.3, toml 1.2.1+spec-1.1.0, toml_datetime 1.1.3+spec-1.1.0, toml_edit 0.25.19+spec-1.1.0) (d665633)
+- chore(deps): update dependencies (winnow 1.0.5) (2441a75)
+- chore(deps): update dependencies (toml 1.2.0+spec-1.1.0, toml_edit 0.25.18+spec-1.1.0, toml_writer 1.2.0+spec-1.1.0) (5b594fe)
+
+### 📦 Bumped Dependencies (8 packages)
+
+| Package | Previous | Updated | Scope |
+| :--- | :--- | :--- | :--- |
+| `cc` | `1.11.0` | **`1.11.1`** | Lockfile (`windows/Cargo.lock`) |
+| `flate2` | `1.1.10` | **`1.1.11`** | Lockfile (`windows/Cargo.lock`) |
+| `serde_spanned` | `1.1.2` | **`1.1.3`** | Lockfile (`windows/Cargo.lock`) |
+| `toml` | `1.1.8+spec-1.1.0` | **`1.2.1+spec-1.1.0`** | Lockfile (`windows/Cargo.lock`) |
+| `toml_datetime` | `1.1.2+spec-1.1.0` | **`1.1.3+spec-1.1.0`** | Lockfile (`windows/Cargo.lock`) |
+| `toml_edit` | `0.25.17+spec-1.1.0` | **`0.25.19+spec-1.1.0`** | Lockfile (`windows/Cargo.lock`) |
+| `toml_writer` | `1.1.3+spec-1.1.0` | **`1.2.0+spec-1.1.0`** | Lockfile (`windows/Cargo.lock`) |
+| `winnow` | `1.0.4` | **`1.0.5`** | Lockfile (`windows/Cargo.lock`) |
+
 ## [v0.5.7-deps](https://github.com/russellmilliner/librelinkup-rust-desktop/releases/tag/v0.5.7-deps) — 2026-11-06
 
 ### 📦 Bumped Dependencies (6 packages)

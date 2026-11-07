@@ -1,8 +1,8 @@
 # LibreLinkUp Rust Desktop
 
-[![Version v0.5.7](https://img.shields.io/badge/Version-v0.5.7-0284c7?style=for-the-badge&logo=github)](https://github.com/russellmilliner/librelinkup-rust-desktop/releases/tag/v0.5.7)
-[![Windows Installer](https://img.shields.io/badge/Windows-Installer_v0.5.7-0078d4?style=for-the-badge&logo=windows&logoColor=white)](https://github.com/russellmilliner/librelinkup-rust-desktop/releases/download/v0.5.7/LibreLinkUp-Setup-0.5.7-x64.exe)
-[![Flatpak Bundle](https://img.shields.io/badge/Flatpak-Download_v0.5.7-4a90d9?style=for-the-badge&logo=flatpak&logoColor=white)](https://github.com/russellmilliner/librelinkup-rust-desktop/releases/download/v0.5.7/librelinkup-rust-desktop-v0.5.7-x86_64.flatpak)
+[![Version v0.5.8](https://img.shields.io/badge/Version-v0.5.8-0284c7?style=for-the-badge&logo=github)](https://github.com/russellmilliner/librelinkup-rust-desktop/releases/tag/v0.5.8)
+[![Windows Installer](https://img.shields.io/badge/Windows-Installer_v0.5.8-0078d4?style=for-the-badge&logo=windows&logoColor=white)](https://github.com/russellmilliner/librelinkup-rust-desktop/releases/download/v0.5.8/LibreLinkUp-Setup-0.5.8-x64.exe)
+[![Flatpak Bundle](https://img.shields.io/badge/Flatpak-Download_v0.5.8-4a90d9?style=for-the-badge&logo=flatpak&logoColor=white)](https://github.com/russellmilliner/librelinkup-rust-desktop/releases/download/v0.5.8/librelinkup-rust-desktop-v0.5.8-x86_64.flatpak)
 [![Platform: Linux x86_64](https://img.shields.io/badge/Platform-Linux%20x86__64-fcc624?style=for-the-badge&logo=linux&logoColor=black)](https://www.kernel.org/)
 [![Platform: Windows 10/11 x64](https://img.shields.io/badge/Platform-Windows%2010%2F11%20x64-0078d4?style=for-the-badge&logo=windows&logoColor=white)](windows/README.md)
 [![Desktop: KDE Plasma 6](https://img.shields.io/badge/KDE-Plasma%206%20%2F%20Kirigami-1d99f3?style=for-the-badge&logo=kde&logoColor=white)](https://kde.org/plasma-desktop/)
@@ -20,11 +20,11 @@ Native **Rust** desktop applications for monitoring continuous blood glucose rea
 
 | Item | Link / Details |
 | :--- | :--- |
-| **Current Version** | [**v0.5.7** (GitHub Release)](https://github.com/russellmilliner/librelinkup-rust-desktop/releases/tag/v0.5.7) • [All Releases](https://github.com/russellmilliner/librelinkup-rust-desktop/releases) |
-| **Windows Installer (`x64`)** | [**`LibreLinkUp-Setup-0.5.7-x64.exe`**](https://github.com/russellmilliner/librelinkup-rust-desktop/releases/download/v0.5.7/LibreLinkUp-Setup-0.5.7-x64.exe) ([SHA-256](https://github.com/russellmilliner/librelinkup-rust-desktop/releases/download/v0.5.7/LibreLinkUp-Setup-0.5.7-x64.exe.sha256)) |
-| **Windows Portable (`x64`)** | [**`LibreLinkUp-0.5.7-windows-x64-portable.zip`**](https://github.com/russellmilliner/librelinkup-rust-desktop/releases/download/v0.5.7/LibreLinkUp-0.5.7-windows-x64-portable.zip) ([SHA-256](https://github.com/russellmilliner/librelinkup-rust-desktop/releases/download/v0.5.7/LibreLinkUp-0.5.7-windows-x64-portable.zip.sha256)) |
+| **Current Version** | [**v0.5.8** (GitHub Release)](https://github.com/russellmilliner/librelinkup-rust-desktop/releases/tag/v0.5.8) • [All Releases](https://github.com/russellmilliner/librelinkup-rust-desktop/releases) |
+| **Windows Installer (`x64`)** | [**`LibreLinkUp-Setup-0.5.8-x64.exe`**](https://github.com/russellmilliner/librelinkup-rust-desktop/releases/download/v0.5.8/LibreLinkUp-Setup-0.5.8-x64.exe) ([SHA-256](https://github.com/russellmilliner/librelinkup-rust-desktop/releases/download/v0.5.8/LibreLinkUp-Setup-0.5.8-x64.exe.sha256)) |
+| **Windows Portable (`x64`)** | [**`LibreLinkUp-0.5.8-windows-x64-portable.zip`**](https://github.com/russellmilliner/librelinkup-rust-desktop/releases/download/v0.5.8/LibreLinkUp-0.5.8-windows-x64-portable.zip) ([SHA-256](https://github.com/russellmilliner/librelinkup-rust-desktop/releases/download/v0.5.8/LibreLinkUp-0.5.8-windows-x64-portable.zip.sha256)) |
 | **Windows Documentation** | [**`windows/README.md`**](windows/README.md) — Full Windows installation, overlay controls, DPAPI security & build guide |
-| **Linux Flatpak Bundle (`x86_64`)** | [**`librelinkup-rust-desktop-v0.5.7-x86_64.flatpak`**](https://github.com/russellmilliner/librelinkup-rust-desktop/releases/download/v0.5.7/librelinkup-rust-desktop-v0.5.7-x86_64.flatpak) ([SHA-256](https://github.com/russellmilliner/librelinkup-rust-desktop/releases/download/v0.5.7/librelinkup-rust-desktop-v0.5.7-x86_64.flatpak.sha256)) |
+| **Linux Flatpak Bundle (`x86_64`)** | [**`librelinkup-rust-desktop-v0.5.8-x86_64.flatpak`**](https://github.com/russellmilliner/librelinkup-rust-desktop/releases/download/v0.5.8/librelinkup-rust-desktop-v0.5.8-x86_64.flatpak) ([SHA-256](https://github.com/russellmilliner/librelinkup-rust-desktop/releases/download/v0.5.8/librelinkup-rust-desktop-v0.5.8-x86_64.flatpak.sha256)) |
 | **Flatpak Runtime** | [`org.kde.Platform//6.11`](https://flathub.org/) via [Flatpak](https://flatpak.org/) |
 | **Supported Platforms** | [Linux (`x86_64`)](https://www.kernel.org/) ([KDE Plasma 6](https://kde.org/plasma-desktop/) / [Kirigami](https://develop.kde.org/frameworks/kirigami/) / [Qt 6](https://www.qt.io/)) • [**Windows 10/11 (`x64`)**](windows/README.md) ([egui](https://github.com/emilk/egui) / [eframe](https://github.com/emilk/egui/tree/master/crates/eframe)) |
 | **Core Stack** | [Rust](https://www.rust-lang.org/) (`librelinkup-core`) + [KDAB CXX-Qt](https://github.com/KDAB/cxx-qt) (Linux) + [eframe/egui](https://github.com/emilk/egui) (Windows) + [Ring (AES-256-GCM)](https://github.com/briansmith/ring) |
@@ -38,8 +38,8 @@ You can double-click the downloaded `.flatpak` bundle to install it in **Bazaar*
 flatpak remote-add --if-not-exists --user flathub https://flathub.org/repo/flathub.flatpakrepo
 
 # 2. Download & install the Flatpak bundle (--user or --system):
-curl -LO https://github.com/russellmilliner/librelinkup-rust-desktop/releases/download/v0.5.7/librelinkup-rust-desktop-v0.5.7-x86_64.flatpak
-flatpak install --user -y librelinkup-rust-desktop-v0.5.7-x86_64.flatpak || flatpak install --system -y librelinkup-rust-desktop-v0.5.7-x86_64.flatpak
+curl -LO https://github.com/russellmilliner/librelinkup-rust-desktop/releases/download/v0.5.8/librelinkup-rust-desktop-v0.5.8-x86_64.flatpak
+flatpak install --user -y librelinkup-rust-desktop-v0.5.8-x86_64.flatpak || flatpak install --system -y librelinkup-rust-desktop-v0.5.8-x86_64.flatpak
 
 # 3. Launch LibreLinkUp Rust Desktop:
 flatpak run io.github.russellmilliner.LibreLinkUpDesktop
@@ -67,11 +67,11 @@ When inspecting `io.github.russellmilliner.LibreLinkUpDesktop` in **Bazaar**, **
 
 ### Quick Windows 10 / 11 Install
 
-Download and run [**`LibreLinkUp-Setup-0.5.7-x64.exe`**](https://github.com/russellmilliner/librelinkup-rust-desktop/releases/download/v0.5.7/LibreLinkUp-Setup-0.5.7-x64.exe) (or extract the [**portable zip**](https://github.com/russellmilliner/librelinkup-rust-desktop/releases/download/v0.5.7/LibreLinkUp-0.5.7-windows-x64-portable.zip)):
+Download and run [**`LibreLinkUp-Setup-0.5.8-x64.exe`**](https://github.com/russellmilliner/librelinkup-rust-desktop/releases/download/v0.5.8/LibreLinkUp-Setup-0.5.8-x64.exe) (or extract the [**portable zip**](https://github.com/russellmilliner/librelinkup-rust-desktop/releases/download/v0.5.8/LibreLinkUp-0.5.8-windows-x64-portable.zip)):
 
 ```powershell
-Invoke-WebRequest -Uri "https://github.com/russellmilliner/librelinkup-rust-desktop/releases/download/v0.5.7/LibreLinkUp-Setup-0.5.7-x64.exe" -OutFile "$env:TEMP\LibreLinkUp-Setup-0.5.7-x64.exe"
-Start-Process -FilePath "$env:TEMP\LibreLinkUp-Setup-0.5.7-x64.exe"
+Invoke-WebRequest -Uri "https://github.com/russellmilliner/librelinkup-rust-desktop/releases/download/v0.5.8/LibreLinkUp-Setup-0.5.8-x64.exe" -OutFile "$env:TEMP\LibreLinkUp-Setup-0.5.8-x64.exe"
+Start-Process -FilePath "$env:TEMP\LibreLinkUp-Setup-0.5.8-x64.exe"
 ```
 
 - **Per-user install**: No administrator prompt is required. Creates a Start Menu shortcut (with Toast notification `AppUserModelID`) and an optional task to launch at Windows sign-in (`--minimized` to the system tray).

@@ -1,6 +1,6 @@
 [package]
 name = "librelinkup-windows"
-version = "0.5.7"
+version = "0.5.8"
 edition = "2021"
 license = "Apache-2.0"
 description = "LibreLinkUp Rust Desktop for Windows — blood glucose monitor for LibreLinkUp"

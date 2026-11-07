@@ -281,6 +281,86 @@ pub fn data_dir() -> PathBuf {
     dir
 }
 
+/// Returns a data directory guaranteed to exist at the identical path on the host filesystem
+/// (`~/.local/share/librelinkup-kde`) when writable, falling back to `data_dir()`.
+///
+/// Inside a Flatpak sandbox with `--filesystem=xdg-data/librelinkup-kde:create`, Flatpak
+/// bind-mounts the host's `~/.local/share/librelinkup-kde` over both `~/.local/share/librelinkup-kde`
+/// and `$XDG_DATA_HOME/librelinkup-kde` (`~/.var/app/<APP_ID>/data/librelinkup-kde`), leaving
+/// the `~/.var/app/.../data/librelinkup-kde` stub directory empty on the host filesystem.
+/// Using `~/.local/share/librelinkup-kde` ensures files passed to `flatpak-spawn --host` or
+/// `xdg-open` (such as staged `.flatpak` update bundles on Bazzite) resolve on the host.
+pub fn host_data_dir() -> PathBuf {
+    if let Some(p) = custom_dir_override("LIBRELINKUP_DATA_DIR") {
+        let _ = fs::create_dir_all(&p);
+        return p;
+    }
+    #[cfg(windows)]
+    {
+        data_dir()
+    }
+    #[cfg(not(windows))]
+    {
+        let host_dir = home_dir().join(".local/share").join(APP_DIR_NAME);
+        if fs::create_dir_all(&host_dir).is_ok() {
+            restrict_dir_permissions(&host_dir);
+            return host_dir;
+        }
+        data_dir()
+    }
+}
+
+/// Returns the host-visible staging directory for downloaded application update packages,
+/// pruning stale update artifacts from prior versions.
+pub fn update_staging_dir() -> PathBuf {
+    #[cfg(windows)]
+    {
+        data_dir()
+    }
+    #[cfg(not(windows))]
+    {
+        let updates_dir = host_data_dir().join("updates");
+        let _ = fs::create_dir_all(&updates_dir);
+        if let Ok(entries) = fs::read_dir(&updates_dir) {
+            for entry in entries.flatten() {
+                let p = entry.path();
+                if p.is_file() {
+                    let _ = fs::remove_file(&p);
+                } else if p.is_dir() {
+                    let _ = fs::remove_dir_all(&p);
+                }
+            }
+        }
+        updates_dir
+    }
+}
+
+/// Parses `/.flatpak-info` content to determine whether the application itself is installed
+/// in the system-wide Flatpak repository (`/var/lib/flatpak/app/...`, the default on Bazzite /
+/// Bazaar / KDE Discover) rather than per-user (`~/.local/share/flatpak/app/...`).
+pub fn parse_flatpak_info_is_system(info: &str) -> bool {
+    for raw_line in info.lines() {
+        let line = raw_line.trim();
+        if let Some(app_path) = line.strip_prefix("app-path=") {
+            if app_path.contains("/var/lib/flatpak/") {
+                return true;
+            }
+            if app_path.contains(".local/share/flatpak/") {
+                return false;
+            }
+        }
+    }
+    false
+}
+
+/// Returns `true` when running inside a Flatpak whose `app-path` is installed in `--system`
+/// (`/var/lib/flatpak/app/...`).
+pub fn is_system_flatpak_install() -> bool {
+    fs::read_to_string("/.flatpak-info")
+        .map(|info| parse_flatpak_info_is_system(&info))
+        .unwrap_or(false)
+}
+
 pub fn runtime_dir() -> PathBuf {
     let base = env::var("XDG_RUNTIME_DIR")
         .ok()
@@ -426,5 +506,22 @@ mod tests {
             quote_desktop_exec_arg("/opt/My Apps/libre \"link\" $HOME `x` %f\\bin"),
             "\"/opt/My Apps/libre \\\"link\\\" \\$HOME \\`x\\` %%f\\\\bin\""
         );
+    }
+
+    #[test]
+    fn parses_flatpak_info_app_path_scope_without_runtime_path_false_positive() {
+        let user_install = "\
+[Instance]
+app-path=/home/u/.local/share/flatpak/app/io.github.russellmilliner.LibreLinkUpDesktop/x86_64/stable/abc/files
+runtime-path=/var/lib/flatpak/runtime/org.kde.Platform/x86_64/6.11/def/files
+";
+        assert!(!parse_flatpak_info_is_system(user_install));
+
+        let system_install_bazzite = "\
+[Instance]
+app-path=/var/lib/flatpak/app/io.github.russellmilliner.LibreLinkUpDesktop/x86_64/stable/abc/files
+runtime-path=/var/lib/flatpak/runtime/org.kde.Platform/x86_64/6.11/def/files
+";
+        assert!(parse_flatpak_info_is_system(system_install_bazzite));
     }
 }

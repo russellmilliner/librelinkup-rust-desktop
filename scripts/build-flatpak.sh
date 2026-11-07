@@ -48,6 +48,31 @@ flatpak build \
     install -Dm644 '$REPO_ROOT/LICENSE' '$REPO_ROOT/NOTICE' -t /app/share/licenses/${APP_ID}/
   "
 
+if command -v appstreamcli >/dev/null 2>&1; then
+  echo "==> Composing AppStream catalog and bundle icons for Bazaar / KDE Discover..."
+  appstreamcli compose \
+    --prefix=/ \
+    --origin=flatpak \
+    --components="$APP_ID" \
+    --result-root="$WORK_DIR/build-dir/files/share/app-info" \
+    --data-dir="$WORK_DIR/build-dir/files/share/app-info/xmls" \
+    --icons-dir="$WORK_DIR/build-dir/files/share/app-info/icons/flatpak" \
+    --image-format=png \
+    --no-net \
+    "$WORK_DIR/build-dir/files"
+  if [[ -f "$WORK_DIR/build-dir/files/share/app-info/xmls/flatpak.xml.gz" ]]; then
+    mv "$WORK_DIR/build-dir/files/share/app-info/xmls/flatpak.xml.gz" \
+       "$WORK_DIR/build-dir/files/share/app-info/xmls/${APP_ID}.xml.gz"
+  fi
+  for sz in 64x64 128x128; do
+    if [[ -f "$WORK_DIR/build-dir/files/share/app-info/icons/flatpak/${sz}/${APP_ID}.png" ]]; then
+      install -Dm644 \
+        "$WORK_DIR/build-dir/files/share/app-info/icons/flatpak/${sz}/${APP_ID}.png" \
+        "$WORK_DIR/build-dir/files/share/icons/hicolor/${sz}/apps/${APP_ID}.png"
+    fi
+  done
+fi
+
 flatpak build-finish "$WORK_DIR/build-dir" \
   --command=librelinkup-kde \
   --share=ipc \
@@ -64,16 +89,27 @@ flatpak build-finish "$WORK_DIR/build-dir" \
   --filesystem=xdg-config/home-assistant.env:ro \
   --filesystem=xdg-config/librelinkup-kde:create \
   --filesystem=xdg-data/librelinkup-kde:create \
+  --filesystem=xdg-run/librelinkup-kde:create \
   --filesystem=~/.var/app/rocks.poopjournal.librelinkupdesktop:ro
 
 flatpak build-export "$WORK_DIR/repo" "$WORK_DIR/build-dir" stable
 flatpak build-bundle "$WORK_DIR/repo" "$OUT_DIR/$BUNDLE_NAME" "$APP_ID" stable --runtime-repo=https://flathub.org/repo/flathub.flatpakrepo
-(cd "$OUT_DIR" && sha256sum "$BUNDLE_NAME" > "${BUNDLE_NAME}.sha256" && ln -sf "$BUNDLE_NAME" librelinkup-kde.flatpak)
+RELEASE_BUNDLE_NAME="librelinkup-rust-desktop-v${VERSION}-${ARCH}.flatpak"
+(
+  cd "$OUT_DIR"
+  sha256sum "$BUNDLE_NAME" > "${BUNDLE_NAME}.sha256"
+  cp -f "$BUNDLE_NAME" "$RELEASE_BUNDLE_NAME"
+  sha256sum "$RELEASE_BUNDLE_NAME" > "${RELEASE_BUNDLE_NAME}.sha256"
+  ln -sf "$BUNDLE_NAME" librelinkup-kde.flatpak
+)
 rm -rf "$WORK_DIR/build-dir" "$WORK_DIR/repo"
 
 echo "==> Built Flatpak bundle: $OUT_DIR/$BUNDLE_NAME"
 
 if [[ "${1:-}" != "--no-install" ]]; then
-  echo "==> Installing Flatpak bundle into user installation..."
-  flatpak install --user -y --reinstall "$OUT_DIR/$BUNDLE_NAME"
+  echo "==> Installing Flatpak bundle..."
+  if ! flatpak install --user -y --reinstall "$OUT_DIR/$BUNDLE_NAME"; then
+    echo "==> User scope install failed (e.g. Bazzite system-scoped Flathub runtime); retrying with --system..."
+    flatpak install --system -y --reinstall "$OUT_DIR/$BUNDLE_NAME"
+  fi
 fi

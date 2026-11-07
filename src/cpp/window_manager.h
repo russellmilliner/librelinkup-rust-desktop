@@ -436,13 +436,35 @@ struct OverlayPlacementState {
 };
 
 inline QString kwin_script_dir() {
+    const QString runtimeBase = QStandardPaths::writableLocation(QStandardPaths::RuntimeLocation);
+    if (!runtimeBase.isEmpty()) {
+        bool runtimeSharedWithHost = true;
+        QFile flatpakInfo(QStringLiteral("/.flatpak-info"));
+        if (flatpakInfo.exists()) {
+            runtimeSharedWithHost = false;
+            if (flatpakInfo.open(QIODevice::ReadOnly | QIODevice::Text)) {
+                const QByteArray infoBytes = flatpakInfo.readAll();
+                runtimeSharedWithHost = infoBytes.contains("xdg-run/librelinkup-kde");
+            }
+        }
+        if (runtimeSharedWithHost) {
+            const QString runtimeSubdir = runtimeBase + QStringLiteral("/librelinkup-kde");
+            QDir rd(runtimeSubdir);
+            if (rd.exists() || rd.mkpath(QStringLiteral("."))) {
+                QFile::setPermissions(
+                    runtimeSubdir,
+                    QFileDevice::ReadOwner | QFileDevice::WriteOwner | QFileDevice::ExeOwner
+                );
+                return runtimeSubdir;
+            }
+        }
+    }
     const QString hostSharedDir = QDir::homePath() + QStringLiteral("/.config/librelinkup-kde");
     QDir d(hostSharedDir);
     if (d.exists() || d.mkpath(QStringLiteral("."))) {
         return hostSharedDir;
     }
-    const QString runtimeDir = QStandardPaths::writableLocation(QStandardPaths::RuntimeLocation);
-    return runtimeDir.isEmpty() ? QDir::tempPath() : runtimeDir;
+    return runtimeBase.isEmpty() ? QDir::tempPath() : runtimeBase;
 }
 
 inline void install_kwin_resident_script() {

@@ -24,6 +24,7 @@ finish-args:
   # and uses the private ~/.var/app/<id> directories instead.
   - --filesystem=xdg-config/librelinkup-kde:create
   - --filesystem=xdg-data/librelinkup-kde:create
+  - --filesystem=xdg-run/librelinkup-kde:create
   - --filesystem=~/.var/app/rocks.poopjournal.librelinkupdesktop:ro
 
 build-options:

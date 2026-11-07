@@ -29,13 +29,41 @@ Native **Rust** desktop applications for monitoring continuous blood glucose rea
 | **Supported Platforms** | [Linux (`x86_64`)](https://www.kernel.org/) ([KDE Plasma 6](https://kde.org/plasma-desktop/) / [Kirigami](https://develop.kde.org/frameworks/kirigami/) / [Qt 6](https://www.qt.io/)) • [**Windows 10/11 (`x64`)**](windows/README.md) ([egui](https://github.com/emilk/egui) / [eframe](https://github.com/emilk/egui/tree/master/crates/eframe)) |
 | **Core Stack** | [Rust](https://www.rust-lang.org/) (`librelinkup-core`) + [KDAB CXX-Qt](https://github.com/KDAB/cxx-qt) (Linux) + [eframe/egui](https://github.com/emilk/egui) (Windows) + [Ring (AES-256-GCM)](https://github.com/briansmith/ring) |
 
-### Quick Flatpak Install (Linux)
+### Quick Flatpak Install (Linux / Bazzite / SteamOS / KDE Plasma)
+
+You can double-click the downloaded `.flatpak` bundle to install it in **Bazaar** or **KDE Discover** (the embedded AppStream catalog, 128×128 / 64×64 icons, and `flathub.flatpakrepo` runtime reference are bundled in the header), or install via terminal:
 
 ```bash
+# 1. Ensure Flathub is configured in --user (or omit --user on Bazzite to use the preconfigured --system remote):
+flatpak remote-add --if-not-exists --user flathub https://flathub.org/repo/flathub.flatpakrepo
+
+# 2. Download & install the Flatpak bundle (--user or --system):
 curl -LO https://github.com/russellmilliner/librelinkup-rust-desktop/releases/download/v0.5.7/librelinkup-rust-desktop-v0.5.7-x86_64.flatpak
-flatpak install --user -y librelinkup-rust-desktop-v0.5.7-x86_64.flatpak
+flatpak install --user -y librelinkup-rust-desktop-v0.5.7-x86_64.flatpak || flatpak install --system -y librelinkup-rust-desktop-v0.5.7-x86_64.flatpak
+
+# 3. Launch LibreLinkUp Rust Desktop:
 flatpak run io.github.russellmilliner.LibreLinkUpDesktop
 ```
+
+#### 🔒 Flatpak Sandbox Permissions & Why Software Centers Show *"Arbitrary Permissions"*
+
+When inspecting `io.github.russellmilliner.LibreLinkUpDesktop` in **Bazaar**, **KDE Discover**, or **GNOME Software** on **Bazzite**, you may see an **"Arbitrary Permissions"** badge because the Flatpak requests `--talk-name=org.freedesktop.Flatpak` (`flatpak-spawn --host`).
+
+- **Why that permission is requested:** Used solely so the built-in **Check for Updates / Install Update** button can verify the Ed25519 minisign signature and SHA-256 digest of a new GitHub Release and invoke `flatpak install --system` / `--user` directly from inside the app.
+- **Optional Lockdown (Flatseal / CLI Override):** If you prefer to update manually via Bazaar, KDE Discover, or the terminal, you can revoke `org.freedesktop.Flatpak` at any time without affecting CGM polling, Home Assistant sync, KWin Wayland overlay placement, or audio/desktop alerts:
+  ```bash
+  flatpak override --user --no-talk-name=org.freedesktop.Flatpak io.github.russellmilliner.LibreLinkUpDesktop
+  ```
+
+| Flatpak Permission | Why LibreLinkUp Rust Desktop Uses It |
+| :--- | :--- |
+| `--talk-name=org.kde.KWin`, `--filesystem=xdg-run/librelinkup-kde:create` | Native Wayland KWin 6 D-Bus scripting (`org.kde.kwin.Scripting`) for exact multi-monitor window & overlay coordinates, frameless overlay borders (`noBorder`), virtual desktop pinning (`onAllDesktops`), and hiding the floating overlay from the KDE Task Manager (`skipTaskbar`). |
+| `--talk-name=org.kde.StatusNotifierWatcher` | Renders the live blood glucose badge and blood-drop icon in the KDE Plasma 6 system tray (`KStatusNotifierItem`). |
+| `--talk-name=org.freedesktop.Notifications`, `--socket=pulseaudio` | Delivers high/low/urgent-low/stale glucose desktop notifications (with interactive Snooze & Medication buttons) and plays the built-in 880 Hz alarm tone via PipeWire/PulseAudio (`paplay`). |
+| `--talk-name=org.freedesktop.Flatpak` | Enables one-click in-app self-updates (`flatpak-spawn --host flatpak install`) supporting both `--system` (Bazzite default) and `--user` Flatpak scopes. |
+| `--filesystem=xdg-config/librelinkup-kde:create`, `--filesystem=xdg-data/librelinkup-kde:create` | Persists the AES-256-GCM encrypted credential vault, 90-day glucose history, medication logs, and staged update bundles (`~/.local/share/librelinkup-kde/updates/`). |
+| `--filesystem=xdg-config/kdeglobals:ro`, `--filesystem=xdg-config/home-assistant.env:ro` | Reads your active KDE Plasma color scheme (`kdeglobals`) and optional one-click Home Assistant URL/token import (`home-assistant.env`). |
+| `--share=network`, `--socket=wayland`, `--socket=fallback-x11`, `--device=dri`, `--share=ipc` | Connects to allowlisted LibreView regional endpoints / Home Assistant / GitHub Releases and renders the GPU-accelerated Qt 6 / Kirigami interface. |
 
 ### Quick Windows 10 / 11 Install
 

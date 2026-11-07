@@ -605,7 +605,7 @@ pub async fn download_and_install_update_async(
         format!("librelinkup-rust-desktop-v{clean_ver}-x86_64.flatpak")
     };
 
-    let dest_dir = crate::paths::data_dir();
+    let dest_dir = crate::paths::update_staging_dir();
     let dest_path = dest_dir.join(&file_name);
 
     let client = shared_download_client()?;
@@ -695,6 +695,13 @@ pub async fn download_and_install_update_async(
 
     crate::paths::write_file_atomic_0600(&dest_path, &bytes)
         .map_err(|e| format!("Failed writing verified update package: {e}"))?;
+    #[cfg(unix)]
+    if file_name.ends_with(".flatpak") {
+        use std::os::unix::fs::PermissionsExt;
+        // Public signed release bundle: allow flatpak-system-helper, Bazaar, and KDE Discover
+        // on Bazzite to read the verified bundle when installing into --system.
+        let _ = std::fs::set_permissions(&dest_path, std::fs::Permissions::from_mode(0o644));
+    }
 
     #[cfg(target_os = "windows")]
     {
@@ -710,51 +717,88 @@ pub async fn download_and_install_update_async(
         let dest_clone = dest_path.clone();
         tokio::task::spawn_blocking(move || {
             let in_flatpak = std::path::Path::new("/.flatpak-info").exists();
-            if in_flatpak {
-                // Inside Flatpak sandbox: dest_clone is in paths::data_dir()
-                // ($XDG_DATA_HOME/librelinkup-kde), which exists at the same path on the host.
-                // Invoke flatpak install directly via flatpak-spawn without sh -c interpolation.
-                let out = Command::new("flatpak-spawn")
-                    .args([
-                        "--host",
-                        "flatpak",
-                        "install",
-                        "--user",
-                        "-y",
-                        "--reinstall",
-                        "--",
-                    ])
-                    .arg(&dest_clone)
-                    .output()
-                    .map_err(|e| format!("Failed to invoke flatpak-spawn updater: {e}"))?;
-                if !out.status.success() {
-                    let stderr = String::from_utf8_lossy(&out.stderr);
-                    return Err(format!(
-                        "Flatpak update install failed (status {}): {}",
-                        out.status.code().unwrap_or(-1),
-                        stderr.trim()
-                    ));
-                }
-                let _ = Command::new("flatpak-spawn")
-                    .args([
-                        "--host",
-                        "sh",
-                        "-c",
-                        "(flatpak kill io.github.russellmilliner.LibreLinkUpDesktop 2>/dev/null || true) && nohup flatpak run io.github.russellmilliner.LibreLinkUpDesktop >/dev/null 2>&1 &",
-                    ])
-                    .spawn();
-                Ok(dest_clone)
+            let scopes = if crate::paths::is_system_flatpak_install() {
+                ["--system", "--user"]
             } else {
-                let status = Command::new("flatpak")
-                    .args(["install", "--user", "-y", "--reinstall", "--"])
-                    .arg(&dest_clone)
-                    .status()
-                    .map_err(|e| format!("Failed to run flatpak install: {e}"))?;
-                if !status.success() {
-                    return Err("flatpak install returned non-zero status".into());
+                ["--user", "--system"]
+            };
+            let mut last_err = String::new();
+            let mut installed = false;
+            for scope in scopes {
+                let res = if in_flatpak {
+                    // Inside Flatpak sandbox: dest_clone is in paths::update_staging_dir()
+                    // (~/.local/share/librelinkup-kde/updates), which exists at the identical path on the host.
+                    Command::new("flatpak-spawn")
+                        .args([
+                            "--host",
+                            "flatpak",
+                            "install",
+                            scope,
+                            "-y",
+                            "--reinstall",
+                            "--",
+                        ])
+                        .arg(&dest_clone)
+                        .output()
+                } else {
+                    Command::new("flatpak")
+                        .args(["install", scope, "-y", "--reinstall", "--"])
+                        .arg(&dest_clone)
+                        .output()
+                };
+                match res {
+                    Ok(out) if out.status.success() => {
+                        installed = true;
+                        break;
+                    }
+                    Ok(out) => {
+                        let stderr = String::from_utf8_lossy(&out.stderr);
+                        last_err = format!(
+                            "Flatpak update install ({scope}) failed (status {}): {}",
+                            out.status.code().unwrap_or(-1),
+                            stderr.trim()
+                        );
+                    }
+                    Err(e) => {
+                        last_err = format!("Failed to invoke flatpak installer ({scope}): {e}");
+                    }
                 }
-                Ok(dest_clone)
             }
+
+            if installed {
+                if in_flatpak {
+                    let _ = Command::new("flatpak-spawn")
+                        .args([
+                            "--host",
+                            "sh",
+                            "-c",
+                            "(flatpak kill io.github.russellmilliner.LibreLinkUpDesktop 2>/dev/null || true) && nohup flatpak run io.github.russellmilliner.LibreLinkUpDesktop >/dev/null 2>&1 &",
+                        ])
+                        .spawn();
+                }
+                return Ok(dest_clone);
+            }
+
+            // Fallback (e.g. if org.freedesktop.Flatpak was revoked in Flatseal on Bazzite):
+            // open the verified .flatpak bundle in the desktop software center (Bazaar / KDE Discover).
+            let opened = if in_flatpak {
+                Command::new("flatpak-spawn")
+                    .args(["--host", "xdg-open"])
+                    .arg(&dest_clone)
+                    .spawn()
+                    .or_else(|_| Command::new("xdg-open").arg(&dest_clone).spawn())
+            } else {
+                Command::new("xdg-open").arg(&dest_clone).spawn()
+            };
+            if opened.is_ok() {
+                return Ok(dest_clone);
+            }
+
+            Err(if last_err.is_empty() {
+                "Flatpak update install failed".into()
+            } else {
+                last_err
+            })
         })
         .await
         .map_err(|e| format!("Install task join error: {e}"))?

@@ -2,6 +2,15 @@
 
 All notable changes and bumped dependencies for `russellmilliner/librelinkup-rust-desktop` are documented in this file.
 
+## [v0.5.8-deps](https://github.com/russellmilliner/librelinkup-rust-desktop/releases/tag/v0.5.8-deps) — 2026-11-07
+
+### 📦 Bumped Dependencies (2 packages)
+
+| Package | Previous | Updated | Scope |
+| :--- | :--- | :--- | :--- |
+| `smallvec` | `1.16.4` | **`1.16.5`** | Lockfile (`windows/Cargo.lock`) |
+| `uuid` | `1.29.0` | **`1.29.1`** | Lockfile (`windows/Cargo.lock`) |
+
 ## [v0.5.8](https://github.com/russellmilliner/librelinkup-rust-desktop/releases/tag/v0.5.8) — 2026-11-07
 
 ### Highlights

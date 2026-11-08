@@ -56,6 +56,11 @@
   <url type="donation">https://ko-fi.com/russellmilliner</url>
   <content_rating type="oars-1.1" />
   <releases>
+    <release version="0.5.9" date="2026-11-07">
+      <description>
+        <p>Keep 0600 master.key synchronized with the desktop keyring (secret-tool / KWallet, including flatpak-spawn --host fallback) and guard phi_secret() against rotating keys when any encrypted vault exists on disk</p>
+      </description>
+    </release>
     <release version="0.5.8" date="2026-11-07">
       <description>
         <p>Ensure Bazzite Flatpak installation via Bazaar/KDE Discover (embedded AppStream catalog &amp; 64x64/128x128 icons, --system/--user scope detection, host-visible update staging) and enforce persistent resident KWin skipTaskbar/skipPager/skipSwitcher rules so the floating desktop overlay never shows an icon in the KDE Plasma Task Manager</p>

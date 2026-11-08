@@ -2,6 +2,22 @@
 
 All notable changes and bumped dependencies for `russellmilliner/librelinkup-rust-desktop` are documented in this file.
 
+## [v0.5.9](https://github.com/russellmilliner/librelinkup-rust-desktop/releases/tag/v0.5.9) — 2026-11-07
+
+### Highlights
+- Keep 0600 master.key synchronized with the desktop keyring (secret-tool / KWallet, including flatpak-spawn --host fallback) and guard phi_secret() against rotating keys when any encrypted vault exists on disk
+
+### Commits
+- fix(crypto): keep 0600 master.key synced with keyring across host/Flatpak launches & guard phi_secret() (e273255)
+- chore(deps): update dependencies (smallvec 1.16.5, uuid 1.29.1) (763b719)
+
+### 📦 Bumped Dependencies (2 packages)
+
+| Package | Previous | Updated | Scope |
+| :--- | :--- | :--- | :--- |
+| `smallvec` | `1.16.4` | **`1.16.5`** | Lockfile (`windows/Cargo.lock`) |
+| `uuid` | `1.29.0` | **`1.29.1`** | Lockfile (`windows/Cargo.lock`) |
+
 ## [v0.5.8-deps](https://github.com/russellmilliner/librelinkup-rust-desktop/releases/tag/v0.5.8-deps) — 2026-11-07
 
 ### 📦 Bumped Dependencies (2 packages)

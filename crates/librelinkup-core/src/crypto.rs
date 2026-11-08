@@ -456,11 +456,10 @@ fn should_use_desktop_keyring(key_path: &Path) -> bool {
 fn try_keyring_lookup() -> Option<String> {
     use std::process::Command;
 
-    // 1. Freedesktop Secret Service (KWallet6/GNOME Keyring/KeePassXC Secret Service)
-    for (program, args) in [
+    let candidates: &[(&str, &[&str])] = &[
         (
             "secret-tool",
-            vec![
+            &[
                 "lookup",
                 "application",
                 crate::paths::APP_ID,
@@ -470,10 +469,27 @@ fn try_keyring_lookup() -> Option<String> {
         ),
         (
             "kwallet-query",
-            vec!["-r", "vault-master-secret", "-f", "LibreLinkUp", "kdewallet"],
+            &["-r", "vault-master-secret", "-f", "LibreLinkUp", "kdewallet"],
         ),
-    ] {
-        if let Ok(out) = Command::new(program).args(&args).output() {
+        (
+            "flatpak-spawn",
+            &[
+                "--host",
+                "secret-tool",
+                "lookup",
+                "application",
+                crate::paths::APP_ID,
+                "key",
+                "vault-master-secret",
+            ],
+        ),
+    ];
+
+    for (program, args) in candidates {
+        if *program == "flatpak-spawn" && !Path::new("/.flatpak-info").exists() {
+            continue;
+        }
+        if let Ok(out) = Command::new(program).args(*args).output() {
             if out.status.success() {
                 let s = String::from_utf8_lossy(&out.stdout).trim().to_string();
                 if s.len() == KEY_LEN * 2 && s.bytes().all(|b| b.is_ascii_hexdigit()) {
@@ -526,6 +542,23 @@ fn try_keyring_store(hex_secret: &str) -> bool {
         return true;
     }
 
+    if Path::new("/.flatpak-info").exists() {
+        let mut host_secret_tool = Command::new("flatpak-spawn");
+        host_secret_tool.args([
+            "--host",
+            "secret-tool",
+            "store",
+            "--label=LibreLinkUp Rust Desktop Vault Key",
+            "application",
+            crate::paths::APP_ID,
+            "key",
+            "vault-master-secret",
+        ]);
+        if try_pipe(host_secret_tool) {
+            return true;
+        }
+    }
+
     let mut kwallet = Command::new("kwallet-query");
     kwallet.args(["-w", "vault-master-secret", "-f", "LibreLinkUp", "kdewallet"]);
     try_pipe(kwallet)
@@ -541,7 +574,7 @@ pub fn load_or_create_master_secret(key_path: &Path) -> Result<Vec<u8>, String> 
 }
 
 /// Same as [`load_or_create_master_secret`] but refuses to mint a new key when
-/// `vault_path` exists (see [`load_credentials_from_path`]).
+/// `vault_path` (or any default vault when `vault_path` is `None`) exists.
 pub fn load_or_create_master_secret_guarded(
     key_path: &Path,
     vault_path: Option<&Path>,
@@ -552,33 +585,49 @@ pub fn load_or_create_master_secret_guarded(
     #[cfg(unix)]
     let use_keyring = should_use_desktop_keyring(key_path);
 
-    let vault_exists = vault_path.map(|p| p.exists()).unwrap_or(false);
+    let vault_exists = match vault_path {
+        Some(p) => p.exists(),
+        None if key_path == master_key_file_path() => {
+            credentials_file_path().exists()
+                || crate::paths::medications_file_path().exists()
+                || crate::paths::glucose_history_file_path().exists()
+        }
+        None => false,
+    };
 
     let file_secret = if key_path.exists() {
         let mut raw_hex =
             fs::read_to_string(key_path).map_err(|e| format!("Failed to read master key file: {e}"))?;
         let trimmed = raw_hex.trim().to_string();
         let bytes = hex_to_bytes(&trimmed)?;
+        // Keep the 0600 master.key file on disk so both host and Flatpak launches (and early
+        // login autostart before keyring unlock) share the exact same key, while mirroring
+        // into Secret Service / KWallet as backup.
         #[cfg(unix)]
-        if use_keyring && try_keyring_store(&trimmed) {
-            // Migrated on-disk master.key into Secret Service / KWallet; remove plaintext file.
-            let _ = write_file_atomic_0600(key_path, &[0u8; KEY_LEN * 2]);
-            let _ = fs::remove_file(key_path);
+        if use_keyring {
+            let _ = try_keyring_store(&trimmed);
         }
         raw_hex.zeroize();
         bytes
     } else {
         #[cfg(unix)]
-        let keyring_secret = if use_keyring {
-            try_keyring_lookup().and_then(|hex| hex_to_bytes(&hex).ok())
+        let keyring_hex = if use_keyring {
+            try_keyring_lookup()
         } else {
             None
         };
         #[cfg(not(unix))]
-        let keyring_secret: Option<Vec<u8>> = None;
+        let keyring_hex: Option<String> = None;
 
-        if let Some(secret) = keyring_secret {
-            secret
+        if let Some(mut hex_str) = keyring_hex {
+            if let Ok(secret) = hex_to_bytes(&hex_str) {
+                let _ = write_file_atomic_0600(key_path, hex_str.as_bytes());
+                hex_str.zeroize();
+                secret
+            } else {
+                hex_str.zeroize();
+                return Err("Corrupted master key in desktop keyring".to_string());
+            }
         } else if vault_exists {
             // Fail closed: an existing vault must never be orphaned by rotating the key.
             return Err(
@@ -593,14 +642,11 @@ pub fn load_or_create_master_secret_guarded(
             let mut hex_str = bytes_to_hex(&random_key);
             random_key.zeroize();
 
+            write_file_atomic_0600(key_path, hex_str.as_bytes())
+                .map_err(|e| format!("Failed to write master key file: {e}"))?;
             #[cfg(unix)]
-            let stored_in_keyring = use_keyring && try_keyring_store(&hex_str);
-            #[cfg(not(unix))]
-            let stored_in_keyring = false;
-
-            if !stored_in_keyring {
-                write_file_atomic_0600(key_path, hex_str.as_bytes())
-                    .map_err(|e| format!("Failed to write master key file: {e}"))?;
+            if use_keyring {
+                let _ = try_keyring_store(&hex_str);
             }
             let res = hex_to_bytes(&hex_str);
             hex_str.zeroize();

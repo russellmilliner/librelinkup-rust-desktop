@@ -48,30 +48,34 @@ flatpak build \
     install -Dm644 '$REPO_ROOT/LICENSE' '$REPO_ROOT/NOTICE' -t /app/share/licenses/${APP_ID}/
   "
 
-if command -v appstreamcli >/dev/null 2>&1; then
-  echo "==> Composing AppStream catalog and bundle icons for Bazaar / KDE Discover..."
+echo "==> Composing AppStream catalog and bundle icons for Bazaar / KDE Discover..."
+flatpak build "$WORK_DIR/build-dir" sh -c "
+  set -euo pipefail
+  IMG_FMT_ARG=''
+  if appstreamcli compose --help 2>&1 | grep -q -- '--image-format'; then
+    IMG_FMT_ARG='--image-format=png'
+  fi
   appstreamcli compose \
     --prefix=/ \
     --origin=flatpak \
-    --components="$APP_ID" \
-    --result-root="$WORK_DIR/build-dir/files/share/app-info" \
-    --data-dir="$WORK_DIR/build-dir/files/share/app-info/xmls" \
-    --icons-dir="$WORK_DIR/build-dir/files/share/app-info/icons/flatpak" \
-    --image-format=png \
+    --components='${APP_ID}' \
+    --result-root=/app/share/app-info \
+    --data-dir=/app/share/app-info/xmls \
+    --icons-dir=/app/share/app-info/icons/flatpak \
+    \$IMG_FMT_ARG \
     --no-net \
-    "$WORK_DIR/build-dir/files"
-  if [[ -f "$WORK_DIR/build-dir/files/share/app-info/xmls/flatpak.xml.gz" ]]; then
-    mv "$WORK_DIR/build-dir/files/share/app-info/xmls/flatpak.xml.gz" \
-       "$WORK_DIR/build-dir/files/share/app-info/xmls/${APP_ID}.xml.gz"
+    /app
+  if [ -f /app/share/app-info/xmls/flatpak.xml.gz ]; then
+    mv /app/share/app-info/xmls/flatpak.xml.gz /app/share/app-info/xmls/${APP_ID}.xml.gz
   fi
   for sz in 64x64 128x128; do
-    if [[ -f "$WORK_DIR/build-dir/files/share/app-info/icons/flatpak/${sz}/${APP_ID}.png" ]]; then
+    if [ -f \"/app/share/app-info/icons/flatpak/\${sz}/${APP_ID}.png\" ]; then
       install -Dm644 \
-        "$WORK_DIR/build-dir/files/share/app-info/icons/flatpak/${sz}/${APP_ID}.png" \
-        "$WORK_DIR/build-dir/files/share/icons/hicolor/${sz}/apps/${APP_ID}.png"
+        \"/app/share/app-info/icons/flatpak/\${sz}/${APP_ID}.png\" \
+        \"/app/share/icons/hicolor/\${sz}/apps/${APP_ID}.png\"
     fi
   done
-fi
+"
 
 flatpak build-finish "$WORK_DIR/build-dir" \
   --command=librelinkup-kde \

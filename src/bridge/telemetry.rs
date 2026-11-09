@@ -899,11 +899,17 @@ impl qobject::TelemetryController {
                         s.ha_discovered_patients_json =
                             serde_json::to_string(&discovered).unwrap_or_else(|_| "[]".to_string());
                         if s.ha_sync_medications {
-                            let has_ha_meds_entity = states_arr.iter().any(|e| {
-                                e.get("entity_id")
-                                    .and_then(|v| v.as_str())
-                                    .is_some_and(|id| id == "sensor.librelinkup_medications")
-                            });
+                            let remote_recent_len = states_arr
+                                .iter()
+                                .find(|e| {
+                                    e.get("entity_id")
+                                        .and_then(|v| v.as_str())
+                                        .is_some_and(|id| id == "sensor.librelinkup_medications")
+                                })
+                                .and_then(|e| e.get("attributes"))
+                                .and_then(|a| a.get("recent_doses"))
+                                .and_then(|r| r.as_array())
+                                .map(Vec::len);
                             if s.medication_store.merge_from_ha_states(states_arr) {
                                 let _ = crate::medications::save_default_medications(
                                     &s.medication_store,
@@ -913,7 +919,10 @@ impl qobject::TelemetryController {
                                     "MEDS",
                                     "Synchronized remote medications/doses from Home Assistant.",
                                 );
-                            } else if !has_ha_meds_entity && !s.medication_store.medications.is_empty() {
+                                push_initial_ha_meds = true;
+                            } else if !s.medication_store.medications.is_empty()
+                                && remote_recent_len != Some(s.medication_store.dose_logs.len().min(25))
+                            {
                                 push_initial_ha_meds = true;
                             }
                         }
@@ -1033,25 +1042,42 @@ impl qobject::TelemetryController {
 
     pub fn handle_notification_action(mut self: Pin<&mut Self>, action_key: QString) -> bool {
         let key = action_key.to_string();
-        if let Some(med_id) = key.trim().strip_prefix("med_taken:") {
+        if let Some(med_ids_raw) = key.trim().strip_prefix("med_taken:") {
+            let ids: Vec<String> = med_ids_raw
+                .split(',')
+                .map(str::trim)
+                .filter(|s| !s.is_empty())
+                .map(String::from)
+                .collect();
+            if ids.is_empty() {
+                return false;
+            }
             log_info(
                 "MEDS",
-                format!("Desktop reminder action 'Taken' clicked for medication '{med_id}'."),
+                format!(
+                    "Desktop reminder action 'Taken' clicked for medication(s) '{}'.",
+                    ids.join(", ")
+                ),
             );
             let logged = with_state(|s| {
                 let now = now_epoch();
                 let g = (s.snapshot.value_mg_dl > 0.0).then_some(s.snapshot.value_mg_dl);
-                let res = s.medication_store.log_dose(
-                    med_id.trim(),
-                    None,
-                    now,
-                    g,
-                    "Logged from desktop reminder",
-                );
-                if res.is_ok() {
+                let mut latest_dose = None;
+                for med_id in &ids {
+                    if let Ok(dose) = s.medication_store.log_dose(
+                        med_id,
+                        None,
+                        now,
+                        g,
+                        "Logged from desktop reminder",
+                    ) {
+                        latest_dose = Some(dose);
+                    }
+                }
+                if latest_dose.is_some() {
                     let _ = crate::medications::save_default_medications(&s.medication_store);
                 }
-                res.ok()
+                latest_dose
             });
             if let Some(ref dose) = logged {
                 ops::spawn_ha_medications_push(Some(dose.clone()));
@@ -1059,17 +1085,32 @@ impl qobject::TelemetryController {
             self.as_mut().tick();
             return logged.is_some();
         }
-        if let Some(med_id) = key.trim().strip_prefix("med_skip:") {
+        if let Some(med_ids_raw) = key.trim().strip_prefix("med_skip:") {
+            let ids: Vec<String> = med_ids_raw
+                .split(',')
+                .map(str::trim)
+                .filter(|s| !s.is_empty())
+                .map(String::from)
+                .collect();
+            if ids.is_empty() {
+                return false;
+            }
             let skipped = with_state(|s| {
-                let res = s.medication_store.skip_dose(
-                    med_id.trim(),
-                    now_epoch(),
-                    "Skipped from desktop reminder",
-                );
-                if res.is_ok() {
+                let now = now_epoch();
+                let mut latest_dose = None;
+                for med_id in &ids {
+                    if let Ok(dose) = s.medication_store.skip_dose(
+                        med_id,
+                        now,
+                        "Skipped from desktop reminder",
+                    ) {
+                        latest_dose = Some(dose);
+                    }
+                }
+                if latest_dose.is_some() {
                     let _ = crate::medications::save_default_medications(&s.medication_store);
                 }
-                res.ok()
+                latest_dose
             });
             if let Some(ref dose) = skipped {
                 ops::spawn_ha_medications_push(Some(dose.clone()));
@@ -1116,6 +1157,16 @@ impl qobject::TelemetryController {
     pub fn update_show_glucose_in_tray_tooltip(mut self: Pin<&mut Self>, enabled: bool) {
         with_state(|s| s.show_glucose_in_tray_tooltip = enabled);
         let _ = with_state(|s| ops::persist_settings(s));
+        self.as_mut().tick();
+    }
+
+    pub fn update_tray_only_relevant_out_of_range(mut self: Pin<&mut Self>, enabled: bool) {
+        with_state(|s| s.tray_only_relevant_out_of_range = enabled);
+        let _ = with_state(|s| ops::persist_settings(s));
+        log_info(
+            "TRAY",
+            format!("Tray icon only relevant when out of range: {enabled}"),
+        );
         self.as_mut().tick();
     }
 
@@ -1383,8 +1434,15 @@ impl qobject::TelemetryController {
 
         // Medication reminders run even when not polling glucose.
         let due = with_state(|s| {
-            s.medication_store
-                .evaluate_due_reminders(now, &mut s.medication_last_notified)
+            let list = s
+                .medication_store
+                .evaluate_due_reminders(now, &mut s.medication_last_notified);
+            if !list.is_empty() {
+                s.medication_store
+                    .record_notified_slots(now, &s.medication_last_notified);
+                let _ = crate::medications::save_default_medications(&s.medication_store);
+            }
+            list
         });
         for reminder in due {
             log_info("MEDS", format!("{}: {}", reminder.title, reminder.body));
@@ -1491,7 +1549,7 @@ fn build_tray_payload(s: &mut AppState) -> qobject::TrayPayload {
     };
     let range_header = format!("Target Range: {}", s.target_range_display);
 
-    let mut flags: u8 = 0;
+    let mut flags: u16 = 0;
     if settings.theme_mode != "light" {
         flags |= 0x01;
     }
@@ -1512,6 +1570,15 @@ fn build_tray_payload(s: &mut AppState) -> qobject::TrayPayload {
     }
     if s.overlay_only_mode {
         flags |= 0x40;
+    }
+    if settings.tray_only_relevant_out_of_range {
+        flags |= 0x80;
+    }
+    if settings.is_tray_relevant(&snapshot, s.reading_stale) {
+        flags |= 0x100;
+    }
+    if settings.is_tray_urgent_attention(&snapshot, s.reading_stale) {
+        flags |= 0x200;
     }
 
     qobject::TrayPayload {

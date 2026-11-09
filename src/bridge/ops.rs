@@ -43,6 +43,7 @@ pub fn current_settings(state: &AppState) -> AppSettings {
     s.window_height = state.window_height.clamp(540, 2160);
     s.show_glucose_in_tray_icon = state.show_glucose_in_tray_icon;
     s.show_glucose_in_tray_tooltip = state.show_glucose_in_tray_tooltip;
+    s.tray_only_relevant_out_of_range = state.tray_only_relevant_out_of_range;
     s.autostart_enabled = state.autostart_enabled;
     s.start_minimized = state.start_minimized;
     s.poll_interval_seconds = clamp_poll_interval(state.poll_interval_seconds.max(0) as u32);

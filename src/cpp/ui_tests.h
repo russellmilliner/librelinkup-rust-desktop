@@ -540,6 +540,9 @@ inline QString librelinkup_run_ui_overflow_tests() {
         // Verify exact coordinate restoration on screen
         librelinkup::restore_overlay_placement(QStringLiteral(""), 140, 64, 276, 88);
         librelinkup_uitest::pump_events(30);
+        if (!ovWin->property("placementReady").toBool()) {
+            violations.append(QStringLiteral("OverlayWidget placementReady property must be true after restore_overlay_placement"));
+        }
         if (QScreen* sc = ovWin->screen()) {
             const QRect scGeom = sc->geometry();
             if (std::abs((ovWin->x() - scGeom.x()) - 140) > 2 ||
@@ -563,14 +566,15 @@ inline QString librelinkup_run_ui_overflow_tests() {
         }
 
         // Verify external overlay tooltip window (`librelinkupOverlayTooltipWindow`):
-        // hovering each of the 5 overlay buttons must show a top-level tooltip outside `ovWin`
-        // that never gets cropped and never intersects `ovWin` (never blocks the buttons).
+        // hovering each of the 5 overlay buttons must show a child tooltip popup outside `ovWin`
+        // that never gets cropped, never blocks the buttons, and uses `ovWin` as transientParent
+        // so Wayland creates a non-activating xdg_popup rather than a focus-stealing xdg_toplevel.
         QQuickWindow* ovTooltipWin = ovWin->findChild<QQuickWindow*>(QStringLiteral("librelinkupOverlayTooltipWindow"));
         if (!ovTooltipWin) {
             violations.append(QStringLiteral("Missing librelinkupOverlayTooltipWindow on OverlayWidget"));
         } else {
-            if (ovTooltipWin->transientParent() != nullptr) {
-                violations.append(QStringLiteral("librelinkupOverlayTooltipWindow must have null transientParent"));
+            if (ovTooltipWin->transientParent() != ovWin) {
+                violations.append(QStringLiteral("librelinkupOverlayTooltipWindow must have ovWin as transientParent"));
             }
             const QStringList overlayButtons = {
                 QStringLiteral("overlayThemeToggleBtn"),
@@ -995,6 +999,64 @@ inline QString librelinkup_run_ui_overflow_tests() {
             settingsCtrl->property("sensorExpiryAlertHours").toInt() != 36) {
             violations.append(QStringLiteral("Failed to update haSyncMedications / haSyncSnooze / sensorExpiryAlertHours"));
         }
+
+        // Verify KDE System Tray "Only relevant when out of range" (KStatusNotifierItem Passive vs Active)
+        // Demo sample data is 112 mg/dL (In Range).
+        // When trayOnlyRelevantOutOfRange is false (default), KStatusNotifierItem status is Active (2).
+        if (librelinkup::TrayManager::instance().statusNotifierStatus() != 2) {
+            violations.append(
+                QStringLiteral("Expected default KStatusNotifierItem status to be Active (2), got %1")
+                    .arg(librelinkup::TrayManager::instance().statusNotifierStatus())
+            );
+        }
+        // Enable trayOnlyRelevantOutOfRange while glucose is 112 mg/dL (In Range) -> status becomes Passive (1).
+        QMetaObject::invokeMethod(ctrl, "updateTrayOnlyRelevantOutOfRange", Qt::DirectConnection, Q_ARG(bool, true));
+        sync_all();
+        if (!settingsCtrl->property("trayOnlyRelevantOutOfRange").toBool() ||
+            librelinkup::TrayManager::instance().statusNotifierStatus() != 1) {
+            violations.append(
+                QStringLiteral("Expected KStatusNotifierItem status to be Passive (1) when In Range (112 mg/dL) with trayOnlyRelevantOutOfRange=true, got %1")
+                    .arg(librelinkup::TrayManager::instance().statusNotifierStatus())
+            );
+        }
+        // Override target high to 100 mg/dL so 112 mg/dL is High (Out of Range) -> status becomes Active (2).
+        QMetaObject::invokeMethod(
+            settingsCtrl,
+            "saveAlertSettings",
+            Qt::DirectConnection,
+            Q_ARG(bool, false),
+            Q_ARG(bool, true),
+            Q_ARG(bool, true),
+            Q_ARG(bool, false),
+            Q_ARG(QString, QString()),
+            Q_ARG(bool, true),
+            Q_ARG(double, 70.0),
+            Q_ARG(double, 100.0)
+        );
+        QMetaObject::invokeMethod(ctrl, "tick", Qt::DirectConnection);
+        sync_all();
+        if (librelinkup::TrayManager::instance().statusNotifierStatus() != 2) {
+            violations.append(
+                QStringLiteral("Expected KStatusNotifierItem status to promote to Active (2) when Out of Range, got %1")
+                    .arg(librelinkup::TrayManager::instance().statusNotifierStatus())
+            );
+        }
+        // Restore default threshold & trayOnlyRelevantOutOfRange=false
+        QMetaObject::invokeMethod(
+            settingsCtrl,
+            "saveAlertSettings",
+            Qt::DirectConnection,
+            Q_ARG(bool, false),
+            Q_ARG(bool, true),
+            Q_ARG(bool, true),
+            Q_ARG(bool, false),
+            Q_ARG(QString, QString()),
+            Q_ARG(bool, false),
+            Q_ARG(double, 70.0),
+            Q_ARG(double, 180.0)
+        );
+        QMetaObject::invokeMethod(ctrl, "updateTrayOnlyRelevantOutOfRange", Qt::DirectConnection, Q_ARG(bool, false));
+        sync_all();
         QMetaObject::invokeMethod(settingsCtrl, "updateHaSyncMedications", Qt::DirectConnection, Q_ARG(bool, true));
         QMetaObject::invokeMethod(settingsCtrl, "updateHaSyncSnooze", Qt::DirectConnection, Q_ARG(bool, true));
         QMetaObject::invokeMethod(settingsCtrl, "updateSensorExpiryAlertHours", Qt::DirectConnection, Q_ARG(qint32, 24));
@@ -1026,6 +1088,7 @@ inline QString librelinkup_run_ui_overflow_tests() {
             QStringLiteral("zoomOutButton"),
             QStringLiteral("zoomResetButton"),
             QStringLiteral("zoomInButton"),
+            QStringLiteral("trayOnlyRelevantSwitch"),
             QStringLiteral("settingsHaPatientCombo"),
             QStringLiteral("haSyncMedicationsSwitch"),
             QStringLiteral("haSyncSnoozeSwitch"),

@@ -15,6 +15,7 @@ fn main() {
             cc.include("/usr/include/KF6/KConfig");
             cc.include("/usr/include/KF6/KConfigCore");
             cc.include("/usr/include/KF6/KIconThemes");
+            cc.include("/usr/include/KF6/KStatusNotifierItem");
         })
         .qml_module(QmlModule {
             uri: "io.github.librelinkup",
@@ -59,4 +60,5 @@ fn main() {
     println!("cargo:rustc-link-lib=KF6ColorScheme");
     println!("cargo:rustc-link-lib=KF6ConfigCore");
     println!("cargo:rustc-link-lib=KF6IconThemes");
+    println!("cargo:rustc-link-lib=KF6StatusNotifierItem");
 }

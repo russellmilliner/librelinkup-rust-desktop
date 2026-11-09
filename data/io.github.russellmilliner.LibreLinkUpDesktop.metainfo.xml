@@ -19,7 +19,7 @@
       <li>AES-256-GCM and PBKDF2-HMAC-SHA256 encrypted vaults for credentials, 90-day glucose history, and medications</li>
       <li>Medications tab with Once Daily, Twice Daily, Weekly (day-of-week), and As-Needed schedules, 1-click dose logging, interactive desktop due-dose reminders, and 12-hour glucose graph dose markers</li>
       <li>90-day Glycemic Analytics computing ADAG Estimated A1C (eA1C), Bergenstal GMI, Time in Range (TIR%), and CV% across 12h, 7d, 14d, 30d, and 90d windows</li>
-      <li>Dynamic system tray badge showing live blood glucose value and hover tooltip</li>
+      <li>Dynamic system tray badge showing live blood glucose value, hover tooltip, and optional KDE Plasma 6 out-of-range relevance mode (hides into the tray drawer when In Range)</li>
       <li>Native KDE Plasma 6 Light, Dark, and System theme support</li>
       <li>Interactive 12-hour CGM trend graph with point hover inspection and medication markers</li>
       <li>Floating desktop overlay widget with Dark Theme, on-card control buttons, scroll-wheel adjustable transparency, and persistent multi-monitor placement</li>

@@ -19,7 +19,7 @@ Window {
         | Qt.WindowStaysOnTopHint
         | Qt.BypassWindowManagerHint
     color: "transparent"
-    visible: Boolean(settings && settings.overlayVisible)
+    visible: Boolean(placementReady && settings && settings.overlayVisible)
 
     /// Settings projection (overlay geometry, theme, toggles).
     property var settings: null
@@ -32,6 +32,8 @@ Window {
     readonly property int opacityPercent: settings ? Math.max(20, Math.min(100, settings.overlayOpacityPercent)) : 88
     readonly property real opacityAlpha: opacityPercent / 100.0
     property bool opacityHudVisible: false
+    property real opacityWheelAccum: 0
+    readonly property bool isWaylandPlatform: Qt.platform.pluginName.toLowerCase().indexOf("wayland") === 0
     readonly property color statusAccentColor: Qt.color(telemetry ? telemetry.rangeColorHex : "#22c55e")
     readonly property color lightOverlayBgColor: Qt.darker(statusAccentColor, 1.42)
     readonly property color lightOverlayBorderColor: Qt.darker(statusAccentColor, 1.95)
@@ -47,13 +49,28 @@ Window {
         if (!overlayWindow.settings) {
             return
         }
-        const dy = wheel.angleDelta.y !== 0 ? wheel.angleDelta.y : wheel.pixelDelta.y
-        if (dy === 0) {
+        let steps = 0
+        if (wheel.angleDelta.y !== 0) {
+            overlayWindow.opacityWheelAccum += wheel.angleDelta.y
+            steps = Math.trunc(overlayWindow.opacityWheelAccum / 60)
+            if (steps !== 0) {
+                overlayWindow.opacityWheelAccum -= steps * 60
+            }
+        } else if (wheel.pixelDelta.y !== 0) {
+            overlayWindow.opacityWheelAccum += wheel.pixelDelta.y * 2
+            steps = Math.trunc(overlayWindow.opacityWheelAccum / 60)
+            if (steps !== 0) {
+                overlayWindow.opacityWheelAccum -= steps * 60
+            }
+        }
+        if (steps === 0) {
+            wheel.accepted = true
             return
         }
-        const step = dy > 0 ? 5 : -5
-        const nextVal = Math.max(20, Math.min(100, overlayWindow.opacityPercent + step))
-        overlayWindow.settings.updateOverlayOpacityPercent(nextVal)
+        const nextVal = Math.max(20, Math.min(100, overlayWindow.opacityPercent + steps * 5))
+        if (nextVal !== overlayWindow.opacityPercent) {
+            overlayWindow.settings.updateOverlayOpacityPercent(nextVal)
+        }
         overlayWindow.opacityHudVisible = true
         opacityHudTimer.restart()
         wheel.accepted = true
@@ -88,33 +105,77 @@ Window {
         return ""
     }
 
-    // External top-level tooltip window positioned outside overlayWindow so tooltips are
-    // never cropped by the 276x88 overlay bounds and never block the overlay buttons.
+    property string displayedTooltipText: ""
+
+    Timer {
+        id: tooltipHideTimer
+        interval: 80
+        repeat: false
+        onTriggered: {
+            if (overlayWindow.hoveredTooltipText.length === 0) {
+                overlayWindow.displayedTooltipText = ""
+            }
+        }
+    }
+
+    onHoveredTooltipTextChanged: {
+        if (hoveredTooltipText.length > 0) {
+            tooltipHideTimer.stop()
+            displayedTooltipText = hoveredTooltipText
+        } else if (!overlayWindow.visible || dragMouseArea.dragging) {
+            tooltipHideTimer.stop()
+            displayedTooltipText = ""
+        } else {
+            tooltipHideTimer.restart()
+        }
+    }
+
+    onVisibleChanged: {
+        if (!visible) {
+            tooltipHideTimer.stop()
+            displayedTooltipText = ""
+        }
+    }
+
+    // External child tooltip popup positioned outside overlayWindow so tooltips are
+    // never cropped by the 276x88 overlay bounds, never block the overlay buttons,
+    // and use a non-activating Wayland popup relative to overlayWindow without KWin scripts.
     Window {
         id: overlayTooltipWindow
         objectName: "librelinkupOverlayTooltipWindow"
         title: qsTr("LibreLinkUp Rust Desktop Overlay Tooltip")
-        flags: Qt.Tool
+        transientParent: overlayWindow
+        flags: Qt.ToolTip
             | Qt.FramelessWindowHint
             | Qt.WindowStaysOnTopHint
             | Qt.WindowTransparentForInput
             | Qt.WindowDoesNotAcceptFocus
             | Qt.BypassWindowManagerHint
         color: "transparent"
-        visible: overlayWindow.visible && overlayWindow.hoveredTooltipText.length > 0
+        visible: overlayWindow.visible && overlayWindow.displayedTooltipText.length > 0
         width: Math.max(80, Math.ceil(overlayTooltipText.implicitWidth) + 20)
         height: Math.max(26, Math.ceil(overlayTooltipText.implicitHeight) + 12)
         x: {
+            const idealX = overlayWindow.x + overlayWindow.width - width
+            if (overlayWindow.isWaylandPlatform) {
+                return idealX
+            }
             const scX = overlayWindow.screen ? overlayWindow.screen.virtualX : 0
             const scW = overlayWindow.screen && overlayWindow.screen.width > 0 ? overlayWindow.screen.width : 1920
-            const idealX = overlayWindow.x + overlayWindow.width - width
             return Math.max(scX + 6, Math.min(scX + scW - width - 6, idealX))
         }
         y: {
-            const scY = overlayWindow.screen ? overlayWindow.screen.virtualY : 0
             const scH = overlayWindow.screen && overlayWindow.screen.height > 0 ? overlayWindow.screen.height : 1080
             const belowY = overlayWindow.y + overlayWindow.height + 6
             const aboveY = overlayWindow.y - height - 6
+            if (overlayWindow.isWaylandPlatform) {
+                const relY = overlayWindow.settings ? overlayWindow.settings.overlayY : -1
+                if (relY >= 0 && (relY + overlayWindow.height + height + 8 > scH)) {
+                    return aboveY
+                }
+                return belowY
+            }
+            const scY = overlayWindow.screen ? overlayWindow.screen.virtualY : 0
             return (belowY + height + 8 <= scY + scH) ? belowY : Math.max(scY + 6, aboveY)
         }
 
@@ -130,7 +191,7 @@ Window {
                 id: overlayTooltipText
                 objectName: "overlayTooltipText"
                 anchors.centerIn: parent
-                text: overlayWindow.hoveredTooltipText
+                text: overlayWindow.displayedTooltipText
                 font.pointSize: 9.0
                 font.bold: true
                 color: "#f8fafc"

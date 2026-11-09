@@ -84,6 +84,7 @@ pub struct SettingsControllerRust {
     pub window_height: i32,
     pub show_glucose_in_tray_icon: bool,
     pub show_glucose_in_tray_tooltip: bool,
+    pub tray_only_relevant_out_of_range: bool,
     pub autostart_enabled: bool,
     pub start_minimized: bool,
     pub poll_interval_seconds: i32,
@@ -145,8 +146,9 @@ pub mod qobject {
         tooltip_text: QString,
         /// Bit flags: 0x01 light-on-dark icon, 0x02 show value in icon, 0x04 show tooltip,
         /// 0x08 autostart, 0x10 overlay visible, 0x20 overlay on all desktops,
-        /// 0x40 overlay-only mode.
-        flags: u8,
+        /// 0x40 overlay-only mode, 0x80 only relevant out of range,
+        /// 0x100 tray is relevant (Active), 0x200 tray needs urgent attention (NeedsAttention).
+        flags: u16,
     }
 
     unsafe extern "C++" {
@@ -321,6 +323,9 @@ pub mod qobject {
         fn update_show_glucose_in_tray_tooltip(self: Pin<&mut TelemetryController>, enabled: bool);
 
         #[qinvokable]
+        fn update_tray_only_relevant_out_of_range(self: Pin<&mut TelemetryController>, enabled: bool);
+
+        #[qinvokable]
         fn update_overlay_visible(self: Pin<&mut TelemetryController>, visible: bool);
 
         #[qinvokable]
@@ -380,6 +385,7 @@ pub mod qobject {
         #[qproperty(i32, window_height)]
         #[qproperty(bool, show_glucose_in_tray_icon)]
         #[qproperty(bool, show_glucose_in_tray_tooltip)]
+        #[qproperty(bool, tray_only_relevant_out_of_range)]
         #[qproperty(bool, autostart_enabled)]
         #[qproperty(bool, start_minimized)]
         #[qproperty(i32, poll_interval_seconds)]
@@ -518,6 +524,9 @@ pub mod qobject {
 
         #[qinvokable]
         fn update_show_glucose_in_tray_tooltip(self: Pin<&mut SettingsController>, enabled: bool);
+
+        #[qinvokable]
+        fn update_tray_only_relevant_out_of_range(self: Pin<&mut SettingsController>, enabled: bool);
 
         #[qinvokable]
         fn update_autostart_enabled(self: Pin<&mut SettingsController>, enabled: bool);

@@ -64,6 +64,7 @@ impl Default for SettingsControllerRust {
             window_height: 680,
             show_glucose_in_tray_icon: true,
             show_glucose_in_tray_tooltip: true,
+            tray_only_relevant_out_of_range: false,
             autostart_enabled: true,
             start_minimized: true,
             poll_interval_seconds: MIN_POLL_INTERVAL_SECONDS as i32,
@@ -108,6 +109,24 @@ impl Default for SettingsControllerRust {
 
 impl qobject::SettingsController {
     pub fn initialize(mut self: Pin<&mut Self>) {
+        let (ov_screen, ov_x, ov_y, ov_w, ov_h, ov_all) = with_state(|s| {
+            (
+                s.overlay_screen_name.clone(),
+                s.overlay_x,
+                s.overlay_y,
+                s.overlay_width,
+                s.overlay_height,
+                s.overlay_on_all_desktops,
+            )
+        });
+        qobject::librelinkup_restore_overlay_placement(
+            &QString::from(ov_screen.as_str()),
+            ov_x,
+            ov_y,
+            ov_w,
+            ov_h,
+        );
+        qobject::librelinkup_apply_overlay_all_desktops(ov_all);
         self.as_mut().sync();
     }
 
@@ -381,18 +400,32 @@ impl qobject::SettingsController {
         sync_val!(self, set_installing_update, installing_update, installing);
         sync_str!(self, set_event_log_json, event_log_json, event_json);
         sync_val!(self, set_event_log_count, event_log_count, event_count);
-        let (ui_zoom, high_contrast, ha_sync_meds, ha_sync_snz, sensor_exp_hrs, ha_patients_json) =
-            with_state(|s| {
-                (
-                    s.ui_zoom_percent,
-                    s.high_contrast_mode,
-                    s.ha_sync_medications,
-                    s.ha_sync_snooze,
-                    s.sensor_expiry_alert_hours,
-                    s.ha_discovered_patients_json.clone(),
-                )
-            });
+        let (
+            ui_zoom,
+            high_contrast,
+            ha_sync_meds,
+            ha_sync_snz,
+            sensor_exp_hrs,
+            ha_patients_json,
+            tray_only_rel,
+        ) = with_state(|s| {
+            (
+                s.ui_zoom_percent,
+                s.high_contrast_mode,
+                s.ha_sync_medications,
+                s.ha_sync_snooze,
+                s.sensor_expiry_alert_hours,
+                s.ha_discovered_patients_json.clone(),
+                s.tray_only_relevant_out_of_range,
+            )
+        });
         sync_val!(self, set_ui_zoom_percent, ui_zoom_percent, ui_zoom);
+        sync_val!(
+            self,
+            set_tray_only_relevant_out_of_range,
+            tray_only_relevant_out_of_range,
+            tray_only_rel
+        );
         sync_str!(
             self,
             set_ha_discovered_patients_json,
@@ -710,7 +743,17 @@ impl qobject::SettingsController {
 
     pub fn update_overlay_opacity_percent(mut self: Pin<&mut Self>, opacity_percent: i32) {
         let clamped = opacity_percent.clamp(20, 100);
-        with_state(|s| s.overlay_opacity_percent = clamped);
+        let changed = with_state(|s| {
+            if s.overlay_opacity_percent != clamped {
+                s.overlay_opacity_percent = clamped;
+                true
+            } else {
+                false
+            }
+        });
+        if !changed {
+            return;
+        }
         let _ = with_state(|s| ops::persist_settings(s));
         log_info(
             "SYSTEM",
@@ -829,6 +872,16 @@ impl qobject::SettingsController {
         log_info(
             "TRAY",
             format!("Show glucose telemetry in tray hover tooltip: {enabled}"),
+        );
+        self.as_mut().sync();
+    }
+
+    pub fn update_tray_only_relevant_out_of_range(mut self: Pin<&mut Self>, enabled: bool) {
+        with_state(|s| s.tray_only_relevant_out_of_range = enabled);
+        let _ = with_state(|s| ops::persist_settings(s));
+        log_info(
+            "TRAY",
+            format!("Tray icon only relevant when out of range: {enabled}"),
         );
         self.as_mut().sync();
     }

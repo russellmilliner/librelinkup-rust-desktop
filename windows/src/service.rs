@@ -1102,9 +1102,16 @@ impl Service {
     fn evaluate_alerts(&mut self) {
         let now = now_epoch();
         let reminders = {
-            let s = lock(&self.shared);
-            s.medication_store
-                .evaluate_due_reminders(now, &mut self.medication_last_notified)
+            let mut s = lock(&self.shared);
+            let list = s
+                .medication_store
+                .evaluate_due_reminders(now, &mut self.medication_last_notified);
+            if !list.is_empty() {
+                s.medication_store
+                    .record_notified_slots(now, &self.medication_last_notified);
+                let _ = save_default_medications(&s.medication_store);
+            }
+            list
         };
         for r in reminders {
             log_info("MEDS", format!("{}: {}", r.title, r.body));

@@ -4,6 +4,7 @@
 #include <KColorSchemeManager>
 #include <KIconLoader>
 #include <KSharedConfig>
+#include <KStatusNotifierItem>
 #include <QAbstractItemModel>
 #include <QAction>
 #include <QActionGroup>
@@ -16,6 +17,7 @@
 #include <QDBusPendingReply>
 #include <QDesktopServices>
 #include <QGuiApplication>
+#include <QHash>
 #include <QIcon>
 #include <QList>
 #include <QMenu>
@@ -47,7 +49,11 @@ public:
     }
 
     bool isTrayIconVisible() const {
-        return m_tray && m_tray->isVisible();
+        return m_sni != nullptr || (m_tray && m_tray->isVisible());
+    }
+
+    int statusNotifierStatus() const {
+        return m_sni ? static_cast<int>(m_sni->status()) : 0;
     }
 
     int overlayOnlyModeInvokeCount() const {
@@ -92,6 +98,15 @@ public:
             sendDesktopNotificationWithActions(title, body, critical, snoozeActions, true)) {
             return;
         }
+        if (m_sni) {
+            m_sni->showMessage(
+                title,
+                body,
+                critical ? QStringLiteral("dialog-error") : QStringLiteral("dialog-information"),
+                15000
+            );
+            return;
+        }
         if (!m_tray || !QSystemTrayIcon::supportsMessages()) {
             return;
         }
@@ -104,6 +119,8 @@ public:
     }
 
     // Sends a desktop medication due reminder with interactive "✓ Taken" and "⏭ Skipped" buttons.
+    // Passes `medicationId` so any existing notification for that medication/slot is replaced
+    // in-place instead of stacking duplicate banners.
     void showMedicationNotification(
         const QString& medicationId,
         const QString& title,
@@ -115,7 +132,16 @@ public:
             QStringLiteral("med_taken:%1").arg(medicationId), QStringLiteral("✓ Taken"),
             QStringLiteral("med_skip:%1").arg(medicationId), QStringLiteral("⏭ Skipped"),
         };
-        if (sendDesktopNotificationWithActions(title, body, false, medActions, false)) {
+        if (sendDesktopNotificationWithActions(title, body, false, medActions, false, medicationId)) {
+            return;
+        }
+        if (m_sni) {
+            m_sni->showMessage(
+                title,
+                body,
+                QStringLiteral("dialog-information"),
+                15000
+            );
             return;
         }
         if (!m_tray || !QSystemTrayIcon::supportsMessages()) {
@@ -142,6 +168,14 @@ public:
             );
         }
         m_activeAlertNotificationIds.remove(id);
+        for (auto it = m_activeMedicationNotificationIds.begin();
+             it != m_activeMedicationNotificationIds.end();) {
+            if (it.value() == id) {
+                it = m_activeMedicationNotificationIds.erase(it);
+            } else {
+                ++it;
+            }
+        }
         if (m_lastAlertNotificationId == id) {
             m_lastAlertNotificationId = 0;
         }
@@ -160,6 +194,14 @@ public:
 
     void handleNotificationClosed(uint id) {
         m_activeAlertNotificationIds.remove(id);
+        for (auto it = m_activeMedicationNotificationIds.begin();
+             it != m_activeMedicationNotificationIds.end();) {
+            if (it.value() == id) {
+                it = m_activeMedicationNotificationIds.erase(it);
+            } else {
+                ++it;
+            }
+        }
         if (m_lastAlertNotificationId == id) {
             m_lastAlertNotificationId = 0;
         }
@@ -203,6 +245,9 @@ public:
         bool overlayVisible,
         bool overlayOnAllDesktops,
         bool overlayOnlyMode,
+        bool onlyRelevantOutOfRange,
+        bool trayIsRelevant,
+        bool trayNeedsAttention,
         const QString& appThemeMode,
         const QString& badgeText,
         const QString& trendSymbol,
@@ -215,8 +260,15 @@ public:
         m_overlayVisible = overlayVisible;
         m_overlayOnlyMode = overlayOnlyMode;
         ensureInitialized();
-        if (!m_tray) {
+        if (!m_sni) {
             return;
+        }
+
+        const KStatusNotifierItem::ItemStatus desiredStatus = trayNeedsAttention
+            ? KStatusNotifierItem::NeedsAttention
+            : (trayIsRelevant ? KStatusNotifierItem::Active : KStatusNotifierItem::Passive);
+        if (m_sni->status() != desiredStatus) {
+            m_sni->setStatus(desiredStatus);
         }
 
         const QString cacheKey = QStringLiteral("%1|%2|%3|%4|%5")
@@ -237,15 +289,26 @@ public:
             }
             if (showGlucoseInIcon && !badgeText.trimmed().isEmpty() && badgeText != QStringLiteral("--")) {
                 QIcon badgeIcon = build_glucose_badge_icon(badgeText, trendSymbol, badgeColorHex);
-                m_tray->setIcon(badgeIcon);
+                m_currentTrayIcon = badgeIcon;
             } else {
-                m_tray->setIcon(baseAppIcon);
+                m_currentTrayIcon = baseAppIcon;
             }
+            m_sni->setIconByPixmap(m_currentTrayIcon);
+            m_sni->setAttentionIconByPixmap(m_currentTrayIcon);
+            m_sni->setToolTipIconByPixmap(baseAppIcon);
         }
 
         if (m_lastTooltipText != tooltipText) {
             m_lastTooltipText = tooltipText;
-            m_tray->setToolTip(tooltipText);
+            const QStringList lines = tooltipText.split(QLatin1Char('\n'));
+            const QString title = lines.isEmpty()
+                ? QStringLiteral("LibreLinkUp Rust Desktop")
+                : lines.first();
+            const QString subTitle = lines.size() > 1
+                ? lines.mid(1).join(QLatin1Char('\n'))
+                : QString();
+            m_sni->setToolTipTitle(title);
+            m_sni->setToolTipSubTitle(subTitle);
         }
 
         if (m_statusAction && m_lastStatusHeader != statusHeader) {
@@ -265,6 +328,11 @@ public:
             const bool old = m_showInTooltipAction->blockSignals(true);
             m_showInTooltipAction->setChecked(showGlucoseInTooltip);
             m_showInTooltipAction->blockSignals(old);
+        }
+        if (m_onlyRelevantOutOfRangeAction) {
+            const bool old = m_onlyRelevantOutOfRangeAction->blockSignals(true);
+            m_onlyRelevantOutOfRangeAction->setChecked(onlyRelevantOutOfRange);
+            m_onlyRelevantOutOfRangeAction->blockSignals(old);
         }
         if (m_autostartAction) {
             const bool old = m_autostartAction->blockSignals(true);
@@ -307,10 +375,21 @@ private:
 
         QGuiApplication::setQuitOnLastWindowClosed(false);
 
-        m_tray = new QSystemTrayIcon(QCoreApplication::instance());
-        m_tray->setIcon(build_multisize_svg_icon(
+        m_sni = new KStatusNotifierItem(
+            QStringLiteral("io.github.russellmilliner.LibreLinkUpDesktop"),
+            QCoreApplication::instance()
+        );
+        m_sni->setCategory(KStatusNotifierItem::ApplicationStatus);
+        m_sni->setTitle(QStringLiteral("LibreLinkUp Rust Desktop"));
+        m_sni->setStandardActionsEnabled(false);
+        m_sni->setStatus(KStatusNotifierItem::Active);
+        m_currentTrayIcon = build_multisize_svg_icon(
             QStringLiteral(":/qt/qml/io/github/librelinkup/src/qml/icons/tray-icon-dark.svg")
-        ));
+        );
+        m_sni->setIconByPixmap(m_currentTrayIcon);
+        m_sni->setAttentionIconByPixmap(m_currentTrayIcon);
+        m_sni->setToolTipIconByPixmap(m_currentTrayIcon);
+        m_sni->setToolTipTitle(QStringLiteral("LibreLinkUp Rust Desktop"));
         m_menu = new QMenu();
 
         QObject::connect(m_menu, &QMenu::aboutToShow, [this]() {
@@ -382,6 +461,21 @@ private:
                 QMetaObject::invokeMethod(
                     m_controller,
                     "updateShowGlucoseInTrayTooltip",
+                    Qt::QueuedConnection,
+                    Q_ARG(bool, checked)
+                );
+            }
+        });
+
+        m_onlyRelevantOutOfRangeAction = m_menu->addAction(
+            QStringLiteral("Only Relevant in Tray When Out of Range")
+        );
+        m_onlyRelevantOutOfRangeAction->setCheckable(true);
+        QObject::connect(m_onlyRelevantOutOfRangeAction, &QAction::triggered, [this](bool checked) {
+            if (m_controller) {
+                QMetaObject::invokeMethod(
+                    m_controller,
+                    "updateTrayOnlyRelevantOutOfRange",
                     Qt::QueuedConnection,
                     Q_ARG(bool, checked)
                 );
@@ -533,18 +627,16 @@ private:
         });
 
         updateWindowActionsVisibility();
-        m_tray->setContextMenu(m_menu);
+        m_sni->setContextMenu(m_menu);
 
         QObject::connect(
-            m_tray,
-            &QSystemTrayIcon::activated,
-            [](QSystemTrayIcon::ActivationReason reason) {
-                if (reason == QSystemTrayIcon::Trigger || reason == QSystemTrayIcon::DoubleClick) {
-                    if (is_main_window_shown()) {
-                        hide_main_window_to_tray();
-                    } else {
-                        show_main_window();
-                    }
+            m_sni,
+            &KStatusNotifierItem::activateRequested,
+            [](bool /*active*/, const QPoint& /*pos*/) {
+                if (is_main_window_shown()) {
+                    hide_main_window_to_tray();
+                } else {
+                    show_main_window();
                 }
             }
         );
@@ -555,12 +647,15 @@ private:
     bool m_overlayOnlyMode = false;
     int m_overlayOnlyModeInvokeCount = 0;
     QPointer<QObject> m_controller;
+    QPointer<KStatusNotifierItem> m_sni;
     QPointer<QSystemTrayIcon> m_tray;
+    QIcon m_currentTrayIcon;
     QMenu* m_menu = nullptr;
     QAction* m_statusAction = nullptr;
     QAction* m_rangeAction = nullptr;
     QAction* m_showInIconAction = nullptr;
     QAction* m_showInTooltipAction = nullptr;
+    QAction* m_onlyRelevantOutOfRangeAction = nullptr;
     QAction* m_overlayAction = nullptr;
     QAction* m_overlayAllDesktopsAction = nullptr;
     QAction* m_autostartAction = nullptr;
@@ -575,6 +670,7 @@ private:
     QString m_lastRangeHeader;
     QPointer<NotificationActionWatcher> m_notifWatcher;
     QSet<uint> m_activeAlertNotificationIds;
+    QHash<QString, uint> m_activeMedicationNotificationIds;
     uint m_lastAlertNotificationId = 0;
 
     bool sendDesktopNotificationWithActions(
@@ -582,7 +678,8 @@ private:
         const QString& body,
         bool critical,
         const QStringList& actions,
-        bool replaceLastAlert
+        bool replaceLastAlert,
+        const QString& medicationKey = QString()
     ) {
         if (qEnvironmentVariable("QT_QPA_PLATFORM") == QStringLiteral("offscreen")) {
             return false;
@@ -621,6 +718,10 @@ private:
             QStringLiteral("io.github.russellmilliner.LibreLinkUpDesktop")
         );
 
+        const uint replacesId = replaceLastAlert
+            ? m_lastAlertNotificationId
+            : (!medicationKey.isEmpty() ? m_activeMedicationNotificationIds.value(medicationKey, 0u) : 0u);
+
         QDBusMessage msg = QDBusMessage::createMethodCall(
             QStringLiteral("org.freedesktop.Notifications"),
             QStringLiteral("/org/freedesktop/Notifications"),
@@ -628,7 +729,7 @@ private:
             QStringLiteral("Notify")
         );
         msg << QStringLiteral("LibreLinkUp Rust Desktop")
-            << (replaceLastAlert ? m_lastAlertNotificationId : static_cast<uint>(0))
+            << replacesId
             << QStringLiteral("io.github.russellmilliner.LibreLinkUpDesktop")
             << title
             << body
@@ -641,7 +742,7 @@ private:
             watcher,
             &QDBusPendingCallWatcher::finished,
             watcher,
-            [this, title, body, critical, replaceLastAlert](QDBusPendingCallWatcher* w) {
+            [this, title, body, critical, replaceLastAlert, medicationKey](QDBusPendingCallWatcher* w) {
                 QDBusPendingReply<uint> reply = *w;
                 if (reply.isError()) {
                     qWarning(
@@ -661,6 +762,9 @@ private:
                     if (notifId > 0) {
                         if (replaceLastAlert) {
                             m_lastAlertNotificationId = notifId;
+                        }
+                        if (!medicationKey.isEmpty()) {
+                            m_activeMedicationNotificationIds.insert(medicationKey, notifId);
                         }
                         m_activeAlertNotificationIds.insert(notifId);
                     }
@@ -718,6 +822,9 @@ inline void librelinkup_sync_tray(ControllerT& controller, PayloadT payload) {
     const bool overlayVisible = (payload.flags & 0x10u) != 0u;
     const bool overlayOnAllDesktops = (payload.flags & 0x20u) != 0u;
     const bool overlayOnlyMode = (payload.flags & 0x40u) != 0u;
+    const bool onlyRelevantOutOfRange = (payload.flags & 0x80u) != 0u;
+    const bool trayIsRelevant = (payload.flags & 0x100u) != 0u;
+    const bool trayNeedsAttention = (payload.flags & 0x200u) != 0u;
 
     librelinkup::TrayManager::instance().sync(
         &controller,
@@ -728,6 +835,9 @@ inline void librelinkup_sync_tray(ControllerT& controller, PayloadT payload) {
         overlayVisible,
         overlayOnAllDesktops,
         overlayOnlyMode,
+        onlyRelevantOutOfRange,
+        trayIsRelevant,
+        trayNeedsAttention,
         payload.theme_mode,
         payload.badge_text,
         payload.trend_symbol,

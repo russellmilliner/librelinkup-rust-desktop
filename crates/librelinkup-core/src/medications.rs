@@ -193,6 +193,8 @@ pub struct MedicationStore {
     pub medications: Vec<MedicationDef>,
     #[serde(default)]
     pub dose_logs: Vec<MedicationDoseLog>,
+    #[serde(default)]
+    pub notified_slots: HashMap<String, i64>,
 }
 
 impl fmt::Debug for MedicationStore {
@@ -236,16 +238,46 @@ pub fn weekday_full_name(weekday: u8) -> &'static str {
     }
 }
 
-/// Parses `"HH:MM"` slots from `scheduled_time` (e.g. `"08:00"` or `"08:00,20:00"`).
+fn parse_single_time_slot(raw_part: &str) -> Option<NaiveTime> {
+    let trimmed = raw_part.trim();
+    if trimmed.is_empty() {
+        return None;
+    }
+    if let Ok(t) = NaiveTime::parse_from_str(trimmed, "%H:%M")
+        .or_else(|_| NaiveTime::parse_from_str(trimmed, "%H:%M:%S"))
+    {
+        return Some(t);
+    }
+    let lower = trimmed.to_ascii_lowercase();
+    if let Some(rest) = lower
+        .strip_suffix("am")
+        .or_else(|| lower.strip_suffix("pm"))
+    {
+        let is_pm = lower.ends_with("pm");
+        let num_part = rest.trim();
+        let (h_str, m_str) = match num_part.split_once(':') {
+            Some((h, m)) => (h.trim(), m.trim()),
+            None => (num_part, "0"),
+        };
+        if let (Ok(mut hour), Ok(min)) = (h_str.parse::<u32>(), m_str.parse::<u32>()) {
+            if (1..=12).contains(&hour) && min < 60 {
+                if is_pm && hour < 12 {
+                    hour += 12;
+                } else if !is_pm && hour == 12 {
+                    hour = 0;
+                }
+                return NaiveTime::from_hms_opt(hour, min, 0);
+            }
+        }
+    }
+    None
+}
+
+/// Parses `"HH:MM"` (or `"8am"`, `"7:30pm"`) slots from `scheduled_time` (e.g. `"08:00"` or `"08:00,20:00"`).
 pub fn parse_scheduled_slots(raw: &str, schedule: MedicationSchedule) -> Vec<NaiveTime> {
     let mut slots: Vec<NaiveTime> = raw
         .split([',', ';', '/'])
-        .filter_map(|part| {
-            let trimmed = part.trim();
-            NaiveTime::parse_from_str(trimmed, "%H:%M")
-                .or_else(|_| NaiveTime::parse_from_str(trimmed, "%H:%M:%S"))
-                .ok()
-        })
+        .filter_map(parse_single_time_slot)
         .collect();
 
     if slots.is_empty() {
@@ -327,13 +359,55 @@ impl MedicationStore {
                 enabled: true,
             });
         }
+        let prefix = format!("{assigned_id}@");
+        self.notified_slots.retain(|k, _| !k.starts_with(&prefix) && k != &assigned_id);
         Ok(assigned_id)
     }
 
     pub fn remove_medication(&mut self, medication_id: &str) -> bool {
+        let trimmed = medication_id.trim();
         let before = self.medications.len();
-        self.medications.retain(|m| m.id != medication_id.trim());
+        self.medications.retain(|m| m.id != trimmed);
+        let prefix = format!("{trimmed}@");
+        self.notified_slots.retain(|k, _| !k.starts_with(&prefix) && k != trimmed);
         self.medications.len() != before
+    }
+
+    /// Removes accidental duplicate dose logs for the same medication recorded within 60 seconds
+    /// of each other (or within 10 minutes when logged/skipped from a desktop reminder action).
+    pub fn deduplicate_dose_logs(&mut self) -> bool {
+        if self.dose_logs.len() < 2 {
+            return false;
+        }
+        let before_len = self.dose_logs.len();
+        self.dose_logs.sort_by_key(|d| d.taken_at_epoch);
+        let mut kept: Vec<MedicationDoseLog> = Vec::with_capacity(before_len);
+        for entry in self.dose_logs.drain(..) {
+            let is_dup = kept.iter().rev().any(|prev| {
+                let same_med = (!entry.medication_id.is_empty()
+                    && entry.medication_id != "adhoc"
+                    && prev.medication_id == entry.medication_id)
+                    || prev.medication_name.eq_ignore_ascii_case(&entry.medication_name);
+                if !same_med || prev.skipped != entry.skipped {
+                    return false;
+                }
+                let dt = (entry.taken_at_epoch - prev.taken_at_epoch).abs();
+                let from_reminder = entry.notes.contains("desktop reminder")
+                    || prev.notes.contains("desktop reminder");
+                if from_reminder {
+                    dt < 600
+                } else {
+                    dt < 60
+                }
+            });
+            if !is_dup {
+                kept.push(entry);
+            }
+        }
+        kept.sort_by_key(|d| std::cmp::Reverse(d.taken_at_epoch));
+        let changed = kept.len() != before_len;
+        self.dose_logs = kept;
+        changed
     }
 
     /// Logs a dose for `medication_id` (or an ad-hoc medication name) at `taken_at_epoch`.
@@ -369,6 +443,17 @@ impl MedicationStore {
                 custom_dosage.unwrap_or("").trim().to_string(),
             )
         };
+
+        let dup_window = if notes.contains("desktop reminder") { 600 } else { 60 };
+        if med_id != "adhoc" {
+            if let Some(existing) = self.dose_logs.iter().find(|d| {
+                d.medication_id == med_id
+                    && !d.skipped
+                    && (d.taken_at_epoch - taken_at_epoch).abs() < dup_window
+            }) {
+                return Ok(existing.clone());
+            }
+        }
 
         let entry = MedicationDoseLog {
             id: format!("dose-{taken_at_epoch}-{}", self.dose_logs.len() + 1),
@@ -410,6 +495,15 @@ impl MedicationStore {
             .find(|m| m.id == medication_id.trim())
             .cloned()
             .ok_or_else(|| "Select a scheduled medication to skip.".to_string())?;
+
+        let dup_window = if notes.contains("desktop reminder") { 600 } else { 60 };
+        if let Some(existing) = self.dose_logs.iter().find(|d| {
+            d.medication_id == med.id
+                && d.skipped
+                && (d.taken_at_epoch - skipped_at_epoch).abs() < dup_window
+        }) {
+            return Ok(existing.clone());
+        }
 
         let entry = MedicationDoseLog {
             id: format!("skip-{skipped_at_epoch}-{}", self.dose_logs.len() + 1),
@@ -564,40 +658,181 @@ impl MedicationStore {
         (DoseStatusKind::Upcoming, format!("Scheduled {}", med.scheduled_time))
     }
 
-    /// Evaluates all enabled medications with `reminder_enabled` and returns any due/overdue
-    /// desktop notifications that have not been notified within `MEDICATION_REMINDER_REPEAT_SECONDS`.
+    /// If `med` is currently `DueNow` at `now_epoch`, returns the due scheduled `(NaiveTime, detail_label)`.
+    pub fn due_slot(&self, med: &MedicationDef, now_epoch: i64) -> Option<(NaiveTime, String)> {
+        if med.schedule == MedicationSchedule::AsNeeded {
+            return None;
+        }
+        let now_dt = Local.timestamp_opt(now_epoch, 0).single()?;
+        let today = now_dt.date_naive();
+        let slots = parse_scheduled_slots(&med.scheduled_time, med.schedule);
+
+        if med.schedule == MedicationSchedule::Weekly {
+            let today_wd = today.weekday().num_days_from_monday() as u8;
+            let week_start_epoch = today
+                .checked_sub_days(chrono::Days::new(today_wd as u64))
+                .and_then(|d| d.and_hms_opt(0, 0, 0))
+                .and_then(|ndt| Local.from_local_datetime(&ndt).earliest())
+                .map(|dt| dt.timestamp())
+                .unwrap_or(now_epoch - (today_wd as i64) * 86_400);
+            let taken_this_week = self
+                .dose_logs
+                .iter()
+                .any(|d| d.medication_id == med.id && d.taken_at_epoch >= week_start_epoch);
+            if taken_this_week {
+                return None;
+            }
+            if today_wd == med.weekday % 7 {
+                if let Some(slot) = slots.first() {
+                    if now_dt.time() >= *slot {
+                        return Some((
+                            *slot,
+                            format!(
+                                "⏰ Due today ({} {})",
+                                weekday_short_name(med.weekday),
+                                slot.format("%H:%M")
+                            ),
+                        ));
+                    }
+                }
+            }
+            return None;
+        }
+
+        let day_start_epoch = today
+            .and_hms_opt(0, 0, 0)
+            .and_then(|ndt| Local.from_local_datetime(&ndt).earliest())
+            .map(|dt| dt.timestamp())
+            .unwrap_or(now_epoch - 43_200);
+
+        let doses_today_count = self
+            .dose_logs
+            .iter()
+            .filter(|d| d.medication_id == med.id && d.taken_at_epoch >= day_start_epoch)
+            .count();
+
+        if doses_today_count >= slots.len() {
+            return None;
+        }
+
+        for (idx, slot) in slots.iter().enumerate() {
+            if now_dt.time() >= *slot && doses_today_count <= idx {
+                return Some((
+                    *slot,
+                    format!("⏰ Due now (scheduled {})", slot.format("%H:%M")),
+                ));
+            }
+        }
+        None
+    }
+
+    /// Evaluates all enabled medications with `reminder_enabled` and returns due desktop
+    /// notifications.
+    ///
+    /// - Each medication only triggers **one** reminder per scheduled dose slot on a given day
+    ///   (keyed by `"{med_id}@{YYYY-MM-DD}@{HH:MM}"`).
+    /// - Medications that are due at the **same scheduled time** (e.g. multiple morning meds at
+    ///   `07:30`) are combined into a **single** consolidated reminder notification so only one
+    ///   reminder is created for all medications taken at that time.
     pub fn evaluate_due_reminders(
         &self,
         now_epoch: i64,
         last_notified: &mut HashMap<String, i64>,
     ) -> Vec<MedicationReminder> {
-        let mut reminders = Vec::new();
+        let Some(now_dt) = Local.timestamp_opt(now_epoch, 0).single() else {
+            return Vec::new();
+        };
+        let today_str = now_dt.date_naive().format("%Y-%m-%d").to_string();
+
+        let mut slot_groups: Vec<(NaiveTime, Vec<(&MedicationDef, String)>)> = Vec::new();
+
         for med in &self.medications {
             if !med.enabled || !med.reminder_enabled {
                 continue;
             }
-            let (status, detail) = self.medication_status(med, now_epoch);
-            if status != DoseStatusKind::DueNow {
+            let Some((slot, detail)) = self.due_slot(med, now_epoch) else {
                 continue;
+            };
+            let slot_str = slot.format("%H:%M").to_string();
+            let slot_key = format!("{}@{}@{}", med.id, today_str, slot_str);
+
+            // Only notify once per scheduled dose slot on a given day.
+            if last_notified.contains_key(&slot_key) {
+                continue;
+            }
+            if let Some(&last_ts) = self.notified_slots.get(&slot_key) {
+                if now_epoch - last_ts < 86_400 {
+                    last_notified.insert(slot_key, last_ts);
+                    continue;
+                }
             }
             if let Some(&last_ts) = last_notified.get(&med.id) {
                 if now_epoch - last_ts < MEDICATION_REMINDER_REPEAT_SECONDS {
                     continue;
                 }
             }
+
+            last_notified.insert(slot_key, now_epoch);
             last_notified.insert(med.id.clone(), now_epoch);
-            let dose_part = if med.dosage.trim().is_empty() {
-                med.name.clone()
+
+            if let Some((_, group)) = slot_groups.iter_mut().find(|(s, _)| *s == slot) {
+                group.push((med, detail));
             } else {
-                format!("{} ({})", med.name, med.dosage)
-            };
-            reminders.push(MedicationReminder {
-                medication_id: med.id.clone(),
-                title: format!("Medication Reminder: {}", med.name),
-                body: format!("{dose_part} — {detail}"),
-            });
+                slot_groups.push((slot, vec![(med, detail)]));
+            }
+        }
+
+        let mut reminders = Vec::new();
+        for (slot, group) in slot_groups {
+            let slot_str = slot.format("%H:%M").to_string();
+            if group.len() == 1 {
+                let (med, detail) = &group[0];
+                let dose_part = if med.dosage.trim().is_empty() {
+                    med.name.clone()
+                } else {
+                    format!("{} ({})", med.name, med.dosage)
+                };
+                reminders.push(MedicationReminder {
+                    medication_id: med.id.clone(),
+                    title: format!("Medication Reminder: {}", med.name),
+                    body: format!("{dose_part} — {detail}"),
+                });
+            } else {
+                let ids: Vec<&str> = group.iter().map(|(m, _)| m.id.as_str()).collect();
+                let names: Vec<&str> = group.iter().map(|(m, _)| m.name.as_str()).collect();
+                let dose_parts: Vec<String> = group
+                    .iter()
+                    .map(|(m, _)| {
+                        if m.dosage.trim().is_empty() {
+                            m.name.clone()
+                        } else {
+                            format!("{} ({})", m.name, m.dosage)
+                        }
+                    })
+                    .collect();
+                reminders.push(MedicationReminder {
+                    medication_id: ids.join(","),
+                    title: format!("Medication Reminder ({slot_str}): {}", names.join(", ")),
+                    body: format!(
+                        "{} — ⏰ Due now (scheduled {slot_str})",
+                        dose_parts.join(" • ")
+                    ),
+                });
+            }
         }
         reminders
+    }
+
+    /// Syncs `last_notified` slot keys into `self.notified_slots` (retaining entries from the
+    /// last 7 days) so reminders do not re-fire across app restarts.
+    pub fn record_notified_slots(&mut self, now_epoch: i64, last_notified: &HashMap<String, i64>) {
+        for (k, &ts) in last_notified {
+            if k.contains('@') {
+                self.notified_slots.insert(k.clone(), ts);
+            }
+        }
+        let cutoff = now_epoch - 7 * 86_400;
+        self.notified_slots.retain(|_, &mut ts| ts >= cutoff);
     }
 
     /// Returns all logged doses within `[start_epoch, end_epoch]` sorted chronologically
@@ -824,10 +1059,15 @@ impl MedicationStore {
                     if rd.taken_at_display.trim().is_empty() {
                         rd.taken_at_display = format_epoch_short(rd.taken_at_epoch);
                     }
+                    let dup_window = if rd.notes.contains("desktop reminder") {
+                        600
+                    } else {
+                        60
+                    };
                     let duplicate = self.dose_logs.iter().any(|d| {
                         (!rd.id.is_empty() && d.id == rd.id)
                             || (d.medication_name.eq_ignore_ascii_case(&rd.medication_name)
-                                && (d.taken_at_epoch - rd.taken_at_epoch).abs() < 60
+                                && (d.taken_at_epoch - rd.taken_at_epoch).abs() < dup_window
                                 && d.skipped == rd.skipped)
                     });
                     if !duplicate {
@@ -876,6 +1116,9 @@ impl MedicationStore {
             }
         }
 
+        if self.deduplicate_dose_logs() {
+            changed = true;
+        }
         if changed {
             self.dose_logs
                 .sort_by_key(|d| std::cmp::Reverse(d.taken_at_epoch));
@@ -930,7 +1173,12 @@ pub fn build_demo_medication_store(now_epoch: i64) -> MedicationStore {
 pub fn load_medications_from_path(path: &Path) -> MedicationStore {
     match phi_secret().and_then(|secret| try_load_medications_from_path_with_secret(path, &secret))
     {
-        Ok(Some(store)) => store,
+        Ok(Some(mut store)) => {
+            if store.deduplicate_dose_logs() {
+                let _ = save_medications_to_path(&store, path);
+            }
+            store
+        }
         Ok(None) => MedicationStore::default(),
         Err(e) => {
             log_error("CRYPTO", format!("Could not open medication vault: {e}"));
@@ -1133,5 +1381,93 @@ mod tests {
         assert!(store.dose_logs.iter().any(|d| d.medication_name == "Lantus SoloStar"));
         // Merging identical states a second time is idempotent (returns false)
         assert!(!store.merge_from_ha_states(states_arr));
+    }
+
+    #[test]
+    fn combined_same_time_reminders_and_single_slot_fire_work() {
+        let morning = Local
+            .with_ymd_and_hms(2026, 11, 8, 8, 0, 0)
+            .single()
+            .unwrap()
+            .timestamp();
+
+        let mut store = MedicationStore::default();
+        let m1 = store
+            .upsert_medication(
+                "med-1",
+                "Metformin",
+                "1000mg",
+                MedicationSchedule::TwiceDaily,
+                "07:30, 19:30",
+                0,
+                true,
+                "",
+            )
+            .unwrap();
+        let m2 = store
+            .upsert_medication(
+                "med-2",
+                "Atorvastatin",
+                "10mg",
+                MedicationSchedule::Daily,
+                "7:30",
+                0,
+                true,
+                "",
+            )
+            .unwrap();
+        let m3 = store
+            .upsert_medication(
+                "med-3",
+                "Gliburide",
+                "1mg",
+                MedicationSchedule::Daily,
+                "07:30",
+                0,
+                true,
+                "",
+            )
+            .unwrap();
+
+        let mut notified = HashMap::new();
+        let reminders = store.evaluate_due_reminders(morning, &mut notified);
+        // All 3 morning medications due at 07:30 are combined into a single reminder
+        assert_eq!(reminders.len(), 1);
+        assert_eq!(reminders[0].medication_id, format!("{m1},{m2},{m3}"));
+        assert!(reminders[0].title.contains("07:30"));
+        assert!(reminders[0].body.contains("Metformin (1000mg)"));
+        assert!(reminders[0].body.contains("Atorvastatin (10mg)"));
+        assert!(reminders[0].body.contains("Gliburide (1mg)"));
+
+        // Even 2 or 4 hours later, the 07:30 slot does not fire duplicate reminders
+        assert!(store.evaluate_due_reminders(morning + 2 * 3600, &mut notified).is_empty());
+        assert!(store.evaluate_due_reminders(morning + 4 * 3600, &mut notified).is_empty());
+
+        // Mark all 3 morning doses as taken
+        for id in [&m1, &m2, &m3] {
+            store
+                .log_dose(id, None, morning + 60, Some(105.0), "Logged from desktop reminder")
+                .unwrap();
+        }
+        // Accidental rapid second click from desktop reminder within 10 minutes is deduplicated
+        store
+            .log_dose(&m1, None, morning + 65, Some(105.0), "Logged from desktop reminder")
+            .unwrap();
+        assert_eq!(
+            store.dose_logs.iter().filter(|d| d.medication_id == m1).count(),
+            1
+        );
+
+        // At 20:00 (after the 19:30 evening slot), Metformin's 19:30 slot fires once on its own
+        let evening = Local
+            .with_ymd_and_hms(2026, 11, 8, 20, 0, 0)
+            .single()
+            .unwrap()
+            .timestamp();
+        let evening_reminders = store.evaluate_due_reminders(evening, &mut notified);
+        assert_eq!(evening_reminders.len(), 1);
+        assert_eq!(evening_reminders[0].medication_id, m1);
+        assert!(evening_reminders[0].title.contains("Metformin"));
+        assert!(store.evaluate_due_reminders(evening + 3600, &mut notified).is_empty());
     }
 }

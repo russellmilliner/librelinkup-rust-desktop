@@ -335,6 +335,11 @@ pub struct AppSettings {
     pub window_height: i32,
     pub show_glucose_in_tray_icon: bool,
     pub show_glucose_in_tray_tooltip: bool,
+    /// On KDE Plasma 6 (StatusNotifierItem), mark the tray icon `Passive` while blood glucose
+    /// is In Range so it hides into the expandable System Tray drawer (`▲`) when configured as
+    /// "Shown when relevant", and automatically promote it to `Active` / `NeedsAttention`
+    /// whenever glucose goes Out of Range or Stale.
+    pub tray_only_relevant_out_of_range: bool,
     pub tray_icon_theme: String,
     pub autostart_enabled: bool,
     pub start_minimized: bool,
@@ -412,6 +417,7 @@ impl Default for AppSettings {
             window_height: 680,
             show_glucose_in_tray_icon: true,
             show_glucose_in_tray_tooltip: true,
+            tray_only_relevant_out_of_range: false,
             tray_icon_theme: "auto".to_string(),
             autostart_enabled: true,
             start_minimized: true,
@@ -473,6 +479,42 @@ impl AppSettings {
         let low = self.effective_target_low(api_low);
         let high = self.effective_target_high(api_high);
         value_mg_dl < low || value_mg_dl > high
+    }
+
+    /// Returns whether the KDE Plasma System Tray StatusNotifierItem should be marked
+    /// `Active` ("relevant", visible on the panel tray bar) vs. `Passive` (hidden inside the
+    /// expandable tray drawer when the tray entry is set to "Shown when relevant").
+    ///
+    /// - When `tray_only_relevant_out_of_range` is `false` (default), the tray icon is always
+    ///   `Active` (`true`).
+    /// - When `tray_only_relevant_out_of_range` is `true`, the tray icon is `Passive` (`false`)
+    ///   while blood glucose is fresh and within target range (`InRange`), and automatically
+    ///   becomes `Active` (`true`) when glucose goes below `target_low`, above `target_high`,
+    ///   or when the reading becomes stale.
+    pub fn is_tray_relevant(&self, snapshot: &GlucoseSnapshot, reading_stale: bool) -> bool {
+        if !self.tray_only_relevant_out_of_range {
+            return true;
+        }
+        if snapshot.value_mg_dl <= 0.0 || snapshot.value_mg_dl.is_nan() {
+            return false;
+        }
+        if reading_stale {
+            return true;
+        }
+        self.should_trigger_alert(
+            snapshot.value_mg_dl,
+            snapshot.target_low_mg_dl,
+            snapshot.target_high_mg_dl,
+        )
+    }
+
+    /// Returns `true` when the reading is fresh and below the urgent-low threshold, so the
+    /// StatusNotifierItem can request `NeedsAttention` status on KDE Plasma.
+    pub fn is_tray_urgent_attention(&self, snapshot: &GlucoseSnapshot, reading_stale: bool) -> bool {
+        !reading_stale
+            && snapshot.value_mg_dl > 0.0
+            && !snapshot.value_mg_dl.is_nan()
+            && snapshot.value_mg_dl < self.effective_urgent_low()
     }
 
     pub fn format_tray_icon_badge(&self, snapshot: &GlucoseSnapshot) -> String {
@@ -1071,5 +1113,53 @@ mod alert_tests {
         assert!(snap.is_sensor_expiring_soon(exp + 60, 24));
         let exp_str = snap.format_sensor_status(exp + 60);
         assert!(exp_str.contains("Sensor expired"), "got {exp_str}");
+    }
+
+    #[test]
+    fn tray_only_relevant_out_of_range_classification() {
+        let mut s = AppSettings::default();
+        assert!(!s.tray_only_relevant_out_of_range);
+
+        let in_range = GlucoseSnapshot {
+            value_mg_dl: 112.0,
+            target_low_mg_dl: 70.0,
+            target_high_mg_dl: 180.0,
+            ..Default::default()
+        };
+        let high = GlucoseSnapshot {
+            value_mg_dl: 215.0,
+            target_low_mg_dl: 70.0,
+            target_high_mg_dl: 180.0,
+            ..Default::default()
+        };
+        let low = GlucoseSnapshot {
+            value_mg_dl: 64.0,
+            target_low_mg_dl: 70.0,
+            target_high_mg_dl: 180.0,
+            ..Default::default()
+        };
+        let urgent_low = GlucoseSnapshot {
+            value_mg_dl: 49.0,
+            target_low_mg_dl: 70.0,
+            target_high_mg_dl: 180.0,
+            ..Default::default()
+        };
+        let waiting = GlucoseSnapshot::default();
+
+        // Default (false): always relevant (Active)
+        assert!(s.is_tray_relevant(&in_range, false));
+        assert!(s.is_tray_relevant(&waiting, false));
+
+        // Enabled (true): Passive when waiting or fresh In Range; Active when High, Low, UrgentLow, or Stale
+        s.tray_only_relevant_out_of_range = true;
+        assert!(!s.is_tray_relevant(&waiting, false));
+        assert!(!s.is_tray_relevant(&in_range, false));
+        assert!(s.is_tray_relevant(&in_range, true), "stale reading is relevant");
+        assert!(s.is_tray_relevant(&high, false));
+        assert!(s.is_tray_relevant(&low, false));
+        assert!(s.is_tray_relevant(&urgent_low, false));
+        assert!(!s.is_tray_urgent_attention(&low, false));
+        assert!(s.is_tray_urgent_attention(&urgent_low, false));
+        assert!(!s.is_tray_urgent_attention(&urgent_low, true));
     }
 }

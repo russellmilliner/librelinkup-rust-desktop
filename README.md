@@ -166,7 +166,7 @@ The **Medications** tab (available in the top navigation bar on both Linux KDE P
   - Clicking **`✓ Taken`** (or **`Log Dose`**) records the exact timestamp, medication name, dosage, and your **concurrent blood glucose reading (`mg/dL` or `mmol/L`)** into your encrypted `medications.enc.json` vault.
   - Clicking **`⏭ Skipped`** records that the scheduled dose was intentionally skipped so due-dose reminders stop repeating for that slot.
 - **Interactive Desktop Due-Dose Notifications**:
-  - When **Desktop notification when dose is due** is enabled on a medication, LibreLinkUp Rust Desktop sends a desktop notification when the scheduled time arrives, complete with interactive **`✓ Taken`** and **`⏭ Skipped`** buttons directly on the notification popup.
+  - When **Desktop notification when dose is due** is enabled on a medication, LibreLinkUp Rust Desktop sends a single reminder per scheduled dose slot (never repeating every poll cycle) and consolidates all medications scheduled for the same time (`HH:MM`) into one notification popup with **`✓ Taken` / `✓ All Taken`** and **`⏭ Skipped` / `⏭ Skip All`** action buttons.
 - **12-Hour Glucose Trend Graph Markers (`💊`)**:
   - Every dose taken within the last 12 hours is plotted directly on the **Dashboard 12-Hour Glucose Trend Graph** as a purple diamond marker (`#a855f7`) with a vertical guide line and medication label, allowing you to visually inspect post-dose glucose response.
 - **Recent Dose History**:
@@ -204,9 +204,10 @@ The **Medications** tab (available in the top navigation bar on both Linux KDE P
 - **Ploopy High-Resolution Wheel Scrolling & Wide High-Contrast Scrollbars**:
   - **Zero-Deadzone Micro-Step Scrolling (`LibreLinkUpWheelScrollFilter`)**: Converts `REL_WHEEL_HI_RES` v120 micro-steps (`angleDelta * 0.50`) linearly with zero velocity deadzone and suppresses hover/tooltip re-evaluations during active wheel gestures so high-resolution scroll devices (Ploopy Trackball / Ploopy Knob) scroll smoothly at 60+ FPS.
   - **Wide High-Contrast Scrollbars (`HighContrastScrollBar`)**: Attaches a wide (`12px` track / `8px` thumb), high-contrast scrollbar (`minimumSize: 0.14`) across all scrollable views (**Medications**, **Logs**, **General Settings**, **Alerts**, **Account**, **About**, and **Sign In**), and preserves scroll position in the **Log Viewer** when new background log entries arrive while scrolled up.
-- **Tray Glucose Badge & Hover Tooltip**:
+- **Tray Glucose Badge, Hover Tooltip & KDE Out-of-Range Relevance Mode**:
   - **Show Glucose Level in Tray Icon (with Signature Blood Drop Logo)**: Dynamically renders a high-contrast color-coded glucose badge directly on the system tray icon, always preserving the translucent white blood drop silhouette and ECG pulse wave in the background behind the dark-outlined white glucose reading and trend arrow.
   - **Show Glucose Details in Tray Hover Tooltip**: Displays patient name, current reading (`mg/dL` or `mmol/L`), trend arrow, range status, and reading age when hovering the tray icon.
+  - **Only Mark Tray Icon as Relevant When Out of Range (KDE Plasma 6 `KStatusNotifierItem`)**: Optional toggle in **Settings → Display & System Tray** that sets the KDE `KStatusNotifierItem` status to `Passive` when blood glucose is **In Range** (automatically hiding the icon into the KDE Plasma system tray drawer) and switches to `Active` / `NeedsAttention` whenever readings are **Low**, **Urgent Low**, **High**, or **Signal Lost (Stale)**.
 - **12-Hour Interactive Glucose Graph**:
   - Interactive chart with target range bands and point hover inspection (displaying exact reading, status badge, and timestamp when hovering over any graph point).
 - **Floating Desktop Overlay Widget (Control Buttons, Scroll-Wheel Opacity & Native Wayland KWin Placement)**:

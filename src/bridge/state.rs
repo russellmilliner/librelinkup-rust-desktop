@@ -108,6 +108,7 @@ pub struct AppState {
     pub window_height: i32,
     pub show_glucose_in_tray_icon: bool,
     pub show_glucose_in_tray_tooltip: bool,
+    pub tray_only_relevant_out_of_range: bool,
     pub autostart_enabled: bool,
     pub start_minimized: bool,
     pub poll_interval_seconds: i32,
@@ -258,6 +259,7 @@ impl Default for AppState {
             window_height: settings.window_height.clamp(540, 2160),
             show_glucose_in_tray_icon: settings.show_glucose_in_tray_icon,
             show_glucose_in_tray_tooltip: settings.show_glucose_in_tray_tooltip,
+            tray_only_relevant_out_of_range: settings.tray_only_relevant_out_of_range,
             autostart_enabled: settings.autostart_enabled,
             start_minimized: settings.start_minimized,
             poll_interval_seconds: crate::models::clamp_poll_interval(

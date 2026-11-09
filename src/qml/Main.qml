@@ -364,7 +364,6 @@ Kirigami.ApplicationWindow {
             glucoseCanvas.requestPaint()
             root.recheckHeaderWidth()
         }
-        onOverlayVisibleChanged: overlayWidgetWindow.visible = overlayVisible
     }
 
     MedicationsController {
@@ -3024,6 +3023,16 @@ Kirigami.ApplicationWindow {
                             text: qsTr("Show blood glucose telemetry in the System Tray hover tooltip")
                             checked: settings.showGlucoseInTrayTooltip
                             onToggled: settings.updateShowGlucoseInTrayTooltip(checked)
+                            Layout.fillWidth: true
+                        }
+
+                        QQC2.Switch {
+                            id: trayOnlyRelevantSwitch
+                            objectName: "trayOnlyRelevantSwitch"
+                            text: qsTr("Only mark tray icon as relevant when blood glucose is out of range")
+                            checked: settings.trayOnlyRelevantOutOfRange
+                            Accessible.name: qsTr("Only mark System Tray icon as relevant when blood glucose is out of range")
+                            onToggled: telemetry.updateTrayOnlyRelevantOutOfRange(checked)
                             Layout.fillWidth: true
                         }
 

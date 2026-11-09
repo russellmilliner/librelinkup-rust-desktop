@@ -2,6 +2,14 @@
 
 All notable changes and bumped dependencies for `russellmilliner/librelinkup-rust-desktop` are documented in this file.
 
+## [v0.5.10](https://github.com/russellmilliner/librelinkup-rust-desktop/releases/tag/v0.5.10) — 2026-11-08
+
+### Highlights
+- Fix Wayland desktop overlay startup monitor/position restoration and compositor hover/drag lag, consolidate same-time medication due reminders into a single notification per slot, and add KDE Plasma 6 system tray out-of-range relevance mode (KStatusNotifierItem Passive when In Range)
+
+### Commits
+- feat(wayland,tray,meds): fix Wayland overlay startup placement, consolidate same-time med reminders & add KDE tray relevance mode (e2d43c5)
+
 ## [v0.5.9](https://github.com/russellmilliner/librelinkup-rust-desktop/releases/tag/v0.5.9) — 2026-11-07
 
 ### Highlights

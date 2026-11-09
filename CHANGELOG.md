@@ -2,6 +2,20 @@
 
 All notable changes and bumped dependencies for `russellmilliner/librelinkup-rust-desktop` are documented in this file.
 
+## [v0.5.10-deps](https://github.com/russellmilliner/librelinkup-rust-desktop/releases/tag/v0.5.10-deps) — 2026-11-09
+
+### 📦 Bumped Dependencies (7 packages)
+
+| Package | Previous | Updated | Scope |
+| :--- | :--- | :--- | :--- |
+| `notify-rust` | `4.18.2` | **`4.19.0`** | Direct (`Cargo.toml`) |
+| `arc-swap` | `1.9.3` | **`1.9.4`** | Lockfile (`windows/Cargo.lock`) |
+| `itoa` | `1.0.18` | **`1.0.19`** | Lockfile (`windows/Cargo.lock`) |
+| `syn` | `3.0.9` | **`3.0.10`** | Lockfile (`windows/Cargo.lock`) |
+| `uuid` | `1.29.1` | **`1.29.2`** | Lockfile (`windows/Cargo.lock`) |
+| `zbus` | `5.19.0` | **`6.2.1`** | Lockfile (`windows/Cargo.lock`) |
+| `zbus_macros` | `5.19.0` | **`6.2.1`** | Lockfile (`windows/Cargo.lock`) |
+
 ## [v0.5.10](https://github.com/russellmilliner/librelinkup-rust-desktop/releases/tag/v0.5.10) — 2026-11-08
 
 ### Highlights

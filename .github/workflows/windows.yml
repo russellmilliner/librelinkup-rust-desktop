@@ -51,7 +51,7 @@ jobs:
           sudo apt-get install -y --no-install-recommends \
             build-essential pkg-config \
             qt6-base-dev qt6-declarative-dev qt6-declarative-dev-tools qt6-svg-dev \
-            libkf6colorscheme-dev libkf6config-dev libkf6iconthemes-dev \
+            libkf6colorscheme-dev libkf6config-dev libkf6iconthemes-dev libkf6statusnotifieritem-dev \
             qml6-module-org-kde-kirigami qml6-module-org-kde-desktop qml6-module-org-kde-breeze \
             qml6-module-qtquick qml6-module-qtquick-controls qml6-module-qtquick-templates \
             qml6-module-qtquick-layouts qml6-module-qtquick-window \

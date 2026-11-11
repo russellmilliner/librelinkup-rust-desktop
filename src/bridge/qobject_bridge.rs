@@ -196,6 +196,8 @@ pub mod qobject {
         fn librelinkup_quit_app();
         fn librelinkup_run_app(start_minimized: bool) -> i32;
         fn librelinkup_run_ui_overflow_tests() -> QString;
+        fn librelinkup_run_desktop_widget_tests() -> QString;
+        fn librelinkup_run_task_manager_icon_tests() -> QString;
     }
 
     // ---------------------------------------------------------------------------------
@@ -298,7 +300,10 @@ pub mod qobject {
         fn update_stats_window(self: Pin<&mut TelemetryController>, window_code: QString);
 
         #[qinvokable]
-        fn handle_notification_action(self: Pin<&mut TelemetryController>, action_key: QString) -> bool;
+        fn handle_notification_action(
+            self: Pin<&mut TelemetryController>,
+            action_key: QString,
+        ) -> bool;
 
         #[qinvokable]
         fn snooze_alerts(self: Pin<&mut TelemetryController>, minutes: i32);
@@ -323,7 +328,10 @@ pub mod qobject {
         fn update_show_glucose_in_tray_tooltip(self: Pin<&mut TelemetryController>, enabled: bool);
 
         #[qinvokable]
-        fn update_tray_only_relevant_out_of_range(self: Pin<&mut TelemetryController>, enabled: bool);
+        fn update_tray_only_relevant_out_of_range(
+            self: Pin<&mut TelemetryController>,
+            enabled: bool,
+        );
 
         #[qinvokable]
         fn update_overlay_visible(self: Pin<&mut TelemetryController>, visible: bool);
@@ -526,7 +534,10 @@ pub mod qobject {
         fn update_show_glucose_in_tray_tooltip(self: Pin<&mut SettingsController>, enabled: bool);
 
         #[qinvokable]
-        fn update_tray_only_relevant_out_of_range(self: Pin<&mut SettingsController>, enabled: bool);
+        fn update_tray_only_relevant_out_of_range(
+            self: Pin<&mut SettingsController>,
+            enabled: bool,
+        );
 
         #[qinvokable]
         fn update_autostart_enabled(self: Pin<&mut SettingsController>, enabled: bool);
@@ -621,7 +632,8 @@ pub mod qobject {
         ) -> bool;
 
         #[qinvokable]
-        fn remove_medication(self: Pin<&mut MedicationsController>, medication_id: QString) -> bool;
+        fn remove_medication(self: Pin<&mut MedicationsController>, medication_id: QString)
+            -> bool;
 
         #[qinvokable]
         fn log_medication_dose(

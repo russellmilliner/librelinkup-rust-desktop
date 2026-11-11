@@ -11,6 +11,7 @@ namespace librelinkup {
 
 class NotificationActionWatcher : public QObject {
     Q_OBJECT
+    Q_CLASSINFO("D-Bus Interface", "io.github.russellmilliner.LibreLinkUpDesktop.KWinBridge")
 public:
     explicit NotificationActionWatcher(QObject* parent = nullptr) : QObject(parent) {}
 

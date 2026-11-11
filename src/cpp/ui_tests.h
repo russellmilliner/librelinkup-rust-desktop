@@ -9,6 +9,8 @@
 #include <QFont>
 #include <QIcon>
 #include <QImage>
+#include <QJSEngine>
+#include <QJSValue>
 #include <QKeyEvent>
 #include <QLinearGradient>
 #include <QList>
@@ -553,6 +555,65 @@ inline QString librelinkup_run_ui_overflow_tests() {
                         .arg(ovWin->y() - scGeom.y())
                 );
             }
+
+            // Verify KWin D-Bus geometry callback persists screen + relative coordinates to
+            // SettingsController (QMetaObject::invokeMethod int32 signature) and survives hide -> restore.
+            librelinkup::handle_kwin_overlay_geometry(
+                sc->name(),
+                scGeom.x() + 212,
+                scGeom.y() + 118,
+                276,
+                88
+            );
+            sync_all();
+            if (settingsCtrl->property("overlayX").toInt() != 212 ||
+                settingsCtrl->property("overlayY").toInt() != 118 ||
+                settingsCtrl->property("overlayScreenName").toString() != sc->name()) {
+                violations.append(
+                    QStringLiteral("handle_kwin_overlay_geometry failed to persist placement (%1, 212, 118); got (%2, %3, %4)")
+                        .arg(sc->name())
+                        .arg(settingsCtrl->property("overlayScreenName").toString())
+                        .arg(settingsCtrl->property("overlayX").toInt())
+                        .arg(settingsCtrl->property("overlayY").toInt())
+                );
+            }
+
+            // Hide and restore OverlayWidget via SettingsController::updateOverlayVisible(false -> true)
+            // and verify it restores to the exact saved position (212, 118) on the saved screen.
+            QMetaObject::invokeMethod(
+                settingsCtrl,
+                "updateOverlayVisible",
+                Qt::DirectConnection,
+                Q_ARG(bool, false)
+            );
+            sync_all();
+            if (ovWin->isVisible()) {
+                violations.append(QStringLiteral("OverlayWidget remained visible after updateOverlayVisible(false)"));
+            }
+            QMetaObject::invokeMethod(
+                settingsCtrl,
+                "updateOverlayVisible",
+                Qt::DirectConnection,
+                Q_ARG(bool, true)
+            );
+            sync_all();
+            if (!ovWin->isVisible()) {
+                violations.append(QStringLiteral("OverlayWidget failed to become visible after updateOverlayVisible(true)"));
+            }
+            if (ovWin->screen() != sc ||
+                std::abs((ovWin->x() - scGeom.x()) - 212) > 2 ||
+                std::abs((ovWin->y() - scGeom.y()) - 118) > 2) {
+                violations.append(
+                    QStringLiteral("OverlayWidget hide->restore lost saved screen/position (%1, 212, 118); got (%2, %3, %4)")
+                        .arg(sc->name())
+                        .arg(ovWin->screen() ? ovWin->screen()->name() : QStringLiteral("<null>"))
+                        .arg(ovWin->x() - scGeom.x())
+                        .arg(ovWin->y() - scGeom.y())
+                );
+            }
+        }
+        if (librelinkup::kwin_dbus_interface_name() != QStringLiteral("io.github.russellmilliner.LibreLinkUpDesktop.KWinBridge")) {
+            violations.append(QStringLiteral("Unexpected KWin D-Bus interface name"));
         }
 
         // Verify overlay window uses Qt::Tool + Qt::BypassWindowManagerHint and has no transientParent
@@ -1824,4 +1885,492 @@ inline QString librelinkup_run_ui_overflow_tests() {
         return QStringLiteral("OK");
     }
     return violations.join(QStringLiteral("\n"));
+}
+
+namespace librelinkup_uitest {
+
+inline QString kwin_mock_preamble_js() {
+    return QStringLiteral(
+        "var __dbusCalls = [];\n"
+        "var __shortcuts = {};\n"
+        "var __desiredOverlaySync = '2207,131,276,88,1';\n"
+        "var __desiredMainSync = '5638,230,1175,865';\n"
+        "function makeSignal() {\n"
+        "  var cbs = [];\n"
+        "  return {\n"
+        "    connect: function(fn) { cbs.push(fn); },\n"
+        "    emit: function() {\n"
+        "      var args = Array.prototype.slice.call(arguments);\n"
+        "      for (var i = 0; i < cbs.length; ++i) { cbs[i].apply(null, args); }\n"
+        "    }\n"
+        "  };\n"
+        "}\n"
+        "function makeWindow(opts) {\n"
+        "  var w = {\n"
+        "    internalId: opts.id || '{win-1}',\n"
+        "    caption: opts.caption || '',\n"
+        "    resourceClass: opts.resourceClass || 'io.github.russellmilliner.LibreLinkUpDesktop',\n"
+        "    desktopFileName: opts.desktopFileName || 'io.github.russellmilliner.LibreLinkUpDesktop',\n"
+        "    popupWindow: !!opts.popupWindow,\n"
+        "    tooltip: !!opts.tooltip,\n"
+        "    transient: !!opts.transient,\n"
+        "    noBorder: false,\n"
+        "    keepAbove: false,\n"
+        "    skipTaskbar: false,\n"
+        "    skipPager: false,\n"
+        "    skipSwitcher: false,\n"
+        "    onAllDesktops: false,\n"
+        "    minimized: !!opts.minimized,\n"
+        "    move: false,\n"
+        "    resize: false,\n"
+        "    output: { name: opts.outputName || 'DP-2' },\n"
+        "    frameGeometry: {\n"
+        "      x: opts.x !== undefined ? opts.x : 1142,\n"
+        "      y: opts.y !== undefined ? opts.y : 676,\n"
+        "      width: opts.width !== undefined ? opts.width : 276,\n"
+        "      height: opts.height !== undefined ? opts.height : 88\n"
+        "    },\n"
+        "    captionChanged: makeSignal(),\n"
+        "    closed: makeSignal(),\n"
+        "    skipTaskbarChanged: makeSignal(),\n"
+        "    skipPagerChanged: makeSignal(),\n"
+        "    skipSwitcherChanged: makeSignal(),\n"
+        "    keepAboveChanged: makeSignal(),\n"
+        "    noBorderChanged: makeSignal(),\n"
+        "    minimizedChanged: makeSignal(),\n"
+        "    interactiveMoveResizeFinished: makeSignal(),\n"
+        "    moveResizedChanged: makeSignal(),\n"
+        "    frameGeometryChanged: makeSignal()\n"
+        "  };\n"
+        "  return w;\n"
+        "}\n"
+        "var workspace = {\n"
+        "  stackingOrder: [],\n"
+        "  activeWindow: null,\n"
+        "  windowList: function() { return this.stackingOrder; },\n"
+        "  windowAdded: makeSignal()\n"
+        "};\n"
+        "function registerShortcut(name, title, seq, cb) {\n"
+        "  __shortcuts[name] = cb;\n"
+        "}\n"
+        "function callDBus(service, path, iface, method) {\n"
+        "  var rest = Array.prototype.slice.call(arguments, 4);\n"
+        "  var cb = (rest.length > 0 && typeof rest[rest.length - 1] === 'function') ? rest.pop() : null;\n"
+        "  __dbusCalls.push({ service: service, path: path, iface: iface, method: method, args: rest });\n"
+        "  if (method === 'getDesiredOverlaySync' && cb) { cb(__desiredOverlaySync); }\n"
+        "  if (method === 'getDesiredMainSync' && cb) { cb(__desiredMainSync); }\n"
+        "}\n"
+    );
+}
+
+} // namespace librelinkup_uitest
+
+inline QString librelinkup_run_desktop_widget_tests() {
+    qputenv("QT_QPA_PLATFORM", "offscreen");
+    QLoggingCategory::setFilterRules(QStringLiteral("union.*=false\nqt.core.qobject.connect=false"));
+    if (!std::getenv("QT_QUICK_CONTROLS_STYLE")) {
+        qputenv("QT_QUICK_CONTROLS_STYLE", "org.kde.breeze");
+    }
+
+    static int argc = 1;
+    static char arg0[] = "librelinkup-widget-test";
+    static char* argv[] = {arg0, nullptr};
+
+    QApplication* app = qobject_cast<QApplication*>(QCoreApplication::instance());
+    std::unique_ptr<QApplication> ownedApp;
+    if (!app) {
+        ownedApp.reset(new QApplication(argc, argv));
+        app = ownedApp.get();
+    }
+    librelinkup::install_wheel_scroll_filter();
+
+    QQmlApplicationEngine engine;
+    QStringList qmlErrors;
+    QObject::connect(&engine, &QQmlApplicationEngine::warnings, &engine,
+        [&qmlErrors](const QList<QQmlError>& warnings) {
+            for (const QQmlError& e : warnings) {
+                qmlErrors.append(e.toString());
+            }
+        });
+    engine.load(QUrl(QStringLiteral("qrc:/qt/qml/io/github/librelinkup/src/qml/Main.qml")));
+    if (engine.rootObjects().isEmpty()) {
+        return QStringLiteral("FAIL: Failed to load Main.qml\n") + qmlErrors.join(QLatin1Char('\n'));
+    }
+
+    QQuickWindow* mainWin = qobject_cast<QQuickWindow*>(engine.rootObjects().first());
+    if (!mainWin) {
+        return QStringLiteral("FAIL: Root object is not a QQuickWindow");
+    }
+    QObject* ctrl = mainWin->findChild<QObject*>(QStringLiteral("librelinkupAppController"));
+    QObject* settingsCtrl = mainWin->findChild<QObject*>(QStringLiteral("librelinkupSettingsController"));
+    QObject* medsCtrl = mainWin->findChild<QObject*>(QStringLiteral("librelinkupMedicationsController"));
+    if (!ctrl || !settingsCtrl || !medsCtrl) {
+        return QStringLiteral("FAIL: Missing core controllers on MainWindow");
+    }
+
+    auto sync_all = [ctrl, settingsCtrl, medsCtrl]() {
+        QMetaObject::invokeMethod(ctrl, "tick", Qt::DirectConnection);
+        QMetaObject::invokeMethod(settingsCtrl, "sync", Qt::DirectConnection);
+        QMetaObject::invokeMethod(medsCtrl, "sync", Qt::DirectConnection);
+        librelinkup_uitest::pump_events(30);
+    };
+
+    QStringList violations;
+    QMetaObject::invokeMethod(ctrl, "loadDemoSampleData", Qt::DirectConnection);
+    sync_all();
+
+    // 1. Show OverlayWidget and verify it instantiates, displays glucose data, and has zero layout overflows
+    QMetaObject::invokeMethod(settingsCtrl, "updateOverlayVisible", Qt::DirectConnection, Q_ARG(bool, true));
+    sync_all();
+
+    QQuickWindow* ovWin = qobject_cast<QQuickWindow*>(librelinkup::find_overlay_window());
+    if (!ovWin) {
+        return QStringLiteral("FAIL: librelinkupOverlayWindow was not created");
+    }
+    if (!ovWin->isVisible()) {
+        violations.append(QStringLiteral("OverlayWidget failed to become visible when overlayVisible=true"));
+    }
+
+    for (const QSize& sz : {QSize(276, 88), QSize(240, 80)}) {
+        ovWin->resize(sz);
+        librelinkup_uitest::pump_events(30);
+        librelinkup_uitest::inspect_item_tree(
+            ovWin->contentItem(),
+            ovWin,
+            QStringLiteral("WidgetTest %1x%2").arg(sz.width()).arg(sz.height()),
+            violations
+        );
+    }
+    ovWin->resize(QSize(276, 88));
+    librelinkup_uitest::pump_events(20);
+
+    // 2. Verify allDesktops toggle updates title ([SingleDesktop] vs standard) for KWin desktop pinning
+    QMetaObject::invokeMethod(settingsCtrl, "updateOverlayOnAllDesktops", Qt::DirectConnection, Q_ARG(bool, false));
+    sync_all();
+    if (!ovWin->title().contains(QStringLiteral("[SingleDesktop]"))) {
+        violations.append(QStringLiteral("OverlayWidget title must include [SingleDesktop] when onAllDesktops=false"));
+    }
+    QMetaObject::invokeMethod(settingsCtrl, "updateOverlayOnAllDesktops", Qt::DirectConnection, Q_ARG(bool, true));
+    sync_all();
+    if (ovWin->title().contains(QStringLiteral("[SingleDesktop]"))) {
+        violations.append(QStringLiteral("OverlayWidget title must not include [SingleDesktop] when onAllDesktops=true"));
+    }
+
+    // 3. Verify NotificationActionWatcher D-Bus bridge (`onKWinOverlayGeometry` + `getDesiredOverlaySync`)
+    // and hide -> restore placement preservation across BOTH SettingsController and TelemetryController!
+    librelinkup::NotificationActionWatcher watcher;
+    if (QScreen* sc = ovWin->screen()) {
+        const QRect scGeom = sc->geometry();
+        const int targetGlobalX = scGeom.x() + 245;
+        const int targetGlobalY = scGeom.y() + 152;
+        watcher.onKWinOverlayGeometry(sc->name(), targetGlobalX, targetGlobalY, 276, 88);
+        sync_all();
+
+        const QString expectedSync = QStringLiteral("%1,%2,276,88,1").arg(targetGlobalX).arg(targetGlobalY);
+        if (watcher.getDesiredOverlaySync() != expectedSync) {
+            violations.append(
+                QStringLiteral("getDesiredOverlaySync() mismatch: expected '%1', got '%2'")
+                    .arg(expectedSync, watcher.getDesiredOverlaySync())
+            );
+        }
+        if (settingsCtrl->property("overlayScreenName").toString() != sc->name() ||
+            settingsCtrl->property("overlayX").toInt() != 245 ||
+            settingsCtrl->property("overlayY").toInt() != 152) {
+            violations.append(QStringLiteral("NotificationActionWatcher::onKWinOverlayGeometry failed to persist placement"));
+        }
+
+        // 3a. Hide -> Restore via SettingsController (Overlay 'X' button & MainWindow button path)
+        QMetaObject::invokeMethod(settingsCtrl, "updateOverlayVisible", Qt::DirectConnection, Q_ARG(bool, false));
+        sync_all();
+        if (ovWin->isVisible()) {
+            violations.append(QStringLiteral("OverlayWidget stayed visible after SettingsController::updateOverlayVisible(false)"));
+        }
+        QMetaObject::invokeMethod(settingsCtrl, "updateOverlayVisible", Qt::DirectConnection, Q_ARG(bool, true));
+        sync_all();
+        if (!ovWin->isVisible() ||
+            ovWin->screen() != sc ||
+            std::abs((ovWin->x() - scGeom.x()) - 245) > 2 ||
+            std::abs((ovWin->y() - scGeom.y()) - 152) > 2) {
+            violations.append(
+                QStringLiteral("SettingsController hide->restore failed to restore (%1, 245, 152); got (%2, %3, %4)")
+                    .arg(sc->name())
+                    .arg(ovWin->screen() ? ovWin->screen()->name() : QStringLiteral("<null>"))
+                    .arg(ovWin->x() - scGeom.x())
+                    .arg(ovWin->y() - scGeom.y())
+            );
+        }
+
+        // 3b. Move again, then Hide -> Restore via TelemetryController (System Tray menu action path)
+        watcher.onKWinOverlayGeometry(sc->name(), scGeom.x() + 318, scGeom.y() + 194, 276, 88);
+        sync_all();
+        QMetaObject::invokeMethod(ctrl, "updateOverlayVisible", Qt::DirectConnection, Q_ARG(bool, false));
+        sync_all();
+        if (ovWin->isVisible()) {
+            violations.append(QStringLiteral("OverlayWidget stayed visible after TelemetryController::updateOverlayVisible(false)"));
+        }
+        QMetaObject::invokeMethod(ctrl, "updateOverlayVisible", Qt::DirectConnection, Q_ARG(bool, true));
+        sync_all();
+        if (!ovWin->isVisible() ||
+            ovWin->screen() != sc ||
+            std::abs((ovWin->x() - scGeom.x()) - 318) > 2 ||
+            std::abs((ovWin->y() - scGeom.y()) - 194) > 2 ||
+            watcher.getDesiredOverlaySync() != QStringLiteral("%1,%2,276,88,1").arg(scGeom.x() + 318).arg(scGeom.y() + 194)) {
+            violations.append(
+                QStringLiteral("TelemetryController (tray) hide->restore failed to restore (%1, 318, 194); got (%2, %3, %4)")
+                    .arg(sc->name())
+                    .arg(ovWin->screen() ? ovWin->screen()->name() : QStringLiteral("<null>"))
+                    .arg(ovWin->x() - scGeom.x())
+                    .arg(ovWin->y() - scGeom.y())
+            );
+        }
+    }
+
+    // 4. Evaluate production KWin resident JS in QJSEngine to verify cross-monitor drag -> hide -> restore
+    {
+        QJSEngine js;
+        const QString script = librelinkup_uitest::kwin_mock_preamble_js()
+            + librelinkup::build_kwin_resident_script_js(
+                QStringLiteral("io.github.russellmilliner.LibreLinkUpDesktop"),
+                2207, 131, 276, 88,
+                librelinkup::kwin_dbus_interface_name()
+            )
+            + QStringLiteral(
+                "\n(function() {\n"
+                "  var errs = [];\n"
+                "  // Create initial Wayland overlay surface (empty caption on windowAdded, then captionChanged)\n"
+                "  var w1 = makeWindow({ id: '{ov-1}', caption: '', x: 1142, y: 676, width: 276, height: 88, outputName: 'DP-2' });\n"
+                "  workspace.stackingOrder = [w1];\n"
+                "  workspace.windowAdded.emit(w1);\n"
+                "  if (w1.frameGeometry.x !== 2207 || w1.frameGeometry.y !== 131) {\n"
+                "    errs.push('Initial windowAdded failed to pre-snap overlay to (2207,131): got ' + JSON.stringify(w1.frameGeometry));\n"
+                "  }\n"
+                "  w1.caption = 'LibreLinkUp Rust Desktop Overlay — LibreLinkUp Rust Desktop';\n"
+                "  w1.captionChanged.emit();\n"
+                "  // Simulate dragging overlay from DP-2 to DP-3 (5600, 180)\n"
+                "  w1.move = true;\n"
+                "  w1.moveResizedChanged.emit();\n"
+                "  w1.output = { name: 'DP-3' };\n"
+                "  w1.frameGeometry = { x: 5600, y: 180, width: 276, height: 88 };\n"
+                "  w1.move = false;\n"
+                "  w1.interactiveMoveResizeFinished.emit();\n"
+                "  var dragCalls = __dbusCalls.filter(function(c) { return c.method === 'onKWinOverlayGeometry'; });\n"
+                "  if (dragCalls.length === 0) {\n"
+                "    errs.push('Expected onKWinOverlayGeometry D-Bus callback after drag finish');\n"
+                "  } else {\n"
+                "    var last = dragCalls[dragCalls.length - 1];\n"
+                "    if (last.service !== 'io.github.russellmilliner.LibreLinkUpDesktop' ||\n"
+                "        last.iface !== 'io.github.russellmilliner.LibreLinkUpDesktop.KWinBridge' ||\n"
+                "        last.args[0] !== 'DP-3' || last.args[1] !== 5600 || last.args[2] !== 180) {\n"
+                "      errs.push('Unexpected onKWinOverlayGeometry payload: ' + JSON.stringify(last));\n"
+                "    }\n"
+                "  }\n"
+                "  // Hide overlay (Wayland surface destroyed -> closed signal)\n"
+                "  workspace.stackingOrder = [];\n"
+                "  w1.closed.emit();\n"
+                "  // Restore overlay: SyncOverlay runs + new Wayland window w2 maps with empty caption at default KWin coords\n"
+                "  __desiredOverlaySync = '5600,180,276,88,1';\n"
+                "  __shortcuts['LibreLinkUp SyncOverlay']();\n"
+                "  var w2 = makeWindow({ id: '{ov-2}', caption: '', x: 2560, y: 0, width: 276, height: 88, outputName: 'HDMI-A-1' });\n"
+                "  workspace.stackingOrder = [w2];\n"
+                "  workspace.windowAdded.emit(w2);\n"
+                "  w2.caption = 'LibreLinkUp Rust Desktop Overlay — LibreLinkUp Rust Desktop';\n"
+                "  w2.captionChanged.emit();\n"
+                "  if (w2.frameGeometry.x !== 5600 || w2.frameGeometry.y !== 180) {\n"
+                "    errs.push('Restored Wayland overlay failed to snap back to DP-3 (5600,180): got ' + JSON.stringify(w2.frameGeometry));\n"
+                "  }\n"
+                "  return errs.join('\\n');\n"
+                "})()\n"
+            );
+        const QJSValue res = js.evaluate(script);
+        if (res.isError()) {
+            violations.append(QStringLiteral("KWin JS evaluation error: %1").arg(res.toString()));
+        } else if (!res.toString().isEmpty()) {
+            violations.append(res.toString());
+        }
+    }
+
+    mainWin->hide();
+    return violations.isEmpty() ? QStringLiteral("OK") : violations.join(QStringLiteral("\n"));
+}
+
+inline QString librelinkup_run_task_manager_icon_tests() {
+    qputenv("QT_QPA_PLATFORM", "offscreen");
+    QLoggingCategory::setFilterRules(QStringLiteral("union.*=false\nqt.core.qobject.connect=false"));
+    if (!std::getenv("QT_QUICK_CONTROLS_STYLE")) {
+        qputenv("QT_QUICK_CONTROLS_STYLE", "org.kde.breeze");
+    }
+
+    static int argc = 1;
+    static char arg0[] = "librelinkup-taskbar-test";
+    static char* argv[] = {arg0, nullptr};
+
+    QApplication* app = qobject_cast<QApplication*>(QCoreApplication::instance());
+    std::unique_ptr<QApplication> ownedApp;
+    if (!app) {
+        ownedApp.reset(new QApplication(argc, argv));
+        app = ownedApp.get();
+    }
+    librelinkup::install_wheel_scroll_filter();
+
+    QQmlApplicationEngine engine;
+    engine.load(QUrl(QStringLiteral("qrc:/qt/qml/io/github/librelinkup/src/qml/Main.qml")));
+    if (engine.rootObjects().isEmpty()) {
+        return QStringLiteral("FAIL: Failed to load Main.qml");
+    }
+
+    QQuickWindow* mainWin = qobject_cast<QQuickWindow*>(engine.rootObjects().first());
+    if (!mainWin) {
+        return QStringLiteral("FAIL: Root object is not a QQuickWindow");
+    }
+    QObject* ctrl = mainWin->findChild<QObject*>(QStringLiteral("librelinkupAppController"));
+    QObject* settingsCtrl = mainWin->findChild<QObject*>(QStringLiteral("librelinkupSettingsController"));
+    QObject* medsCtrl = mainWin->findChild<QObject*>(QStringLiteral("librelinkupMedicationsController"));
+    if (!ctrl || !settingsCtrl || !medsCtrl) {
+        return QStringLiteral("FAIL: Missing controllers");
+    }
+
+    auto sync_all = [ctrl, settingsCtrl, medsCtrl]() {
+        QMetaObject::invokeMethod(ctrl, "tick", Qt::DirectConnection);
+        QMetaObject::invokeMethod(settingsCtrl, "sync", Qt::DirectConnection);
+        QMetaObject::invokeMethod(medsCtrl, "sync", Qt::DirectConnection);
+        librelinkup_uitest::pump_events(30);
+    };
+
+    QStringList violations;
+    QMetaObject::invokeMethod(ctrl, "loadDemoSampleData", Qt::DirectConnection);
+    QMetaObject::invokeMethod(settingsCtrl, "updateOverlayVisible", Qt::DirectConnection, Q_ARG(bool, true));
+    sync_all();
+
+    QQuickWindow* ovWin = qobject_cast<QQuickWindow*>(librelinkup::find_overlay_window());
+    if (!ovWin) {
+        return QStringLiteral("FAIL: librelinkupOverlayWindow missing");
+    }
+
+    auto verify_overlay_no_taskbar_flags = [&violations](QQuickWindow* w, const QString& phase) {
+        const Qt::WindowFlags fl = w->flags();
+        if ((fl & Qt::Tool) != Qt::Tool ||
+            (fl & Qt::FramelessWindowHint) != Qt::FramelessWindowHint ||
+            (fl & Qt::WindowStaysOnTopHint) != Qt::WindowStaysOnTopHint ||
+            (fl & Qt::BypassWindowManagerHint) != Qt::BypassWindowManagerHint) {
+            violations.append(
+                QStringLiteral("[%1] OverlayWidget missing taskbar-exclusion window flags (got 0x%2)")
+                    .arg(phase)
+                    .arg(static_cast<qulonglong>(fl), 0, 16)
+            );
+        }
+        if (w->transientParent() != nullptr) {
+            violations.append(QStringLiteral("[%1] OverlayWidget transientParent must be nullptr").arg(phase));
+        }
+    };
+
+    // 1. Verify Qt window flags & transientParent guard across visible -> hidden -> restored transitions
+    verify_overlay_no_taskbar_flags(ovWin, QStringLiteral("initial-visible"));
+    ovWin->setTransientParent(mainWin);
+    librelinkup_uitest::pump_events(15);
+    if (ovWin->transientParent() != nullptr) {
+        violations.append(QStringLiteral("OverlayWidget transientParentChanged hook failed to clear transientParent"));
+    }
+
+    QMetaObject::invokeMethod(settingsCtrl, "updateOverlayVisible", Qt::DirectConnection, Q_ARG(bool, false));
+    sync_all();
+    verify_overlay_no_taskbar_flags(ovWin, QStringLiteral("hidden"));
+
+    QMetaObject::invokeMethod(settingsCtrl, "updateOverlayVisible", Qt::DirectConnection, Q_ARG(bool, true));
+    sync_all();
+    verify_overlay_no_taskbar_flags(ovWin, QStringLiteral("restored-visible"));
+
+    // 2. Verify external tooltip child window flags prevent any taskbar entry on button hover
+    if (QQuickWindow* tipWin = ovWin->findChild<QQuickWindow*>(QStringLiteral("librelinkupOverlayTooltipWindow"))) {
+        const Qt::WindowFlags tfl = tipWin->flags();
+        if ((tfl & Qt::ToolTip) != Qt::ToolTip ||
+            (tfl & Qt::WindowDoesNotAcceptFocus) != Qt::WindowDoesNotAcceptFocus ||
+            (tfl & Qt::BypassWindowManagerHint) != Qt::BypassWindowManagerHint ||
+            tipWin->transientParent() != ovWin) {
+            violations.append(QStringLiteral("librelinkupOverlayTooltipWindow missing non-activating popup/taskbar-exclusion flags"));
+        }
+    } else {
+        violations.append(QStringLiteral("Missing librelinkupOverlayTooltipWindow"));
+    }
+
+    // 3. Verify MainWindow minimize-to-tray hides window & clears WindowMinimized state so no minimized taskbar icon lingers
+    mainWin->show();
+    librelinkup_uitest::pump_events(30);
+    librelinkup::hide_main_window_to_tray();
+    librelinkup_uitest::pump_events(30);
+    if (mainWin->isVisible() || (mainWin->windowStates() & Qt::WindowMinimized)) {
+        violations.append(QStringLiteral("hide_main_window_to_tray must hide MainWindow and clear Qt::WindowMinimized"));
+    }
+
+    // 4. Evaluate production KWin resident JS in QJSEngine to verify strict KDE Plasma Task Manager exclusion:
+    //    - Wayland empty-caption windowAdded race (0-frame skipTaskbar=true before set_title arrives)
+    //    - Tamper resistance on skipTaskbarChanged / skipPagerChanged / skipSwitcherChanged / minimizedChanged
+    //    - Tooltip/popup safety during empty-caption windowAdded
+    //    - MainWindow skipTaskbar=false when shown vs skipTaskbar=true when minimized
+    {
+        QJSEngine js;
+        const QString script = librelinkup_uitest::kwin_mock_preamble_js()
+            + librelinkup::build_kwin_resident_script_js(
+                QStringLiteral("io.github.russellmilliner.LibreLinkUpDesktop"),
+                2207, 131, 276, 88,
+                librelinkup::kwin_dbus_interface_name()
+            )
+            + QStringLiteral(
+                "\n(function() {\n"
+                "  var errs = [];\n"
+                "  // A. Empty-caption Wayland surface creation (the exact hide->restore race on kwin_wayland)\n"
+                "  var ov = makeWindow({ id: '{ov-race}', caption: '', x: 1142, y: 676, width: 276, height: 88 });\n"
+                "  workspace.stackingOrder = [ov];\n"
+                "  workspace.windowAdded.emit(ov);\n"
+                "  if (!ov.skipTaskbar || !ov.skipPager || !ov.skipSwitcher || !ov.keepAbove || !ov.noBorder) {\n"
+                "    errs.push('Empty-caption overlay failed immediate skipTaskbar/skipPager/skipSwitcher enforcement');\n"
+                "  }\n"
+                "  // B. Caption arrives ~1ms later -> verify onAllDesktops + tamper-proof signal hooks\n"
+                "  ov.caption = 'LibreLinkUp Rust Desktop Overlay — LibreLinkUp Rust Desktop';\n"
+                "  ov.captionChanged.emit();\n"
+                "  if (!ov.skipTaskbar || !ov.onAllDesktops) {\n"
+                "    errs.push('Captioned overlay missing skipTaskbar or onAllDesktops');\n"
+                "  }\n"
+                "  ov.skipTaskbar = false; ov.skipTaskbarChanged.emit();\n"
+                "  ov.skipPager = false; ov.skipPagerChanged.emit();\n"
+                "  ov.skipSwitcher = false; ov.skipSwitcherChanged.emit();\n"
+                "  ov.minimized = true; ov.minimizedChanged.emit();\n"
+                "  if (!ov.skipTaskbar || !ov.skipPager || !ov.skipSwitcher || ov.minimized) {\n"
+                "    errs.push('Overlay tamper hooks failed to re-enforce skipTaskbar/skipPager/skipSwitcher/unminimized');\n"
+                "  }\n"
+                "  // C. SingleDesktop mode keeps skipTaskbar=true while toggling onAllDesktops=false\n"
+                "  ov.caption = 'LibreLinkUp Rust Desktop Overlay [SingleDesktop]';\n"
+                "  ov.captionChanged.emit();\n"
+                "  if (!ov.skipTaskbar || ov.onAllDesktops !== false) {\n"
+                "    errs.push('SingleDesktop overlay lost skipTaskbar or failed to set onAllDesktops=false');\n"
+                "  }\n"
+                "  // D. Tooltip/popup window with empty caption must NOT be treated as the 276x88 overlay\n"
+                "  var tip = makeWindow({ id: '{tip-1}', caption: '', popupWindow: true, transient: true, x: 2250, y: 225, width: 240, height: 80 });\n"
+                "  workspace.windowAdded.emit(tip);\n"
+                "  if (tip.frameGeometry.x !== 2250 || tip.frameGeometry.y !== 225) {\n"
+                "    errs.push('Tooltip/popup window geometry was erroneously overwritten by overlay rule');\n"
+                "  }\n"
+                "  // E. MainWindow shows in Task Manager when open, hides from Task Manager when minimized\n"
+                "  var mw = makeWindow({ id: '{main-1}', caption: 'LibreLinkUp Rust Desktop v0.5.12 — KDE Plasma 6', x: 518, y: 230, width: 1175, height: 865, minimized: false });\n"
+                "  workspace.stackingOrder.push(mw);\n"
+                "  workspace.windowAdded.emit(mw);\n"
+                "  if (mw.skipTaskbar !== false) {\n"
+                "    errs.push('Visible MainWindow should have skipTaskbar=false');\n"
+                "  }\n"
+                "  mw.minimized = true;\n"
+                "  mw.minimizedChanged.emit();\n"
+                "  if (!mw.skipTaskbar || !mw.skipPager || !mw.skipSwitcher) {\n"
+                "    errs.push('Minimized MainWindow failed to enforce skipTaskbar=true');\n"
+                "  }\n"
+                "  return errs.join('\\n');\n"
+                "})()\n"
+            );
+        const QJSValue res = js.evaluate(script);
+        if (res.isError()) {
+            violations.append(QStringLiteral("KWin JS evaluation error: %1").arg(res.toString()));
+        } else if (!res.toString().isEmpty()) {
+            violations.append(res.toString());
+        }
+    }
+
+    return violations.isEmpty() ? QStringLiteral("OK") : violations.join(QStringLiteral("\n"));
 }

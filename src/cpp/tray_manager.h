@@ -805,6 +805,14 @@ inline void NotificationActionWatcher::onKWinMainWindowGeometry(
     handle_kwin_main_window_geometry(screenName, globalX, globalY, width, height);
 }
 
+inline QString NotificationActionWatcher::getDesiredOverlaySync() {
+    return format_desired_overlay_sync();
+}
+
+inline QString NotificationActionWatcher::getDesiredMainSync() {
+    return format_desired_main_sync();
+}
+
 inline void update_tray_window_actions() {
     TrayManager::instance().updateWindowActionsVisibility();
 }

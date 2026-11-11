@@ -16,6 +16,7 @@ finish-args:
   - --talk-name=org.kde.StatusNotifierWatcher
   - --talk-name=org.freedesktop.Notifications
   - --talk-name=org.kde.KWin
+  - --talk-name=org.kde.kglobalaccel
   - --filesystem=xdg-run/librelinkup-kde:create
   - --filesystem=xdg-config/kdeglobals:ro
 modules:

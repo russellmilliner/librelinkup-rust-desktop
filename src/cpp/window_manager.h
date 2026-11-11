@@ -505,7 +505,68 @@ inline QString kwin_script_dir() {
     return runtimeBase.isEmpty() ? QDir::tempPath() : runtimeBase;
 }
 
-inline void install_kwin_resident_script() {
+inline int& resident_kwin_script_id_ref() {
+    static int s_id = -1;
+    return s_id;
+}
+
+inline QString resident_kwin_sid_path() {
+    return kwin_script_dir() + QStringLiteral("/.librelinkup-kwin-resident.sid");
+}
+
+struct DesiredKWinSyncState {
+    int ovX = 0;
+    int ovY = 0;
+    int ovW = 0;
+    int ovH = 0;
+    bool ovAllDesktops = true;
+    int mainX = 0;
+    int mainY = 0;
+    int mainW = 0;
+    int mainH = 0;
+
+    static DesiredKWinSyncState& instance() {
+        static DesiredKWinSyncState st;
+        return st;
+    }
+};
+
+inline QString format_desired_overlay_sync() {
+    const auto& st = DesiredKWinSyncState::instance();
+    return QStringLiteral("%1,%2,%3,%4,%5")
+        .arg(st.ovX)
+        .arg(st.ovY)
+        .arg(st.ovW)
+        .arg(st.ovH)
+        .arg(st.ovAllDesktops ? 1 : 0);
+}
+
+inline QString format_desired_main_sync() {
+    const auto& st = DesiredKWinSyncState::instance();
+    return QStringLiteral("%1,%2,%3,%4")
+        .arg(st.mainX)
+        .arg(st.mainY)
+        .arg(st.mainW)
+        .arg(st.mainH);
+}
+
+inline void stop_and_unload_resident_script() {
+    const QString sidPath = resident_kwin_sid_path();
+    const int memId = resident_kwin_script_id_ref();
+    int fileId = -1;
+    {
+        QFile f(sidPath);
+        if (f.open(QIODevice::ReadOnly | QIODevice::Text)) {
+            bool ok = false;
+            const int parsed = QString::fromUtf8(f.readAll()).trimmed().toInt(&ok);
+            if (ok && parsed >= 0) {
+                fileId = parsed;
+            }
+        }
+    }
+    resident_kwin_script_id_ref() = -1;
+    QFile::remove(sidPath);
+
     if (qEnvironmentVariable("QT_QPA_PLATFORM") == QStringLiteral("offscreen")) {
         return;
     }
@@ -513,8 +574,35 @@ inline void install_kwin_resident_script() {
     if (!bus.isConnected()) {
         return;
     }
+
     const QString pluginName = QStringLiteral("librelinkup_kwin_resident_watcher");
+    bool isLoaded = true;
     {
+        QDBusMessage checkMsg = QDBusMessage::createMethodCall(
+            QStringLiteral("org.kde.KWin"),
+            QStringLiteral("/Scripting"),
+            QStringLiteral("org.kde.kwin.Scripting"),
+            QStringLiteral("isScriptLoaded")
+        );
+        checkMsg << pluginName;
+        QDBusReply<bool> checkReply = bus.call(checkMsg);
+        if (checkReply.isValid()) {
+            isLoaded = checkReply.value();
+        }
+    }
+
+    const int scriptId = (memId >= 0) ? memId : fileId;
+    if (isLoaded && scriptId >= 0) {
+        QDBusMessage stopMsg = QDBusMessage::createMethodCall(
+            QStringLiteral("org.kde.KWin"),
+            QStringLiteral("/Scripting/Script%1").arg(scriptId),
+            QStringLiteral("org.kde.kwin.Script"),
+            QStringLiteral("stop")
+        );
+        bus.call(stopMsg);
+    }
+
+    if (isLoaded || scriptId >= 0) {
         QDBusMessage unloadMsg = QDBusMessage::createMethodCall(
             QStringLiteral("org.kde.KWin"),
             QStringLiteral("/Scripting"),
@@ -524,6 +612,18 @@ inline void install_kwin_resident_script() {
         unloadMsg << pluginName;
         bus.call(unloadMsg);
     }
+}
+
+inline void install_kwin_resident_script() {
+    if (qEnvironmentVariable("QT_QPA_PLATFORM") == QStringLiteral("offscreen")) {
+        return;
+    }
+    QDBusConnection bus = QDBusConnection::sessionBus();
+    if (!bus.isConnected()) {
+        return;
+    }
+    const QString pluginName = QStringLiteral("librelinkup_kwin_resident_watcher");
+    stop_and_unload_resident_script();
 
     int initOvX = -1;
     int initOvY = -1;
@@ -555,6 +655,19 @@ inline void install_kwin_resident_script() {
         "var hookedMainIds = {};\n"
         "var movingOverlayIds = {};\n"
         "var movingMainIds = {};\n"
+        "function windowListAll() {\n"
+        "  return workspace.stackingOrder || workspace.windowList();\n"
+        "}\n"
+        "function isOverlayWin(w) {\n"
+        "  if (!w) return false;\n"
+        "  var cap = w.caption ? w.caption.toString() : '';\n"
+        "  return cap.indexOf('LibreLinkUp Rust Desktop Overlay') === 0 && cap.indexOf('Tooltip') === -1;\n"
+        "}\n"
+        "function isMainWin(w) {\n"
+        "  if (!w) return false;\n"
+        "  var cap = w.caption ? w.caption.toString() : '';\n"
+        "  return cap.indexOf('LibreLinkUp Rust Desktop v') === 0;\n"
+        "}\n"
         "function windowKey(w) {\n"
         "  return (w && w.internalId) ? w.internalId.toString() : '';\n"
         "}\n"
@@ -720,7 +833,7 @@ inline void install_kwin_resident_script() {
         "    }\n"
         "  }\n"
         "}\n"
-        "var list = workspace.stackingOrder || workspace.windowList();\n"
+        "var list = windowListAll();\n"
         "if (list) {\n"
         "  for (var i = 0; i < list.length; ++i) {\n"
         "    enforceLibreLinkUpRules(list[i]);\n"
@@ -731,6 +844,85 @@ inline void install_kwin_resident_script() {
         "    enforceLibreLinkUpRules(w);\n"
         "  });\n"
         "}\n"
+        "registerShortcut('LibreLinkUp SyncOverlay', 'LibreLinkUp Sync Overlay Window', '', function() {\n"
+        "  if (!dbusAddr) return;\n"
+        "  callDBus(dbusAddr, '/LibreLinkUpKWin', '', 'getDesiredOverlaySync', function(spec) {\n"
+        "    if (!spec) return;\n"
+        "    var parts = spec.toString().split(',');\n"
+        "    if (parts.length < 5) return;\n"
+        "    var gx = parseInt(parts[0], 10);\n"
+        "    var gy = parseInt(parts[1], 10);\n"
+        "    var gw = parseInt(parts[2], 10);\n"
+        "    var gh = parseInt(parts[3], 10);\n"
+        "    var allDesk = (parts[4] === '1' || parts[4] === 'true');\n"
+        "    if (gw > 0 && gh > 0 && !isNaN(gx) && !isNaN(gy)) {\n"
+        "      targetOvX = gx;\n"
+        "      targetOvY = gy;\n"
+        "      targetOvW = gw;\n"
+        "      targetOvH = gh;\n"
+        "    }\n"
+        "    var wl = windowListAll();\n"
+        "    if (!wl) return;\n"
+        "    for (var i = 0; i < wl.length; ++i) {\n"
+        "      var w = wl[i];\n"
+        "      if (isOverlayWin(w)) {\n"
+        "        if (!w.noBorder) w.noBorder = true;\n"
+        "        if (w.onAllDesktops !== allDesk) w.onAllDesktops = allDesk;\n"
+        "        if (!w.keepAbove) w.keepAbove = true;\n"
+        "        if (!w.skipTaskbar) w.skipTaskbar = true;\n"
+        "        if (!w.skipPager) w.skipPager = true;\n"
+        "        if (!w.skipSwitcher) w.skipSwitcher = true;\n"
+        "        if (w.minimized) w.minimized = false;\n"
+        "        if (!w.move && !w.resize && gw > 0 && gh > 0 && !isNaN(gx) && !isNaN(gy)) {\n"
+        "          w.frameGeometry = { x: gx, y: gy, width: gw, height: gh };\n"
+        "        }\n"
+        "      }\n"
+        "    }\n"
+        "  });\n"
+        "});\n"
+        "registerShortcut('LibreLinkUp SyncMain', 'LibreLinkUp Sync Main Window', '', function() {\n"
+        "  if (!dbusAddr) return;\n"
+        "  callDBus(dbusAddr, '/LibreLinkUpKWin', '', 'getDesiredMainSync', function(spec) {\n"
+        "    if (!spec) return;\n"
+        "    var parts = spec.toString().split(',');\n"
+        "    if (parts.length < 4) return;\n"
+        "    var gx = parseInt(parts[0], 10);\n"
+        "    var gy = parseInt(parts[1], 10);\n"
+        "    var gw = parseInt(parts[2], 10);\n"
+        "    var gh = parseInt(parts[3], 10);\n"
+        "    var wl = windowListAll();\n"
+        "    if (!wl) return;\n"
+        "    for (var i = 0; i < wl.length; ++i) {\n"
+        "      var w = wl[i];\n"
+        "      if (isMainWin(w)) {\n"
+        "        if (!w.move && !w.resize && gw > 0 && gh > 0 && !isNaN(gx) && !isNaN(gy)) {\n"
+        "          w.frameGeometry = { x: gx, y: gy, width: gw, height: gh };\n"
+        "        }\n"
+        "        workspace.activeWindow = w;\n"
+        "      }\n"
+        "    }\n"
+        "  });\n"
+        "});\n"
+        "registerShortcut('LibreLinkUp QueryOverlay', 'LibreLinkUp Query Overlay Geometry', '', function() {\n"
+        "  var wl = windowListAll();\n"
+        "  if (!wl) return;\n"
+        "  for (var i = 0; i < wl.length; ++i) {\n"
+        "    var w = wl[i];\n"
+        "    if (isOverlayWin(w)) {\n"
+        "      reportOverlayGeometry(w);\n"
+        "    }\n"
+        "  }\n"
+        "});\n"
+        "registerShortcut('LibreLinkUp QueryMain', 'LibreLinkUp Query Main Geometry', '', function() {\n"
+        "  var wl = windowListAll();\n"
+        "  if (!wl) return;\n"
+        "  for (var i = 0; i < wl.length; ++i) {\n"
+        "    var w = wl[i];\n"
+        "    if (isMainWin(w)) {\n"
+        "      reportMainGeometry(w);\n"
+        "    }\n"
+        "  }\n"
+        "});\n"
     ).arg(dbusAddr).arg(initOvX).arg(initOvY).arg(initOvW).arg(initOvH);
 
     const QString uid = QUuid::createUuid().toString(QUuid::Id128);
@@ -757,14 +949,24 @@ inline void install_kwin_resident_script() {
     loadMsg << scriptPath << pluginName;
     QDBusReply<int> loadReply = bus.call(loadMsg);
     if (loadReply.isValid() && loadReply.value() >= 0) {
-        const QString scriptObj = QStringLiteral("/Scripting/Script%1").arg(loadReply.value());
+        const int sid = loadReply.value();
+        resident_kwin_script_id_ref() = sid;
+        {
+            QFile sf(resident_kwin_sid_path());
+            if (sf.open(QIODevice::WriteOnly | QIODevice::Truncate | QIODevice::Text)) {
+                sf.setPermissions(QFileDevice::ReadOwner | QFileDevice::WriteOwner);
+                sf.write(QString::number(sid).toUtf8());
+                sf.close();
+            }
+        }
+        const QString scriptObj = QStringLiteral("/Scripting/Script%1").arg(sid);
         QDBusMessage runMsg = QDBusMessage::createMethodCall(
             QStringLiteral("org.kde.KWin"),
             scriptObj,
             QStringLiteral("org.kde.kwin.Script"),
             QStringLiteral("run")
         );
-        bus.call(runMsg, QDBus::NoBlock);
+        bus.call(runMsg);
     }
     QTimer::singleShot(250, [scriptPath]() {
         QFile::remove(scriptPath);
@@ -812,6 +1014,8 @@ inline void ensure_kwin_dbus_bridge() {
         QCoreApplication::instance()
     );
     QObject::connect(kwinServiceWatcher, &QDBusServiceWatcher::serviceRegistered, kwinServiceWatcher, [](const QString&) {
+        resident_kwin_script_id_ref() = -1;
+        QFile::remove(resident_kwin_sid_path());
         OverlayPlacementState::instance().invalidateKWinSync();
         QTimer::singleShot(250, []() {
             install_kwin_resident_script();
@@ -825,15 +1029,31 @@ inline void ensure_kwin_dbus_bridge() {
     });
 
     QObject::connect(QCoreApplication::instance(), &QCoreApplication::aboutToQuit, []() {
-        QDBusMessage cleanupMsg = QDBusMessage::createMethodCall(
-            QStringLiteral("org.kde.KWin"),
-            QStringLiteral("/Scripting"),
-            QStringLiteral("org.kde.kwin.Scripting"),
-            QStringLiteral("unloadScript")
-        );
-        cleanupMsg << QStringLiteral("librelinkup_kwin_resident_watcher");
-        QDBusConnection::sessionBus().call(cleanupMsg, QDBus::NoBlock);
+        stop_and_unload_resident_script();
     });
+}
+
+inline bool invoke_kwin_resident_shortcut(const QString& shortcutName) {
+    if (qEnvironmentVariable("QT_QPA_PLATFORM") == QStringLiteral("offscreen")) {
+        return true;
+    }
+    ensure_kwin_dbus_bridge();
+    if (resident_kwin_script_id_ref() < 0) {
+        return false;
+    }
+    QDBusConnection bus = QDBusConnection::sessionBus();
+    if (!bus.isConnected()) {
+        return false;
+    }
+    QDBusMessage msg = QDBusMessage::createMethodCall(
+        QStringLiteral("org.kde.kglobalaccel"),
+        QStringLiteral("/component/kwin"),
+        QStringLiteral("org.kde.kglobalaccel.Component"),
+        QStringLiteral("invokeShortcut")
+    );
+    msg << shortcutName;
+    const QDBusMessage reply = bus.call(msg);
+    return reply.type() != QDBusMessage::ErrorMessage;
 }
 
 inline void run_kwin_oneshot_script(const QString& jsBody) {
@@ -877,9 +1097,20 @@ inline void run_kwin_oneshot_script(const QString& jsBody) {
             QStringLiteral("org.kde.kwin.Script"),
             QStringLiteral("run")
         );
-        bus.call(runMsg, QDBus::NoBlock);
-        QTimer::singleShot(150, [pluginName, scriptPath]() {
+        bus.call(runMsg);
+        QTimer::singleShot(150, [pluginName, scriptPath, scriptObj]() {
             QFile::remove(scriptPath);
+            QDBusConnection session = QDBusConnection::sessionBus();
+            if (!session.isConnected()) {
+                return;
+            }
+            QDBusMessage stopMsg = QDBusMessage::createMethodCall(
+                QStringLiteral("org.kde.KWin"),
+                scriptObj,
+                QStringLiteral("org.kde.kwin.Script"),
+                QStringLiteral("stop")
+            );
+            session.call(stopMsg);
             QDBusMessage cleanupMsg = QDBusMessage::createMethodCall(
                 QStringLiteral("org.kde.KWin"),
                 QStringLiteral("/Scripting"),
@@ -887,7 +1118,7 @@ inline void run_kwin_oneshot_script(const QString& jsBody) {
                 QStringLiteral("unloadScript")
             );
             cleanupMsg << pluginName;
-            QDBusConnection::sessionBus().call(cleanupMsg, QDBus::NoBlock);
+            session.call(cleanupMsg, QDBus::NoBlock);
         });
     } else {
         QFile::remove(scriptPath);
@@ -895,6 +1126,20 @@ inline void run_kwin_oneshot_script(const QString& jsBody) {
 }
 
 inline void sync_kwin_overlay_window(int globalX, int globalY, int w, int h, bool onAllDesktops) {
+    if (qEnvironmentVariable("QT_QPA_PLATFORM") == QStringLiteral("offscreen")) {
+        return;
+    }
+    auto& desired = DesiredKWinSyncState::instance();
+    desired.ovX = globalX;
+    desired.ovY = globalY;
+    desired.ovW = w;
+    desired.ovH = h;
+    desired.ovAllDesktops = onAllDesktops;
+
+    if (invoke_kwin_resident_shortcut(QStringLiteral("LibreLinkUp SyncOverlay"))) {
+        return;
+    }
+
     const QString js = QStringLiteral(
         "var list = workspace.stackingOrder || workspace.windowList();\n"
         "if (list) {\n"
@@ -924,6 +1169,19 @@ inline void sync_kwin_overlay_window(int globalX, int globalY, int w, int h, boo
 }
 
 inline void sync_kwin_main_window(int globalX, int globalY, int w, int h) {
+    if (qEnvironmentVariable("QT_QPA_PLATFORM") == QStringLiteral("offscreen")) {
+        return;
+    }
+    auto& desired = DesiredKWinSyncState::instance();
+    desired.mainX = globalX;
+    desired.mainY = globalY;
+    desired.mainW = w;
+    desired.mainH = h;
+
+    if (invoke_kwin_resident_shortcut(QStringLiteral("LibreLinkUp SyncMain"))) {
+        return;
+    }
+
     const QString js = QStringLiteral(
         "var list = workspace.stackingOrder || workspace.windowList();\n"
         "if (list) {\n"
@@ -947,6 +1205,13 @@ inline void sync_kwin_main_window(int globalX, int globalY, int w, int h) {
 }
 
 inline void query_kwin_overlay_geometry() {
+    if (qEnvironmentVariable("QT_QPA_PLATFORM") == QStringLiteral("offscreen")) {
+        return;
+    }
+    if (invoke_kwin_resident_shortcut(QStringLiteral("LibreLinkUp QueryOverlay"))) {
+        return;
+    }
+
     QDBusConnection bus = QDBusConnection::sessionBus();
     const QString dbusAddr = bus.baseService();
     if (dbusAddr.isEmpty()) {
@@ -973,6 +1238,13 @@ inline void query_kwin_overlay_geometry() {
 }
 
 inline void query_kwin_main_window_geometry() {
+    if (qEnvironmentVariable("QT_QPA_PLATFORM") == QStringLiteral("offscreen")) {
+        return;
+    }
+    if (invoke_kwin_resident_shortcut(QStringLiteral("LibreLinkUp QueryMain"))) {
+        return;
+    }
+
     QDBusConnection bus = QDBusConnection::sessionBus();
     const QString dbusAddr = bus.baseService();
     if (dbusAddr.isEmpty()) {
@@ -1210,7 +1482,12 @@ inline void restore_overlay_placement(
     st.hasPlacement = true;
 
     if (changed && is_wayland_platform()) {
-        install_kwin_resident_script();
+        ensure_kwin_dbus_bridge();
+        QScreen* targetSc = nullptr;
+        int gx = 0, gy = 0, gw = 276, gh = 88;
+        if (st.computeGlobalGeometry(nullptr, targetSc, gx, gy, gw, gh)) {
+            sync_kwin_overlay_window(gx, gy, gw, gh, st.onAllDesktops);
+        }
     }
 
     if (QWindow* ovWin = find_overlay_window()) {

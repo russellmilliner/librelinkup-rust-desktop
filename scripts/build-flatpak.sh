@@ -89,6 +89,7 @@ flatpak build-finish "$WORK_DIR/build-dir" \
   --talk-name=org.freedesktop.Notifications \
   --talk-name=org.freedesktop.Flatpak \
   --talk-name=org.kde.KWin \
+  --talk-name=org.kde.kglobalaccel \
   --filesystem=xdg-config/kdeglobals:ro \
   --filesystem=xdg-config/home-assistant.env:ro \
   --filesystem=xdg-config/librelinkup-kde:create \

@@ -2,6 +2,14 @@
 
 All notable changes and bumped dependencies for `russellmilliner/librelinkup-rust-desktop` are documented in this file.
 
+## [v0.5.12](https://github.com/russellmilliner/librelinkup-rust-desktop/releases/tag/v0.5.12) — 2026-11-10
+
+### Highlights
+- Fix Wayland desktop overlay KDE Task Manager icon exclusion and multi-monitor hide/restore placement, and add dedicated widget & taskbar regression test suites
+
+### Commits
+- fix(wayland,overlay): exclude desktop overlay from KDE Task Manager and restore screen/position across hide/restore (f655f22)
+
 ## [v0.5.11](https://github.com/russellmilliner/librelinkup-rust-desktop/releases/tag/v0.5.11) — 2026-11-10
 
 ### Highlights

@@ -56,6 +56,11 @@
   <url type="donation">https://ko-fi.com/russellmilliner</url>
   <content_rating type="oars-1.1" />
   <releases>
+    <release version="0.5.12" date="2026-11-10">
+      <description>
+        <p>Fix Wayland desktop overlay KDE Task Manager icon exclusion and multi-monitor hide/restore placement, and add dedicated widget &amp; taskbar regression test suites</p>
+      </description>
+    </release>
     <release version="0.5.11" date="2026-11-10">
       <description>
         <p>Zero-churn resident KWin shortcut IPC (SyncOverlay, SyncMain, QueryOverlay, QueryMain) and Script.stop slot cleanup</p>

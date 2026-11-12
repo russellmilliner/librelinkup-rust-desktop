@@ -2,6 +2,19 @@
 
 All notable changes and bumped dependencies for `russellmilliner/librelinkup-rust-desktop` are documented in this file.
 
+## [v0.5.12-deps](https://github.com/russellmilliner/librelinkup-rust-desktop/releases/tag/v0.5.12-deps) — 2026-11-12
+
+### 📦 Bumped Dependencies (6 packages)
+
+| Package | Previous | Updated | Scope |
+| :--- | :--- | :--- | :--- |
+| `arc-swap` | `1.9.4` | **`1.9.5`** | Lockfile (`windows/Cargo.lock`) |
+| `crc32fast` | `1.5.4` | **`1.5.5`** | Lockfile (`windows/Cargo.lock`) |
+| `errno` | `0.3.14` | **`0.3.15`** | Lockfile (`windows/Cargo.lock`) |
+| `rustls-pki-types` | `1.15.1` | **`1.16.0`** | Lockfile (`windows/Cargo.lock`) |
+| `webbrowser` | `1.2.6` | **`1.2.7`** | Lockfile (`windows/Cargo.lock`) |
+| `webpki-roots` | `1.0.11` | **`1.0.12`** | Lockfile (`windows/Cargo.lock`) |
+
 ## [v0.5.12](https://github.com/russellmilliner/librelinkup-rust-desktop/releases/tag/v0.5.12) — 2026-11-10
 
 ### Highlights

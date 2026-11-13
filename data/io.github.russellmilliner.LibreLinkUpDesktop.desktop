@@ -9,3 +9,81 @@ Categories=Science;MedicalSoftware;Qt;KDE;
 StartupNotify=true
 StartupWMClass=io.github.russellmilliner.LibreLinkUpDesktop
 Keywords=glucose;blood sugar;librelinkup;cgm;diabetes;kde;
+X-KDE-Notifications=io.github.russellmilliner.LibreLinkUpDesktop
+X-GNOME-UsesNotifications=true
+Actions=ToggleMainWindow;ShowMainWindow;MinimizeToTray;ToggleOverlay;ToggleOverlayAllDesktops;RefreshGlucoseNow;ShowPopupSummary;OpenMedicationsTab;MarkDueMedicationsTaken;SnoozeAlerts30m;SnoozeAlerts60m;SnoozeAlerts120m;CancelAlertSnooze;ToggleHighContrast;OpenLogViewer;
+
+[Desktop Action ToggleMainWindow]
+Name=Toggle Main Window (Show / Minimize to Tray)
+Icon=io.github.russellmilliner.LibreLinkUpDesktop
+Exec=librelinkup-kde --toggle-window
+
+[Desktop Action ShowMainWindow]
+Name=Show Main Window
+Icon=io.github.russellmilliner.LibreLinkUpDesktop
+Exec=librelinkup-kde --show-window
+
+[Desktop Action MinimizeToTray]
+Name=Minimize Main Window to Tray
+Icon=window-minimize
+Exec=librelinkup-kde --hide-window
+
+[Desktop Action ToggleOverlay]
+Name=Toggle Floating Desktop Overlay Widget
+Icon=window-pin
+Exec=librelinkup-kde --toggle-overlay
+
+[Desktop Action ToggleOverlayAllDesktops]
+Name=Toggle Overlay on All Virtual Desktops
+Icon=virtual-desktops
+Exec=librelinkup-kde --toggle-overlay-all-desktops
+
+[Desktop Action RefreshGlucoseNow]
+Name=Refresh Blood Glucose Reading Now
+Icon=view-refresh
+Exec=librelinkup-kde --refresh
+
+[Desktop Action ShowPopupSummary]
+Name=Show Current Blood Glucose Reading Notification
+Icon=dialog-information
+Exec=librelinkup-kde --notify-reading
+
+[Desktop Action OpenMedicationsTab]
+Name=Open Medications & Log Dose
+Icon=bookmarks
+Exec=librelinkup-kde --medications
+
+[Desktop Action MarkDueMedicationsTaken]
+Name=Mark Due Medications as Taken
+Icon=checkmark
+Exec=librelinkup-kde --mark-due-meds-taken
+
+[Desktop Action SnoozeAlerts30m]
+Name=Snooze Glucose Alerts for 30 Minutes
+Icon=notifications-disabled
+Exec=librelinkup-kde --snooze-30
+
+[Desktop Action SnoozeAlerts60m]
+Name=Snooze Glucose Alerts for 1 Hour
+Icon=notifications-disabled
+Exec=librelinkup-kde --snooze-60
+
+[Desktop Action SnoozeAlerts120m]
+Name=Snooze Glucose Alerts for 2 Hours
+Icon=notifications-disabled
+Exec=librelinkup-kde --snooze-120
+
+[Desktop Action CancelAlertSnooze]
+Name=Cancel Alert Snooze (Resume Alerts)
+Icon=preferences-desktop-notification-bell
+Exec=librelinkup-kde --cancel-snooze
+
+[Desktop Action ToggleHighContrast]
+Name=Toggle WCAG AAA High Contrast Mode
+Icon=preferences-desktop-accessibility
+Exec=librelinkup-kde --toggle-high-contrast
+
+[Desktop Action OpenLogViewer]
+Name=Open Diagnostic Log Viewer
+Icon=utilities-log-viewer
+Exec=librelinkup-kde --logs

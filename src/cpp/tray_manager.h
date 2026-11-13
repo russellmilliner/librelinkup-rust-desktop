@@ -2,6 +2,7 @@
 
 #include <KColorScheme>
 #include <KColorSchemeManager>
+#include <KConfigGroup>
 #include <KIconLoader>
 #include <KSharedConfig>
 #include <KStatusNotifierItem>
@@ -11,26 +12,35 @@
 #include <QApplication>
 #include <QCoreApplication>
 #include <QCursor>
+#include <QDBusArgument>
 #include <QDBusConnection>
 #include <QDBusMessage>
+#include <QDBusObjectPath>
 #include <QDBusPendingCallWatcher>
 #include <QDBusPendingReply>
+#include <QDateTime>
 #include <QDesktopServices>
+#include <QDir>
+#include <QFile>
 #include <QGuiApplication>
 #include <QHash>
 #include <QIcon>
 #include <QList>
 #include <QMenu>
 #include <QMetaObject>
+#include <QMetaType>
 #include <QModelIndex>
 #include <QObject>
 #include <QPair>
 #include <QPalette>
 #include <QPointer>
+#include <QSaveFile>
 #include <QSet>
+#include <QStandardPaths>
 #include <QString>
 #include <QStringList>
 #include <QSystemTrayIcon>
+#include <QThread>
 #include <QUrl>
 #include <QVariant>
 #include <QWindow>
@@ -78,9 +88,94 @@ public:
         }
     }
 
-    // For alert notifications (withSnoozeActions = true), uses org.freedesktop.Notifications
-    // directly so interactive snooze buttons ("Snooze 30 min", "Snooze 1 hr", "Snooze 2 hr")
-    // are attached, falling back to QSystemTrayIcon::showMessage when D-Bus is unavailable.
+    static QString resolveNotificationEventId(
+        const QString& title,
+        bool critical,
+        bool withSnoozeActions,
+        const QString& medicationKey = QString()
+    ) {
+        if (!medicationKey.trimmed().isEmpty()
+            || title.contains(QStringLiteral("Medication"), Qt::CaseInsensitive)) {
+            return QStringLiteral("medicationDue");
+        }
+        if (title.contains(QStringLiteral("Urgent Low"), Qt::CaseInsensitive)) {
+            return QStringLiteral("urgentLowGlucose");
+        }
+        if (title.contains(QStringLiteral("Test"), Qt::CaseInsensitive)) {
+            return QStringLiteral("alertTest");
+        }
+        if (title.contains(QStringLiteral("Low Glucose"), Qt::CaseInsensitive)) {
+            return QStringLiteral("lowGlucose");
+        }
+        if (title.contains(QStringLiteral("High Glucose"), Qt::CaseInsensitive)) {
+            return QStringLiteral("highGlucose");
+        }
+        if (title.contains(QStringLiteral("Stale"), Qt::CaseInsensitive)) {
+            return QStringLiteral("staleReading");
+        }
+        if (title.contains(QStringLiteral("Sensor Expiring"), Qt::CaseInsensitive)) {
+            return QStringLiteral("sensorExpiring");
+        }
+        if (title.contains(QStringLiteral("Update"), Qt::CaseInsensitive)
+            || title.contains(QStringLiteral("Up to Date"), Qt::CaseInsensitive)) {
+            return QStringLiteral("updateAvailable");
+        }
+        if (title.contains(QStringLiteral("Glucose Summary"), Qt::CaseInsensitive)
+            || title.contains(QStringLiteral("Current Blood Glucose"), Qt::CaseInsensitive)
+            || title.contains(QStringLiteral("Blood Sugar"), Qt::CaseInsensitive)) {
+            return QStringLiteral("glucoseStatusSummary");
+        }
+        if (critical) {
+            return QStringLiteral("lowGlucose");
+        }
+        return withSnoozeActions
+            ? QStringLiteral("highGlucose")
+            : QStringLiteral("glucoseStatusSummary");
+    }
+
+    bool isKdeNotificationEventPopupEnabled(const QString& eventId) const {
+        if (eventId.isEmpty()) {
+            return true;
+        }
+        QString cfgPath;
+        const QString xdgConfig = qEnvironmentVariable("XDG_CONFIG_HOME").trimmed();
+        if (!xdgConfig.isEmpty()) {
+            const QString candidate = QDir(xdgConfig).filePath(
+                QStringLiteral("io.github.russellmilliner.LibreLinkUpDesktop.notifyrc")
+            );
+            if (QFile::exists(candidate)) {
+                cfgPath = candidate;
+            }
+        }
+        if (cfgPath.isEmpty()) {
+            const QString hostCandidate = QDir::homePath()
+                + QStringLiteral("/.config/io.github.russellmilliner.LibreLinkUpDesktop.notifyrc");
+            if (QFile::exists(hostCandidate)) {
+                cfgPath = hostCandidate;
+            }
+        }
+        if (cfgPath.isEmpty()) {
+            return true;
+        }
+        const KSharedConfig::Ptr cfg = KSharedConfig::openConfig(cfgPath, KConfig::SimpleConfig);
+        if (!cfg) {
+            return true;
+        }
+        cfg->reparseConfiguration();
+        const KConfigGroup grp = cfg->group(QStringLiteral("Event/%1").arg(eventId));
+        if (!grp.exists() || !grp.hasKey(QStringLiteral("Action"))) {
+            return true;
+        }
+        const QString actionSpec = grp.readEntry(QStringLiteral("Action"), QStringLiteral("Popup")).trimmed();
+        const QStringList tokens = actionSpec.split(QLatin1Char('|'), Qt::SkipEmptyParts);
+        return tokens.contains(QStringLiteral("Popup"), Qt::CaseInsensitive);
+    }
+
+    // Sends desktop notifications over org.freedesktop.Notifications with KDE KNotifications
+    // event IDs (`x-kde-eventId`, `x-kde-appname`, `x-kde-display-appname`) so KDE Plasma
+    // System Settings → Notifications per-event toggles and history work identically across
+    // native and Flatpak builds, falling back to KStatusNotifierItem/QSystemTrayIcon when D-Bus
+    // is unavailable.
     void showNotification(
         const QString& title,
         const QString& body,
@@ -88,14 +183,23 @@ public:
         bool withSnoozeActions = false
     ) {
         ensureInitialized();
-        const QStringList snoozeActions{
-            QStringLiteral("default"), QStringLiteral("Open"),
-            QStringLiteral("snooze_30"), QStringLiteral("Snooze 30 min"),
-            QStringLiteral("snooze_60"), QStringLiteral("Snooze 1 hr"),
-            QStringLiteral("snooze_120"), QStringLiteral("Snooze 2 hr"),
-        };
-        if (withSnoozeActions &&
-            sendDesktopNotificationWithActions(title, body, critical, snoozeActions, true)) {
+        const QString eventId = resolveNotificationEventId(title, critical, withSnoozeActions);
+        if (!isKdeNotificationEventPopupEnabled(eventId)
+            && eventId != QStringLiteral("urgentLowGlucose")) {
+            return;
+        }
+        const QStringList actions = withSnoozeActions
+            ? QStringList{
+                QStringLiteral("default"), QStringLiteral("Open"),
+                QStringLiteral("snooze_30"), QStringLiteral("Snooze 30 min"),
+                QStringLiteral("snooze_60"), QStringLiteral("Snooze 1 hr"),
+                QStringLiteral("snooze_120"), QStringLiteral("Snooze 2 hr"),
+            }
+            : QStringList{
+                QStringLiteral("default"), QStringLiteral("Open"),
+            };
+        if (sendDesktopNotificationWithActions(
+                title, body, critical, actions, withSnoozeActions, QString(), eventId)) {
             return;
         }
         if (m_sni) {
@@ -127,12 +231,16 @@ public:
         const QString& body
     ) {
         ensureInitialized();
+        if (!isKdeNotificationEventPopupEnabled(QStringLiteral("medicationDue"))) {
+            return;
+        }
         const QStringList medActions{
             QStringLiteral("default"), QStringLiteral("Open"),
             QStringLiteral("med_taken:%1").arg(medicationId), QStringLiteral("✓ Taken"),
             QStringLiteral("med_skip:%1").arg(medicationId), QStringLiteral("⏭ Skipped"),
         };
-        if (sendDesktopNotificationWithActions(title, body, false, medActions, false, medicationId)) {
+        if (sendDesktopNotificationWithActions(
+                title, body, false, medActions, false, medicationId, QStringLiteral("medicationDue"))) {
             return;
         }
         if (m_sni) {
@@ -640,7 +748,285 @@ private:
                 }
             }
         );
+
+        ensureKdeNotificationConfigInstalled();
+        registerKdeGlobalShortcuts();
     }
+
+    static QByteArray canonicalKdeNotifyRcBytes() {
+        return QByteArrayLiteral(
+            "[Global]\n"
+            "IconName=io.github.russellmilliner.LibreLinkUpDesktop\n"
+            "Comment=Continuous Glucose Monitor & Medication Reminders\n"
+            "Name=LibreLinkUp Rust Desktop\n"
+            "DesktopEntry=io.github.russellmilliner.LibreLinkUpDesktop\n\n"
+            "[Event/urgentLowGlucose]\n"
+            "Name=Urgent Low Glucose Alert\n"
+            "Comment=Critical alert when blood glucose drops at or below the urgent low threshold\n"
+            "Action=Popup\n"
+            "Urgency=Critical\n\n"
+            "[Event/lowGlucose]\n"
+            "Name=Low Glucose Alert\n"
+            "Comment=Critical alert when blood glucose drops below the target low threshold\n"
+            "Action=Popup\n"
+            "Urgency=Critical\n\n"
+            "[Event/highGlucose]\n"
+            "Name=High Glucose Alert\n"
+            "Comment=Alert when blood glucose rises above the target high threshold\n"
+            "Action=Popup\n"
+            "Urgency=High\n\n"
+            "[Event/staleReading]\n"
+            "Name=Stale Sensor Reading Alert\n"
+            "Comment=Warning when no new CGM reading has been received within the configured stale threshold\n"
+            "Action=Popup\n"
+            "Urgency=Normal\n\n"
+            "[Event/medicationDue]\n"
+            "Name=Medication Due Reminder\n"
+            "Comment=Scheduled reminder when one or more medications are due to be taken\n"
+            "Action=Popup\n"
+            "Urgency=Normal\n\n"
+            "[Event/sensorExpiring]\n"
+            "Name=CGM Sensor Expiring Soon\n"
+            "Comment=Reminder when the active FreeStyle Libre sensor is approaching expiration\n"
+            "Action=Popup\n"
+            "Urgency=Normal\n\n"
+            "[Event/glucoseStatusSummary]\n"
+            "Name=On-Demand Glucose Reading Summary\n"
+            "Comment=Popup notification showing the current blood glucose value, trend, and time in range when triggered by shortcut\n"
+            "Action=Popup\n"
+            "Urgency=Low\n\n"
+            "[Event/updateAvailable]\n"
+            "Name=Application Update Notification\n"
+            "Comment=Notification when a newer version of LibreLinkUp Rust Desktop is available on GitHub Releases\n"
+            "Action=Popup\n"
+            "Urgency=Low\n\n"
+            "[Event/alertTest]\n"
+            "Name=Manual Alert Test\n"
+            "Comment=Test notification triggered from the Alerts settings tab\n"
+            "Action=Popup\n"
+            "Urgency=Normal\n"
+        );
+    }
+
+    void ensureKdeNotificationConfigInstalled() {
+        if (qEnvironmentVariable("QT_QPA_PLATFORM") == QStringLiteral("offscreen")) {
+            return;
+        }
+        const QString dirPath = QDir::homePath() + QStringLiteral("/.local/share/knotifications6");
+        QDir dir(dirPath);
+        if (!dir.exists() && !dir.mkpath(QStringLiteral("."))) {
+            return;
+        }
+        const QString targetPath = dir.filePath(
+            QStringLiteral("io.github.russellmilliner.LibreLinkUpDesktop.notifyrc")
+        );
+        const QByteArray desired = canonicalKdeNotifyRcBytes();
+        QFile existing(targetPath);
+        if (existing.exists() && existing.open(QIODevice::ReadOnly)) {
+            const QByteArray current = existing.readAll();
+            existing.close();
+            if (current == desired) {
+                return;
+            }
+        }
+        QSaveFile out(targetPath);
+        if (out.open(QIODevice::WriteOnly | QIODevice::Truncate)) {
+            out.write(desired);
+            if (out.commit()) {
+                QDBusConnection bus = QDBusConnection::sessionBus();
+                if (bus.isConnected()) {
+                    QDBusMessage reparseSignal = QDBusMessage::createSignal(
+                        QStringLiteral("/Config"),
+                        QStringLiteral("org.kde.knotification"),
+                        QStringLiteral("reparseConfiguration")
+                    );
+                    reparseSignal << QStringLiteral("io.github.russellmilliner.LibreLinkUpDesktop");
+                    bus.send(reparseSignal);
+                }
+            }
+        }
+    }
+
+    void ensureNotificationWatcherConnected(QDBusConnection& bus) {
+        if (m_notifWatcher || !QCoreApplication::instance()) {
+            return;
+        }
+        m_notifWatcher = new NotificationActionWatcher(QCoreApplication::instance());
+        bus.connect(
+            QStringLiteral("org.freedesktop.Notifications"),
+            QStringLiteral("/org/freedesktop/Notifications"),
+            QStringLiteral("org.freedesktop.Notifications"),
+            QStringLiteral("ActionInvoked"),
+            m_notifWatcher,
+            SLOT(onActionInvoked(uint,QString))
+        );
+        bus.connect(
+            QStringLiteral("org.freedesktop.Notifications"),
+            QStringLiteral("/org/freedesktop/Notifications"),
+            QStringLiteral("org.freedesktop.Notifications"),
+            QStringLiteral("NotificationClosed"),
+            m_notifWatcher,
+            SLOT(onNotificationClosed(uint,uint))
+        );
+    }
+
+    void registerKdeGlobalShortcuts() {
+        if (qEnvironmentVariable("QT_QPA_PLATFORM") == QStringLiteral("offscreen")) {
+            return;
+        }
+        QDBusConnection bus = QDBusConnection::sessionBus();
+        if (!bus.isConnected()) {
+            return;
+        }
+        ensureNotificationWatcherConnected(bus);
+
+        const QString componentUnique = QStringLiteral("io.github.russellmilliner.LibreLinkUpDesktop.desktop");
+        const QString componentFriendly = QStringLiteral("LibreLinkUp Rust Desktop");
+        const QString componentPath = QStringLiteral("/component/io_github_russellmilliner_LibreLinkUpDesktop_desktop");
+
+        bus.connect(
+            QStringLiteral("org.kde.kglobalaccel"),
+            componentPath,
+            QStringLiteral("org.kde.kglobalaccel.Component"),
+            QStringLiteral("globalShortcutPressed"),
+            m_notifWatcher,
+            SLOT(onGlobalShortcutPressed(QString,QString,qlonglong))
+        );
+
+        QSet<QString> existingShortcuts;
+        {
+            QDBusMessage listMsg = QDBusMessage::createMethodCall(
+                QStringLiteral("org.kde.kglobalaccel"),
+                componentPath,
+                QStringLiteral("org.kde.kglobalaccel.Component"),
+                QStringLiteral("shortcutNames")
+            );
+            const QDBusMessage listReply = bus.call(listMsg, QDBus::Block, 500);
+            if (listReply.type() == QDBusMessage::ReplyMessage && !listReply.arguments().isEmpty()) {
+                const QStringList names = listReply.arguments().first().toStringList();
+                for (const QString& n : names) {
+                    existingShortcuts.insert(n);
+                }
+            }
+        }
+
+        const QList<QPair<QString, QString>> shortcuts = {
+            {QStringLiteral("_launch"), QStringLiteral("Launch / Show LibreLinkUp Rust Desktop")},
+            {QStringLiteral("ToggleMainWindow"), QStringLiteral("Toggle Main Window (Show / Minimize to Tray)")},
+            {QStringLiteral("ShowMainWindow"), QStringLiteral("Show Main Window")},
+            {QStringLiteral("MinimizeToTray"), QStringLiteral("Minimize Main Window to Tray")},
+            {QStringLiteral("ToggleOverlay"), QStringLiteral("Toggle Floating Desktop Overlay Widget")},
+            {QStringLiteral("ToggleOverlayAllDesktops"), QStringLiteral("Toggle Overlay on All Virtual Desktops")},
+            {QStringLiteral("RefreshGlucoseNow"), QStringLiteral("Refresh Blood Glucose Reading Now")},
+            {QStringLiteral("ShowPopupSummary"), QStringLiteral("Show Current Blood Glucose Reading Notification")},
+            {QStringLiteral("OpenMedicationsTab"), QStringLiteral("Open Medications & Log Dose")},
+            {QStringLiteral("MarkDueMedicationsTaken"), QStringLiteral("Mark Due Medications as Taken")},
+            {QStringLiteral("SnoozeAlerts30m"), QStringLiteral("Snooze Glucose Alerts for 30 Minutes")},
+            {QStringLiteral("SnoozeAlerts60m"), QStringLiteral("Snooze Glucose Alerts for 1 Hour")},
+            {QStringLiteral("SnoozeAlerts120m"), QStringLiteral("Snooze Glucose Alerts for 2 Hours")},
+            {QStringLiteral("CancelAlertSnooze"), QStringLiteral("Cancel Alert Snooze (Resume Alerts)")},
+            {QStringLiteral("ToggleHighContrast"), QStringLiteral("Toggle WCAG AAA High Contrast Mode")},
+            {QStringLiteral("OpenLogViewer"), QStringLiteral("Open Diagnostic Log Viewer")},
+        };
+
+        QDBusArgument emptyIntArray;
+        emptyIntArray.beginArray(QMetaType::fromType<int>());
+        emptyIntArray.endArray();
+        const QVariant emptyKeysVar = QVariant::fromValue(emptyIntArray);
+
+        for (const auto& entry : shortcuts) {
+            const QStringList actionId{
+                componentUnique,
+                entry.first,
+                componentFriendly,
+                entry.second,
+            };
+            QDBusMessage regMsg = QDBusMessage::createMethodCall(
+                QStringLiteral("org.kde.kglobalaccel"),
+                QStringLiteral("/kglobalaccel"),
+                QStringLiteral("org.kde.KGlobalAccel"),
+                QStringLiteral("doRegister")
+            );
+            regMsg << actionId;
+            bus.asyncCall(regMsg);
+
+            if (!existingShortcuts.contains(entry.first)) {
+                QDBusMessage setMsg = QDBusMessage::createMethodCall(
+                    QStringLiteral("org.kde.kglobalaccel"),
+                    QStringLiteral("/kglobalaccel"),
+                    QStringLiteral("org.kde.KGlobalAccel"),
+                    QStringLiteral("setForeignShortcut")
+                );
+                setMsg << actionId << emptyKeysVar;
+                bus.asyncCall(setMsg);
+            }
+        }
+    }
+
+public:
+    bool handleGlobalShortcutAction(const QString& actionId) {
+        const QString cleanId = actionId.trimmed();
+        if (cleanId.isEmpty()) {
+            return false;
+        }
+        const qint64 nowMs = QDateTime::currentMSecsSinceEpoch();
+        if (qEnvironmentVariable("QT_QPA_PLATFORM") != QStringLiteral("offscreen")) {
+            if (cleanId == m_lastShortcutActionId && (nowMs - m_lastShortcutEpochMs) < 400) {
+                return true;
+            }
+        }
+        m_lastShortcutActionId = cleanId;
+        m_lastShortcutEpochMs = nowMs;
+
+        if (m_controller) {
+            bool handled = false;
+            if (QThread::currentThread() == m_controller->thread()) {
+                QMetaObject::invokeMethod(
+                    m_controller,
+                    "handleGlobalShortcutAction",
+                    Qt::DirectConnection,
+                    Q_RETURN_ARG(bool, handled),
+                    Q_ARG(QString, cleanId)
+                );
+                return handled;
+            }
+            QMetaObject::invokeMethod(
+                m_controller,
+                "handleGlobalShortcutAction",
+                Qt::QueuedConnection,
+                Q_ARG(QString, cleanId)
+            );
+            return true;
+        }
+
+        if (cleanId == QStringLiteral("_launch") || cleanId == QStringLiteral("ShowMainWindow")) {
+            show_main_window();
+            return true;
+        }
+        if (cleanId == QStringLiteral("MinimizeToTray")) {
+            hide_main_window_to_tray();
+            return true;
+        }
+        if (cleanId == QStringLiteral("ToggleMainWindow")) {
+            if (is_main_window_shown()) {
+                hide_main_window_to_tray();
+            } else {
+                show_main_window();
+            }
+            return true;
+        }
+        if (cleanId == QStringLiteral("OpenMedicationsTab")) {
+            show_main_window_tab(QStringLiteral("medications"));
+            return true;
+        }
+        if (cleanId == QStringLiteral("OpenLogViewer")) {
+            show_log_viewer_window();
+            return true;
+        }
+        return false;
+    }
+
+private:
 
     bool m_initialized = false;
     bool m_overlayVisible = false;
@@ -672,6 +1058,8 @@ private:
     QSet<uint> m_activeAlertNotificationIds;
     QHash<QString, uint> m_activeMedicationNotificationIds;
     uint m_lastAlertNotificationId = 0;
+    QString m_lastShortcutActionId;
+    qint64 m_lastShortcutEpochMs = 0;
 
     bool sendDesktopNotificationWithActions(
         const QString& title,
@@ -679,7 +1067,8 @@ private:
         bool critical,
         const QStringList& actions,
         bool replaceLastAlert,
-        const QString& medicationKey = QString()
+        const QString& medicationKey = QString(),
+        const QString& eventId = QString()
     ) {
         if (qEnvironmentVariable("QT_QPA_PLATFORM") == QStringLiteral("offscreen")) {
             return false;
@@ -688,34 +1077,38 @@ private:
         if (!bus.isConnected()) {
             return false;
         }
-        if (!m_notifWatcher) {
-            m_notifWatcher = new NotificationActionWatcher(QCoreApplication::instance());
-            bus.connect(
-                QStringLiteral("org.freedesktop.Notifications"),
-                QStringLiteral("/org/freedesktop/Notifications"),
-                QStringLiteral("org.freedesktop.Notifications"),
-                QStringLiteral("ActionInvoked"),
-                m_notifWatcher,
-                SLOT(onActionInvoked(uint,QString))
-            );
-            bus.connect(
-                QStringLiteral("org.freedesktop.Notifications"),
-                QStringLiteral("/org/freedesktop/Notifications"),
-                QStringLiteral("org.freedesktop.Notifications"),
-                QStringLiteral("NotificationClosed"),
-                m_notifWatcher,
-                SLOT(onNotificationClosed(uint,uint))
-            );
-        }
+        ensureNotificationWatcherConnected(bus);
+
+        const QString resolvedEventId = eventId.isEmpty()
+            ? resolveNotificationEventId(title, critical, replaceLastAlert, medicationKey)
+            : eventId;
+        const uchar urgencyLevel = critical
+            ? 2u
+            : ((resolvedEventId == QStringLiteral("glucoseStatusSummary")
+                || resolvedEventId == QStringLiteral("updateAvailable"))
+                ? 0u
+                : 1u);
 
         QVariantMap hints;
         hints.insert(
             QStringLiteral("urgency"),
-            QVariant::fromValue<uchar>(critical ? 2u : 1u)
+            QVariant::fromValue<uchar>(urgencyLevel)
         );
         hints.insert(
             QStringLiteral("desktop-entry"),
             QStringLiteral("io.github.russellmilliner.LibreLinkUpDesktop")
+        );
+        hints.insert(
+            QStringLiteral("x-kde-appname"),
+            QStringLiteral("io.github.russellmilliner.LibreLinkUpDesktop")
+        );
+        hints.insert(
+            QStringLiteral("x-kde-display-appname"),
+            QStringLiteral("LibreLinkUp Rust Desktop")
+        );
+        hints.insert(
+            QStringLiteral("x-kde-eventId"),
+            resolvedEventId
         );
 
         const uint replacesId = replaceLastAlert
@@ -783,6 +1176,21 @@ inline void NotificationActionWatcher::onActionInvoked(uint id, const QString& a
 inline void NotificationActionWatcher::onNotificationClosed(uint id, uint reason) {
     Q_UNUSED(reason);
     TrayManager::instance().handleNotificationClosed(id);
+}
+
+inline void NotificationActionWatcher::onGlobalShortcutPressed(
+    const QString& componentUnique,
+    const QString& shortcutUnique,
+    qlonglong timestamp
+) {
+    Q_UNUSED(timestamp);
+    if (componentUnique == QStringLiteral("io.github.russellmilliner.LibreLinkUpDesktop.desktop")) {
+        TrayManager::instance().handleGlobalShortcutAction(shortcutUnique);
+    }
+}
+
+inline void NotificationActionWatcher::invokeGlobalAction(const QString& actionId) {
+    TrayManager::instance().handleGlobalShortcutAction(actionId);
 }
 
 inline void NotificationActionWatcher::onKWinOverlayGeometry(

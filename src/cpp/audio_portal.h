@@ -140,6 +140,22 @@ inline bool librelinkup_request_background_autostart(bool enable, bool start_min
     return true;
 }
 
+inline bool librelinkup_try_dispatch_cli_action(const QString& action_id) {
+    QDBusConnection bus = QDBusConnection::sessionBus();
+    if (!bus.isConnected()) {
+        return false;
+    }
+    QDBusMessage msg = QDBusMessage::createMethodCall(
+        QStringLiteral("io.github.russellmilliner.LibreLinkUpDesktop"),
+        QStringLiteral("/LibreLinkUpKWin"),
+        QStringLiteral("io.github.russellmilliner.LibreLinkUpDesktop.KWinBridge"),
+        QStringLiteral("invokeGlobalAction")
+    );
+    msg << action_id;
+    const QDBusMessage reply = bus.call(msg, QDBus::Block, 2000);
+    return reply.type() != QDBusMessage::ErrorMessage;
+}
+
 inline void librelinkup_quit_app() {
     QCoreApplication::quit();
 }
@@ -248,6 +264,13 @@ inline std::int32_t librelinkup_run_app(bool start_minimized) {
             win->requestActivate();
             librelinkup::update_tray_window_actions();
         }
+    }
+
+    const QString initialAction = qEnvironmentVariable("LIBRELINKUP_INITIAL_ACTION").trimmed();
+    if (!initialAction.isEmpty()) {
+        QTimer::singleShot(350, &app, [initialAction]() {
+            librelinkup::TrayManager::instance().handleGlobalShortcutAction(initialAction);
+        });
     }
 
     return app.exec();

@@ -1,0 +1,59 @@
+[Global]
+IconName=io.github.russellmilliner.LibreLinkUpDesktop
+Comment=Continuous Glucose Monitor & Medication Reminders
+Name=LibreLinkUp Rust Desktop
+DesktopEntry=io.github.russellmilliner.LibreLinkUpDesktop
+
+[Event/urgentLowGlucose]
+Name=Urgent Low Glucose Alert
+Comment=Critical alert when blood glucose drops at or below the urgent low threshold
+Action=Popup
+Urgency=Critical
+
+[Event/lowGlucose]
+Name=Low Glucose Alert
+Comment=Critical alert when blood glucose drops below the target low threshold
+Action=Popup
+Urgency=Critical
+
+[Event/highGlucose]
+Name=High Glucose Alert
+Comment=Alert when blood glucose rises above the target high threshold
+Action=Popup
+Urgency=High
+
+[Event/staleReading]
+Name=Stale Sensor Reading Alert
+Comment=Warning when no new CGM reading has been received within the configured stale threshold
+Action=Popup
+Urgency=Normal
+
+[Event/medicationDue]
+Name=Medication Due Reminder
+Comment=Scheduled reminder when one or more medications are due to be taken
+Action=Popup
+Urgency=Normal
+
+[Event/sensorExpiring]
+Name=CGM Sensor Expiring Soon
+Comment=Reminder when the active FreeStyle Libre sensor is approaching expiration
+Action=Popup
+Urgency=Normal
+
+[Event/glucoseStatusSummary]
+Name=On-Demand Glucose Reading Summary
+Comment=Popup notification showing the current blood glucose value, trend, and time in range when triggered by shortcut
+Action=Popup
+Urgency=Low
+
+[Event/updateAvailable]
+Name=Application Update Notification
+Comment=Notification when a newer version of LibreLinkUp Rust Desktop is available on GitHub Releases
+Action=Popup
+Urgency=Low
+
+[Event/alertTest]
+Name=Manual Alert Test
+Comment=Test notification triggered from the Alerts settings tab
+Action=Popup
+Urgency=Normal

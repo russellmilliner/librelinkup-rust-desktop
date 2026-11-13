@@ -1133,6 +1133,197 @@ impl qobject::TelemetryController {
         false
     }
 
+    pub fn handle_global_shortcut_action(mut self: Pin<&mut Self>, action_id: QString) -> bool {
+        let action = action_id.to_string();
+        let clean = action.trim();
+        log_info("SHORTCUT", format!("Global shortcut invoked: '{clean}'."));
+        match clean {
+            "_launch" | "ShowMainWindow" => {
+                self.show_main_window();
+                true
+            }
+            "MinimizeToTray" => {
+                self.hide_main_window();
+                true
+            }
+            "ToggleMainWindow" => {
+                if qobject::librelinkup_is_main_window_shown() {
+                    self.hide_main_window();
+                } else {
+                    self.show_main_window();
+                }
+                true
+            }
+            "ToggleOverlay" => {
+                let next = with_state(|s| !s.overlay_visible);
+                self.update_overlay_visible(next);
+                true
+            }
+            "ToggleOverlayAllDesktops" => {
+                let next = with_state(|s| !s.overlay_on_all_desktops);
+                self.update_overlay_on_all_desktops(next);
+                true
+            }
+            "RefreshGlucoseNow" => {
+                self.refresh_glucose_now();
+                true
+            }
+            "ShowPopupSummary" => {
+                let (title, body) = with_state(|s| {
+                    if s.snapshot.value_mg_dl > 0.0 {
+                        let age_or_time = if s.reading_age_display.is_empty() {
+                            s.last_updated.as_str()
+                        } else {
+                            s.reading_age_display.as_str()
+                        };
+                        let t = format!(
+                            "Blood Sugar: {} {} {}",
+                            s.glucose_display, s.result_unit, s.trend_symbol
+                        );
+                        let b = format!(
+                            "Status: {} (Target: {})\n{}\nLast reading: {}",
+                            s.range_status_label,
+                            s.target_range_display,
+                            s.ea1c_headline,
+                            age_or_time
+                        );
+                        (t, b)
+                    } else {
+                        (
+                            "Glucose Summary: Waiting for Reading".to_string(),
+                            s.status_message.clone(),
+                        )
+                    }
+                });
+                qobject::librelinkup_show_notification(
+                    &QString::from(title.as_str()),
+                    &QString::from(body.as_str()),
+                    false,
+                    false,
+                );
+                true
+            }
+            "OpenMedicationsTab" => {
+                with_state(|s| {
+                    s.overlay_only_mode = false;
+                    let _ = ops::persist_settings(s);
+                });
+                qobject::librelinkup_show_main_window_tab(&QString::from("medications"));
+                self.as_mut().tick();
+                true
+            }
+            "MarkDueMedicationsTaken" => {
+                let (logged_names, latest_dose) = with_state(|s| {
+                    let now = now_epoch();
+                    let g = (s.snapshot.value_mg_dl > 0.0).then_some(s.snapshot.value_mg_dl);
+                    let mut target_ids: Vec<(String, String)> = s
+                        .medication_store
+                        .medications
+                        .iter()
+                        .filter(|m| m.enabled && s.medication_store.due_slot(m, now).is_some())
+                        .map(|m| (m.id.clone(), m.name.clone()))
+                        .collect();
+
+                    if target_ids.is_empty() {
+                        target_ids = s
+                            .medication_store
+                            .medications
+                            .iter()
+                            .filter(|m| {
+                                m.enabled
+                                    && m.schedule != crate::medications::MedicationSchedule::AsNeeded
+                                    && matches!(
+                                        s.medication_store.medication_status(m, now).0,
+                                        crate::medications::DoseStatusKind::DueNow
+                                            | crate::medications::DoseStatusKind::Upcoming
+                                    )
+                            })
+                            .map(|m| (m.id.clone(), m.name.clone()))
+                            .collect();
+                    }
+
+                    let mut names = Vec::new();
+                    let mut last_dose = None;
+                    for (med_id, med_name) in target_ids {
+                        if let Ok(dose) = s.medication_store.log_dose(
+                            &med_id,
+                            None,
+                            now,
+                            g,
+                            "Logged via global shortcut",
+                        ) {
+                            names.push(med_name);
+                            last_dose = Some(dose);
+                        }
+                    }
+                    if last_dose.is_some() {
+                        let _ = crate::medications::save_default_medications(&s.medication_store);
+                    }
+                    (names, last_dose)
+                });
+                if let Some(dose) = latest_dose {
+                    ops::spawn_ha_medications_push(Some(dose));
+                    let summary = logged_names.join(", ");
+                    log_info("MEDS", format!("Shortcut marked medication(s) taken: {summary}"));
+                    qobject::librelinkup_show_notification(
+                        &QString::from("Medication Logged"),
+                        &QString::from(format!("Marked as taken: {summary}").as_str()),
+                        false,
+                        false,
+                    );
+                } else {
+                    qobject::librelinkup_show_notification(
+                        &QString::from("Medication Status"),
+                        &QString::from("No scheduled or due medications found to log."),
+                        false,
+                        false,
+                    );
+                }
+                self.as_mut().tick();
+                true
+            }
+            "SnoozeAlerts30m" => {
+                self.snooze_alerts(30);
+                true
+            }
+            "SnoozeAlerts60m" => {
+                self.snooze_alerts(60);
+                true
+            }
+            "SnoozeAlerts120m" => {
+                self.snooze_alerts(120);
+                true
+            }
+            "CancelAlertSnooze" => {
+                self.snooze_alerts(0);
+                true
+            }
+            "ToggleHighContrast" => {
+                let next = with_state(|s| {
+                    s.high_contrast_mode = !s.high_contrast_mode;
+                    let _ = ops::persist_settings(s);
+                    s.high_contrast_mode
+                });
+                log_info(
+                    "ACCESSIBILITY",
+                    format!("Global shortcut toggled High Contrast mode to {next}."),
+                );
+                self.as_mut().tick();
+                true
+            }
+            "OpenLogViewer" => {
+                with_state(|s| {
+                    s.overlay_only_mode = false;
+                    let _ = ops::persist_settings(s);
+                });
+                qobject::librelinkup_show_main_window_tab(&QString::from("logs"));
+                self.as_mut().tick();
+                true
+            }
+            _ => false,
+        }
+    }
+
     // ---- settings-shaped actions dispatched by the C++ tray / window manager ----
 
     pub fn update_theme_mode(mut self: Pin<&mut Self>, mode: QString) {

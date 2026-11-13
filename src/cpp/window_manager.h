@@ -878,7 +878,7 @@ inline QString build_kwin_resident_script_js(
         "    enforceLibreLinkUpRules(w);\n"
         "  });\n"
         "}\n"
-        "registerShortcut('LibreLinkUp SyncOverlay', 'LibreLinkUp Sync Overlay Window', '', function() {\n"
+        "registerShortcut('LibreLinkUp SyncOverlay', 'LibreLinkUp (internal): Sync Overlay Window', '', function() {\n"
         "  if (!dbusAddr) return;\n"
         "  callDBus(dbusAddr, '/LibreLinkUpKWin', dbusIface, 'getDesiredOverlaySync', function(spec) {\n"
         "    if (!spec) return;\n"
@@ -913,7 +913,7 @@ inline QString build_kwin_resident_script_js(
         "    }\n"
         "  });\n"
         "});\n"
-        "registerShortcut('LibreLinkUp SyncMain', 'LibreLinkUp Sync Main Window', '', function() {\n"
+        "registerShortcut('LibreLinkUp SyncMain', 'LibreLinkUp (internal): Sync Main Window', '', function() {\n"
         "  if (!dbusAddr) return;\n"
         "  callDBus(dbusAddr, '/LibreLinkUpKWin', dbusIface, 'getDesiredMainSync', function(spec) {\n"
         "    if (!spec) return;\n"
@@ -936,7 +936,7 @@ inline QString build_kwin_resident_script_js(
         "    }\n"
         "  });\n"
         "});\n"
-        "registerShortcut('LibreLinkUp QueryOverlay', 'LibreLinkUp Query Overlay Geometry', '', function() {\n"
+        "registerShortcut('LibreLinkUp QueryOverlay', 'LibreLinkUp (internal): Query Overlay Geometry', '', function() {\n"
         "  var wl = windowListAll();\n"
         "  if (!wl) return;\n"
         "  for (var i = 0; i < wl.length; ++i) {\n"
@@ -946,7 +946,7 @@ inline QString build_kwin_resident_script_js(
         "    }\n"
         "  }\n"
         "});\n"
-        "registerShortcut('LibreLinkUp QueryMain', 'LibreLinkUp Query Main Geometry', '', function() {\n"
+        "registerShortcut('LibreLinkUp QueryMain', 'LibreLinkUp (internal): Query Main Geometry', '', function() {\n"
         "  var wl = windowListAll();\n"
         "  if (!wl) return;\n"
         "  for (var i = 0; i < wl.length; ++i) {\n"
@@ -1819,6 +1819,24 @@ inline void show_about_window() {
     }
 }
 
+inline void show_main_window_tab(const QString& tabName) {
+    const QString clean = tabName.trimmed().toLower();
+    if (clean == QStringLiteral("logs")) {
+        show_log_viewer_window();
+        return;
+    }
+    if (clean == QStringLiteral("about")) {
+        show_about_window();
+        return;
+    }
+    show_main_window();
+    if (QWindow* mainWin = find_main_window()) {
+        if (!clean.isEmpty()) {
+            mainWin->setProperty("activeTab", clean);
+        }
+    }
+}
+
 /// Application-wide high-resolution wheel scroll filter for Qt Quick (`QQuickFlickable` /
 /// `ListView` / `QQC2.ScrollView`).
 ///
@@ -2236,8 +2254,16 @@ inline void install_wheel_scroll_filter() {
 
 } // namespace librelinkup
 
+inline bool librelinkup_is_main_window_shown() {
+    return librelinkup::is_main_window_shown();
+}
+
 inline void librelinkup_show_main_window() {
     librelinkup::show_main_window();
+}
+
+inline void librelinkup_show_main_window_tab(const QString& tab_name) {
+    librelinkup::show_main_window_tab(tab_name);
 }
 
 inline void librelinkup_hide_main_window() {

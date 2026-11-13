@@ -34,6 +34,7 @@ modules:
       - cargo --offline build --release --verbose
       - install -Dm755 ./target/release/librelinkup-kde -t /app/bin/
       - install -Dm644 ./data/io.github.russellmilliner.LibreLinkUpDesktop.desktop -t /app/share/applications/
+      - install -Dm644 ./data/io.github.russellmilliner.LibreLinkUpDesktop.notifyrc -t /app/share/knotifications6/
       - install -Dm644 ./data/io.github.russellmilliner.LibreLinkUpDesktop.metainfo.xml -t /app/share/metainfo/
       - install -Dm644 ./data/icons/io.github.russellmilliner.LibreLinkUpDesktop.svg -t /app/share/icons/hicolor/scalable/apps/
       - install -Dm644 ./LICENSE ./NOTICE -t /app/share/licenses/io.github.russellmilliner.LibreLinkUpDesktop/

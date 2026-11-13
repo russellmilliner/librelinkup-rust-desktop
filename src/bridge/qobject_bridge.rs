@@ -158,8 +158,11 @@ pub mod qobject {
 
         fn librelinkup_sync_tray(telemetry: Pin<&mut TelemetryController>, payload: TrayPayload);
         fn librelinkup_apply_app_theme(theme_mode: &QString);
+        fn librelinkup_is_main_window_shown() -> bool;
         fn librelinkup_show_main_window();
+        fn librelinkup_show_main_window_tab(tab_name: &QString);
         fn librelinkup_hide_main_window();
+        fn librelinkup_try_dispatch_cli_action(action_id: &QString) -> bool;
         fn librelinkup_restore_overlay_placement(
             screen_name: &QString,
             x: i32,
@@ -303,6 +306,12 @@ pub mod qobject {
         fn handle_notification_action(
             self: Pin<&mut TelemetryController>,
             action_key: QString,
+        ) -> bool;
+
+        #[qinvokable]
+        fn handle_global_shortcut_action(
+            self: Pin<&mut TelemetryController>,
+            action_id: QString,
         ) -> bool;
 
         #[qinvokable]

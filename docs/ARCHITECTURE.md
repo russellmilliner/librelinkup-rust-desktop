@@ -44,7 +44,7 @@ There are **two front-ends** over one shared core:
    └────────────┬─────────────┘
                 │ C++ shims (src/cpp/*.h)
    ┌────────────▼─────────────────────────────────────────────┐
-   │ tray_manager.h  QSystemTrayIcon, freedesktop notifications│
+   │ tray_manager.h  KStatusNotifierItem, knotifications6, KGlobalAccel│
    │ window_manager.h Wayland KWin D-Bus scripting + X11 WM   │
    │ audio_portal.h  Wayland platform init + paplay/pw-play   │
    │ icon_renderer.h live glucose badge + blood drop watermark│
@@ -179,6 +179,7 @@ High and Stale are not.** Signal loss must not raise an un-dismissable critical 
 | **I-13** | Native Wayland (`QT_QPA_PLATFORM=wayland`) uses KWin D-Bus scripting (`org.kde.KWin` `/Scripting`) + `QWindow::startSystemMove()` + `/LibreLinkUpKWin` callbacks | Wayland clients cannot set or read global screen coordinates directly; KWin scripts enforce `noBorder`, `keepAbove`, `skipTaskbar/Pager/Switcher`, `onAllDesktops`, and multi-monitor coordinate persistence without XWayland |
 | **I-14** | System tray glucose badge (`build_glucose_badge_icon`) always renders the blood drop + ECG logo behind dark-outlined white text | keeps the application's signature blood drop emblem recognizable at all times while preserving high-contrast numeral legibility |
 | **I-15** | Desktop overlay opacity (`overlayOpacityPercent`, `20%`–`100%`) is applied to the whole widget container (`overlayPill.opacity` + `layer.enabled: opacityAlpha < 0.999` on KDE; `ui.set_opacity()` on Windows) | applying alpha only to the background/border leaves foreground text and buttons at 100% and makes dark-slate fill changes invisible over dark desktop windows |
+| **I-16** | KDE notifications pass `x-kde-appname` + `x-kde-eventId` hints matching `data/io.github.russellmilliner.LibreLinkUpDesktop.notifyrc`, and internal KWin helper shortcuts are prefixed `LibreLinkUp (internal):` while user shortcuts register under `io.github.russellmilliner.LibreLinkUpDesktop.desktop` | keeps all 9 alert/reminder events configurable in KDE System Settings → Notifications (with Urgent Low fail-safe) and keeps user vs. internal shortcuts clearly separated in KDE System Settings → Shortcuts |
 
 ---
 

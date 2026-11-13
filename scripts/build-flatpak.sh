@@ -43,6 +43,7 @@ flatpak build \
     cargo build --release --manifest-path '$REPO_ROOT/Cargo.toml'
     install -Dm755 \"\$CARGO_TARGET_DIR/release/librelinkup-kde\" -t /app/bin/
     install -Dm644 '$REPO_ROOT/data/${APP_ID}.desktop' -t /app/share/applications/
+    install -Dm644 '$REPO_ROOT/data/${APP_ID}.notifyrc' -t /app/share/knotifications6/
     install -Dm644 '$REPO_ROOT/data/${APP_ID}.metainfo.xml' -t /app/share/metainfo/
     install -Dm644 '$REPO_ROOT/data/icons/${APP_ID}.svg' -t /app/share/icons/hicolor/scalable/apps/
     install -Dm644 '$REPO_ROOT/LICENSE' '$REPO_ROOT/NOTICE' -t /app/share/licenses/${APP_ID}/
@@ -91,9 +92,11 @@ flatpak build-finish "$WORK_DIR/build-dir" \
   --talk-name=org.kde.KWin \
   --talk-name=org.kde.kglobalaccel \
   --filesystem=xdg-config/kdeglobals:ro \
+  --filesystem=xdg-config/io.github.russellmilliner.LibreLinkUpDesktop.notifyrc:ro \
   --filesystem=xdg-config/home-assistant.env:ro \
   --filesystem=xdg-config/librelinkup-kde:create \
   --filesystem=xdg-data/librelinkup-kde:create \
+  --filesystem=xdg-data/knotifications6:create \
   --filesystem=xdg-run/librelinkup-kde:create \
   --filesystem=~/.var/app/rocks.poopjournal.librelinkupdesktop:ro
 
@@ -112,6 +115,9 @@ rm -rf "$WORK_DIR/build-dir" "$WORK_DIR/repo"
 echo "==> Built Flatpak bundle: $OUT_DIR/$BUNDLE_NAME"
 
 if [[ "${1:-}" != "--no-install" ]]; then
+  HOST_KNOTIF_DIR="${XDG_DATA_HOME:-$HOME/.local/share}/knotifications6"
+  echo "==> Installing KDE notification config to $HOST_KNOTIF_DIR/${APP_ID}.notifyrc..."
+  install -Dm644 "$REPO_ROOT/data/${APP_ID}.notifyrc" "$HOST_KNOTIF_DIR/${APP_ID}.notifyrc"
   echo "==> Installing Flatpak bundle..."
   if ! flatpak install --user -y --reinstall "$OUT_DIR/$BUNDLE_NAME"; then
     echo "==> User scope install failed (e.g. Bazzite system-scoped Flathub runtime); retrying with --system..."

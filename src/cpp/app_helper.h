@@ -18,6 +18,8 @@ public:
 public Q_SLOTS:
     void onActionInvoked(uint id, const QString& actionKey);
     void onNotificationClosed(uint id, uint reason);
+    void onGlobalShortcutPressed(const QString& componentUnique, const QString& shortcutUnique, qlonglong timestamp);
+    void invokeGlobalAction(const QString& actionId);
     void onKWinOverlayGeometry(const QString& screenName, int globalX, int globalY, int width, int height);
     void onKWinMainWindowGeometry(const QString& screenName, int globalX, int globalY, int width, int height);
     QString getDesiredOverlaySync();

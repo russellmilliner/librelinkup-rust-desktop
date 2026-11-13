@@ -623,3 +623,64 @@ fn test_estimated_a1c_and_medication_tracking_lifecycle() {
     assert_eq!(markers.len(), 1);
     assert_eq!(markers[0].medication_name, "Metformin ER");
 }
+
+#[test]
+fn test_kde_notifyrc_and_desktop_shortcut_actions_manifest() {
+    let manifest_dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
+    let notifyrc_path = manifest_dir.join("data/io.github.russellmilliner.LibreLinkUpDesktop.notifyrc");
+    let desktop_path = manifest_dir.join("data/io.github.russellmilliner.LibreLinkUpDesktop.desktop");
+
+    let notifyrc = std::fs::read_to_string(&notifyrc_path).expect("read .notifyrc");
+    for event_id in [
+        "urgentLowGlucose",
+        "lowGlucose",
+        "highGlucose",
+        "staleReading",
+        "medicationDue",
+        "sensorExpiring",
+        "glucoseStatusSummary",
+        "updateAvailable",
+        "alertTest",
+    ] {
+        assert!(
+            notifyrc.contains(&format!("[Event/{event_id}]")),
+            "Missing [Event/{event_id}] in {}",
+            notifyrc_path.display()
+        );
+    }
+    assert!(notifyrc.contains("DesktopEntry=io.github.russellmilliner.LibreLinkUpDesktop"));
+
+    let desktop = std::fs::read_to_string(&desktop_path).expect("read .desktop");
+    assert!(desktop.contains("X-KDE-Notifications=io.github.russellmilliner.LibreLinkUpDesktop"));
+    assert!(desktop.contains("X-GNOME-UsesNotifications=true"));
+
+    let action_ids = [
+        "ToggleMainWindow",
+        "ShowMainWindow",
+        "MinimizeToTray",
+        "ToggleOverlay",
+        "ToggleOverlayAllDesktops",
+        "RefreshGlucoseNow",
+        "ShowPopupSummary",
+        "OpenMedicationsTab",
+        "MarkDueMedicationsTaken",
+        "SnoozeAlerts30m",
+        "SnoozeAlerts60m",
+        "SnoozeAlerts120m",
+        "CancelAlertSnooze",
+        "ToggleHighContrast",
+        "OpenLogViewer",
+    ];
+    for act in action_ids {
+        assert!(
+            desktop.contains(&format!("[Desktop Action {act}]")),
+            "Missing [Desktop Action {act}] in {}",
+            desktop_path.display()
+        );
+        assert!(
+            desktop.contains(&format!("{act};")),
+            "Action '{act}' not listed in Actions= in {}",
+            desktop_path.display()
+        );
+    }
+}

@@ -1,4 +1,47 @@
-use librelinkup_kde::bridge::qobject_bridge::qobject::librelinkup_run_app;
+use cxx_qt_lib::QString;
+use librelinkup_kde::bridge::qobject_bridge::qobject::{
+    librelinkup_run_app, librelinkup_try_dispatch_cli_action,
+};
+
+fn resolve_cli_action(args: &[String]) -> Option<String> {
+    let mut i = 1usize;
+    while i < args.len() {
+        let a = args[i].as_str();
+        if let Some(val) = a.strip_prefix("--action=") {
+            if !val.trim().is_empty() {
+                return Some(val.trim().to_string());
+            }
+        } else if a == "--action" && i + 1 < args.len() {
+            let val = args[i + 1].trim();
+            if !val.is_empty() {
+                return Some(val.to_string());
+            }
+        }
+        let mapped = match a {
+            "--toggle-window" => Some("ToggleMainWindow"),
+            "--show-window" => Some("ShowMainWindow"),
+            "--hide-window" => Some("MinimizeToTray"),
+            "--toggle-overlay" => Some("ToggleOverlay"),
+            "--toggle-overlay-all-desktops" => Some("ToggleOverlayAllDesktops"),
+            "--refresh" => Some("RefreshGlucoseNow"),
+            "--notify-reading" => Some("ShowPopupSummary"),
+            "--medications" => Some("OpenMedicationsTab"),
+            "--mark-due-meds-taken" => Some("MarkDueMedicationsTaken"),
+            "--snooze-30" => Some("SnoozeAlerts30m"),
+            "--snooze-60" => Some("SnoozeAlerts60m"),
+            "--snooze-120" => Some("SnoozeAlerts120m"),
+            "--cancel-snooze" => Some("CancelAlertSnooze"),
+            "--toggle-high-contrast" => Some("ToggleHighContrast"),
+            "--logs" => Some("OpenLogViewer"),
+            _ => None,
+        };
+        if let Some(action_id) = mapped {
+            return Some(action_id.to_string());
+        }
+        i += 1;
+    }
+    None
+}
 
 fn main() {
     let args: Vec<String> = std::env::args().collect();
@@ -19,7 +62,22 @@ fn main() {
                -m, --minimized, --start-minimized, --autostart   Start hidden in the system tray\n  \
                -u, --check-update                                Check GitHub Releases for updates and exit\n  \
                -V, --version                                     Print version information\n  \
-               -h, --help                                        Print this help message"
+               -h, --help                                        Print this help message\n\n\
+             Global Shortcut / Desktop Actions (forward to running instance via D-Bus or run at startup):\n  \
+               --toggle-window                                   Toggle main window visibility\n  \
+               --show-window                                     Show main window\n  \
+               --hide-window                                     Minimize main window to system tray\n  \
+               --toggle-overlay                                  Toggle floating desktop overlay widget\n  \
+               --toggle-overlay-all-desktops                     Toggle overlay visibility across all virtual desktops\n  \
+               --refresh                                         Refresh blood glucose reading now\n  \
+               --notify-reading                                  Show desktop notification with current glucose reading\n  \
+               --medications                                     Open Medications tab\n  \
+               --mark-due-meds-taken                             Mark due scheduled medications as taken\n  \
+               --snooze-30 | --snooze-60 | --snooze-120          Snooze non-urgent alerts for 30 / 60 / 120 minutes\n  \
+               --cancel-snooze                                   Cancel active alert snooze\n  \
+               --toggle-high-contrast                            Toggle WCAG AAA high contrast mode\n  \
+               --logs                                            Open diagnostic log viewer\n  \
+               --action <ACTION_ID>                              Invoke a desktop/global shortcut action by ID"
         );
         return;
     }
@@ -39,6 +97,13 @@ fn main() {
             }
         }
         return;
+    }
+
+    if let Some(action_id) = resolve_cli_action(&args) {
+        if librelinkup_try_dispatch_cli_action(&QString::from(action_id.as_str())) {
+            return;
+        }
+        std::env::set_var("LIBRELINKUP_INITIAL_ACTION", &action_id);
     }
 
     let start_minimized = args.iter().any(|a| {

@@ -25,6 +25,7 @@
       <li>Floating desktop overlay widget with Dark Theme, on-card control buttons, scroll-wheel adjustable transparency, and persistent multi-monitor placement</li>
       <li>Stale-reading detection with signal-loss alerts, urgent-low/repeat/snooze alert engine, and built-in audible alarm sound</li>
       <li>Built-in diagnostic Log Viewer with filtering, search, and export</li>
+      <li>KDE Plasma 6 System Settings integration with 9 per-event notification categories (.notifyrc) and 16 customizable global keyboard shortcuts (KGlobalAccel, desktop actions, and single-instance D-Bus CLI flags)</li>
     </ul>
   </description>
   <launchable type="desktop-id">io.github.russellmilliner.LibreLinkUpDesktop.desktop</launchable>

@@ -1418,6 +1418,139 @@ inline QString librelinkup_run_ui_overflow_tests() {
         librelinkup_uitest::pump_events(25);
     }
 
+    // State H: Verify KDE Notification Event IDs, .notifyrc Popup Filter & Global Shortcut Dispatch
+    {
+        struct EventMappingCase {
+            QString title;
+            bool critical;
+            bool withSnooze;
+            QString medKey;
+            QString expectedEventId;
+        };
+        const QList<EventMappingCase> cases = {
+            {QStringLiteral("Urgent Low Glucose: 52 mg/dL"), true, true, QString(), QStringLiteral("urgentLowGlucose")},
+            {QStringLiteral("Low Glucose Alert: 64 mg/dL"), true, true, QString(), QStringLiteral("lowGlucose")},
+            {QStringLiteral("High Glucose Alert: 215 mg/dL"), false, true, QString(), QStringLiteral("highGlucose")},
+            {QStringLiteral("Stale Glucose Alert"), false, true, QString(), QStringLiteral("staleReading")},
+            {QStringLiteral("Medication Reminder: Metformin ER"), false, false, QStringLiteral("med-1"), QStringLiteral("medicationDue")},
+            {QStringLiteral("CGM Sensor Expiring Soon"), false, true, QString(), QStringLiteral("sensorExpiring")},
+            {QStringLiteral("Blood Sugar: 112 mg/dL →"), false, false, QString(), QStringLiteral("glucoseStatusSummary")},
+            {QStringLiteral("LibreLinkUp Update Available"), false, false, QString(), QStringLiteral("updateAvailable")},
+            {QStringLiteral("LibreLinkUp Alert Test"), false, true, QString(), QStringLiteral("alertTest")},
+        };
+        for (const auto& c : cases) {
+            const QString got = librelinkup::TrayManager::resolveNotificationEventId(
+                c.title, c.critical, c.withSnooze, c.medKey
+            );
+            if (got != c.expectedEventId) {
+                violations.append(
+                    QStringLiteral("resolveNotificationEventId('%1') expected '%2', got '%3'")
+                        .arg(c.title, c.expectedEventId, got)
+                );
+            }
+        }
+
+        // Verify .notifyrc Popup toggle reading via XDG_CONFIG_HOME override
+        {
+            const QByteArray prevXdgCfg = qgetenv("XDG_CONFIG_HOME");
+            const QString tmpCfgDir = qEnvironmentVariable("LIBRELINKUP_CONFIG_DIR").trimmed();
+            if (!tmpCfgDir.isEmpty()) {
+                qputenv("XDG_CONFIG_HOME", tmpCfgDir.toUtf8());
+                const QString overridePath = QDir(tmpCfgDir).filePath(
+                    QStringLiteral("io.github.russellmilliner.LibreLinkUpDesktop.notifyrc")
+                );
+                QFile f(overridePath);
+                if (f.open(QIODevice::WriteOnly | QIODevice::Truncate | QIODevice::Text)) {
+                    f.write(
+                        "[Event/glucoseStatusSummary]\n"
+                        "Action=\n\n"
+                        "[Event/highGlucose]\n"
+                        "Action=Popup|Sound\n"
+                    );
+                    f.close();
+                    if (librelinkup::TrayManager::instance().isKdeNotificationEventPopupEnabled(
+                            QStringLiteral("glucoseStatusSummary"))) {
+                        violations.append(QStringLiteral("isKdeNotificationEventPopupEnabled should return false when Action= is empty"));
+                    }
+                    if (!librelinkup::TrayManager::instance().isKdeNotificationEventPopupEnabled(
+                            QStringLiteral("highGlucose"))) {
+                        violations.append(QStringLiteral("isKdeNotificationEventPopupEnabled should return true when Action=Popup|Sound"));
+                    }
+                    if (!librelinkup::TrayManager::instance().isKdeNotificationEventPopupEnabled(
+                            QStringLiteral("lowGlucose"))) {
+                        violations.append(QStringLiteral("isKdeNotificationEventPopupEnabled should default to true when event is absent"));
+                    }
+                    QFile::remove(overridePath);
+                }
+                if (prevXdgCfg.isEmpty()) {
+                    qunsetenv("XDG_CONFIG_HOME");
+                } else {
+                    qputenv("XDG_CONFIG_HOME", prevXdgCfg);
+                }
+            }
+        }
+
+        // Verify Global Shortcut Actions dispatch cleanly via TrayManager -> TelemetryController
+        QMetaObject::invokeMethod(ctrl, "loadDemoSampleData", Qt::DirectConnection);
+        sync_all();
+        const bool initialOv = settingsCtrl->property("overlayVisible").toBool();
+        const bool initialAllDesk = settingsCtrl->property("overlayOnAllDesktops").toBool();
+        const bool initialHC = settingsCtrl->property("highContrastMode").toBool();
+
+        const bool toggleOvOk = librelinkup::TrayManager::instance().handleGlobalShortcutAction(QStringLiteral("ToggleOverlay"));
+        sync_all();
+        if (!toggleOvOk || settingsCtrl->property("overlayVisible").toBool() == initialOv) {
+            violations.append(QStringLiteral("Global shortcut ToggleOverlay did not toggle overlayVisible"));
+        }
+        librelinkup::TrayManager::instance().handleGlobalShortcutAction(QStringLiteral("ToggleOverlay"));
+        sync_all();
+
+        const bool toggleAllDeskOk = librelinkup::TrayManager::instance().handleGlobalShortcutAction(QStringLiteral("ToggleOverlayAllDesktops"));
+        sync_all();
+        if (!toggleAllDeskOk || settingsCtrl->property("overlayOnAllDesktops").toBool() == initialAllDesk) {
+            violations.append(QStringLiteral("Global shortcut ToggleOverlayAllDesktops did not toggle overlayOnAllDesktops"));
+        }
+        librelinkup::TrayManager::instance().handleGlobalShortcutAction(QStringLiteral("ToggleOverlayAllDesktops"));
+        sync_all();
+
+        const bool snoozeOk = librelinkup::TrayManager::instance().handleGlobalShortcutAction(QStringLiteral("SnoozeAlerts30m"));
+        sync_all();
+        if (!snoozeOk || !ctrl->property("alertsSnoozed").toBool()) {
+            violations.append(QStringLiteral("Global shortcut SnoozeAlerts30m did not enable alertsSnoozed"));
+        }
+        const bool cancelSnoozeOk = librelinkup::TrayManager::instance().handleGlobalShortcutAction(QStringLiteral("CancelAlertSnooze"));
+        sync_all();
+        if (!cancelSnoozeOk || ctrl->property("alertsSnoozed").toBool()) {
+            violations.append(QStringLiteral("Global shortcut CancelAlertSnooze did not clear alertsSnoozed"));
+        }
+
+        const bool toggleHcOk = librelinkup::TrayManager::instance().handleGlobalShortcutAction(QStringLiteral("ToggleHighContrast"));
+        sync_all();
+        if (!toggleHcOk || settingsCtrl->property("highContrastMode").toBool() == initialHC) {
+            violations.append(QStringLiteral("Global shortcut ToggleHighContrast did not toggle highContrastMode"));
+        }
+        librelinkup::TrayManager::instance().handleGlobalShortcutAction(QStringLiteral("ToggleHighContrast"));
+        sync_all();
+
+        if (!librelinkup::TrayManager::instance().handleGlobalShortcutAction(QStringLiteral("ShowPopupSummary"))) {
+            violations.append(QStringLiteral("Global shortcut ShowPopupSummary returned false"));
+        }
+        if (!librelinkup::TrayManager::instance().handleGlobalShortcutAction(QStringLiteral("MarkDueMedicationsTaken"))) {
+            violations.append(QStringLiteral("Global shortcut MarkDueMedicationsTaken returned false"));
+        }
+        if (!librelinkup::TrayManager::instance().handleGlobalShortcutAction(QStringLiteral("OpenMedicationsTab"))
+            || mainWin->property("activeTab").toString() != QStringLiteral("medications")) {
+            violations.append(QStringLiteral("Global shortcut OpenMedicationsTab did not switch to medications tab"));
+        }
+        if (librelinkup::TrayManager::instance().handleGlobalShortcutAction(QStringLiteral("UnknownNonexistentAction"))) {
+            violations.append(QStringLiteral("Unknown global shortcut action should return false"));
+        }
+
+        mainWin->setProperty("activeTab", QStringLiteral("dashboard"));
+        sync_all();
+        librelinkup_uitest::pump_events(25);
+    }
+
     const QString screenshotDir = qEnvironmentVariable("LLU_EXPORT_SCREENSHOTS_DIR").trimmed();
     if (!screenshotDir.isEmpty()) {
         QDir dir(screenshotDir);

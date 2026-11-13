@@ -19,12 +19,14 @@ finish-args:
   - --talk-name=org.kde.KWin
   - --talk-name=org.kde.kglobalaccel
   - --filesystem=xdg-config/kdeglobals:ro
+  - --filesystem=xdg-config/io.github.russellmilliner.LibreLinkUpDesktop.notifyrc:ro
   - --filesystem=xdg-config/home-assistant.env:ro
   # Local builds share the host vault/settings: Flatpak also exposes these at the app's
   # XDG_CONFIG_HOME/XDG_DATA_HOME paths, so they must stay writable. Flathub omits them
   # and uses the private ~/.var/app/<id> directories instead.
   - --filesystem=xdg-config/librelinkup-kde:create
   - --filesystem=xdg-data/librelinkup-kde:create
+  - --filesystem=xdg-data/knotifications6:create
   - --filesystem=xdg-run/librelinkup-kde:create
   - --filesystem=~/.var/app/rocks.poopjournal.librelinkupdesktop:ro
 
@@ -43,6 +45,7 @@ modules:
       - cargo build --release
       - install -Dm755 target/release/librelinkup-kde /app/bin/librelinkup-kde
       - install -Dm644 data/io.github.russellmilliner.LibreLinkUpDesktop.desktop /app/share/applications/io.github.russellmilliner.LibreLinkUpDesktop.desktop
+      - install -Dm644 data/io.github.russellmilliner.LibreLinkUpDesktop.notifyrc /app/share/knotifications6/io.github.russellmilliner.LibreLinkUpDesktop.notifyrc
       - install -Dm644 data/io.github.russellmilliner.LibreLinkUpDesktop.metainfo.xml /app/share/metainfo/io.github.russellmilliner.LibreLinkUpDesktop.metainfo.xml
       - install -Dm644 data/icons/io.github.russellmilliner.LibreLinkUpDesktop.svg /app/share/icons/hicolor/scalable/apps/io.github.russellmilliner.LibreLinkUpDesktop.svg
       - install -Dm644 LICENSE NOTICE -t /app/share/licenses/io.github.russellmilliner.LibreLinkUpDesktop/

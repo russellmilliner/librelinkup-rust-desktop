@@ -57,6 +57,11 @@
   <url type="donation">https://ko-fi.com/russellmilliner</url>
   <content_rating type="oars-1.1" />
   <releases>
+    <release version="0.5.13" date="2026-11-13">
+      <description>
+        <p>Add KDE System Settings notification categories (.notifyrc) and customizable global shortcuts (KGlobalAccel, desktop actions, and single-instance D-Bus CLI flags)</p>
+      </description>
+    </release>
     <release version="0.5.12" date="2026-11-10">
       <description>
         <p>Fix Wayland desktop overlay KDE Task Manager icon exclusion and multi-monitor hide/restore placement, and add dedicated widget &amp; taskbar regression test suites</p>

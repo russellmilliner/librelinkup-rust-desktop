@@ -15,6 +15,7 @@
 # The secret key is NOT part of this repository. Keep an offline backup; if it is lost,
 # every installed copy must be updated manually before auto-updates work again.
 set -euo pipefail
+export PATH="$HOME/.local/bin:$HOME/.cargo/bin:$PATH"
 
 KEY_FILE="${1:-${MINISIGN_KEY_FILE:-}}"
 if [[ -z "$KEY_FILE" ]]; then

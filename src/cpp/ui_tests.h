@@ -15,6 +15,7 @@
 #include <QLinearGradient>
 #include <QList>
 #include <QLoggingCategory>
+#include <QMetaMethod>
 #include <QMetaObject>
 #include <QObject>
 #include <QPainter>
@@ -1465,7 +1466,9 @@ inline QString librelinkup_run_ui_overflow_tests() {
                         "[Event/glucoseStatusSummary]\n"
                         "Action=\n\n"
                         "[Event/highGlucose]\n"
-                        "Action=Popup|Sound\n"
+                        "Action=Popup|Sound\n\n"
+                        "[Event/medicationDue]\n"
+                        "Action=Sound\n"
                     );
                     f.close();
                     if (librelinkup::TrayManager::instance().isKdeNotificationEventPopupEnabled(
@@ -1475,6 +1478,10 @@ inline QString librelinkup_run_ui_overflow_tests() {
                     if (!librelinkup::TrayManager::instance().isKdeNotificationEventPopupEnabled(
                             QStringLiteral("highGlucose"))) {
                         violations.append(QStringLiteral("isKdeNotificationEventPopupEnabled should return true when Action=Popup|Sound"));
+                    }
+                    if (librelinkup::TrayManager::instance().isKdeNotificationEventPopupEnabled(
+                            QStringLiteral("medicationDue"))) {
+                        violations.append(QStringLiteral("isKdeNotificationEventPopupEnabled should return false when Action=Sound omits Popup"));
                     }
                     if (!librelinkup::TrayManager::instance().isKdeNotificationEventPopupEnabled(
                             QStringLiteral("lowGlucose"))) {
@@ -1525,12 +1532,45 @@ inline QString librelinkup_run_ui_overflow_tests() {
         }
 
         const bool toggleHcOk = librelinkup::TrayManager::instance().handleGlobalShortcutAction(QStringLiteral("ToggleHighContrast"));
-        sync_all();
         if (!toggleHcOk || settingsCtrl->property("highContrastMode").toBool() == initialHC) {
-            violations.append(QStringLiteral("Global shortcut ToggleHighContrast did not toggle highContrastMode"));
+            violations.append(QStringLiteral("Global shortcut ToggleHighContrast did not immediately sync SettingsController::highContrastMode"));
         }
         librelinkup::TrayManager::instance().handleGlobalShortcutAction(QStringLiteral("ToggleHighContrast"));
+        if (settingsCtrl->property("highContrastMode").toBool() != initialHC) {
+            violations.append(QStringLiteral("Second ToggleHighContrast did not immediately restore SettingsController::highContrastMode"));
+        }
         sync_all();
+
+        // Verify /LibreLinkUpKWin D-Bus Scriptable slot surface
+        const QMetaObject& kwinMeta = librelinkup::NotificationActionWatcher::staticMetaObject;
+        auto checkScriptable = [&](const char* signature, bool expectedScriptable) {
+            const int idx = kwinMeta.indexOfMethod(signature);
+            if (idx < 0) {
+                violations.append(
+                    QStringLiteral("NotificationActionWatcher missing expected method '%1'")
+                        .arg(QString::fromLatin1(signature))
+                );
+                return;
+            }
+            const bool isScriptable = (kwinMeta.method(idx).attributes() & QMetaMethod::Scriptable) != 0;
+            if (isScriptable != expectedScriptable) {
+                violations.append(
+                    QStringLiteral("NotificationActionWatcher method '%1' expected Scriptable=%2, got %3")
+                        .arg(QString::fromLatin1(signature))
+                        .arg(expectedScriptable ? QStringLiteral("true") : QStringLiteral("false"))
+                        .arg(isScriptable ? QStringLiteral("true") : QStringLiteral("false"))
+                );
+            }
+        };
+        checkScriptable("invokeGlobalAction(QString)", true);
+        checkScriptable("onKWinOverlayGeometry(QString,int,int,int,int)", true);
+        checkScriptable("onKWinMainWindowGeometry(QString,int,int,int,int)", true);
+        checkScriptable("getDesiredOverlaySync()", true);
+        checkScriptable("getDesiredMainSync()", true);
+        checkScriptable("onActionInvoked(uint,QString)", false);
+        checkScriptable("onNotificationClosed(uint,uint)", false);
+        checkScriptable("onGlobalShortcutPressed(QString,QString,qlonglong)", false);
+        checkScriptable("deleteLater()", false);
 
         if (!librelinkup::TrayManager::instance().handleGlobalShortcutAction(QStringLiteral("ShowPopupSummary"))) {
             violations.append(QStringLiteral("Global shortcut ShowPopupSummary returned false"));

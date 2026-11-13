@@ -24,7 +24,7 @@ use ring::aead::{Aad, LessSafeKey, Nonce, UnboundKey, AES_256_GCM};
 use ring::pbkdf2;
 use ring::rand::{SecureRandom, SystemRandom};
 use serde::{Deserialize, Serialize};
-use zeroize::Zeroize;
+use zeroize::{Zeroize, Zeroizing};
 
 use crate::paths::{
     credentials_file_path, legacy_flatpak_leveldb_dir, master_key_file_path, write_file_atomic_0600,
@@ -405,7 +405,7 @@ pub fn decrypt_credentials_with_secret(
 // ---------------------------------------------------------------------------
 
 /// Signature of a master-secret provider: returns the 32-byte key used to wrap the vaults.
-pub type SecretProvider = fn() -> Result<Vec<u8>, String>;
+pub type SecretProvider = fn() -> Result<Zeroizing<Vec<u8>>, String>;
 
 static SECRET_PROVIDER: OnceLock<SecretProvider> = OnceLock::new();
 
@@ -417,7 +417,7 @@ pub fn set_secret_provider(provider: SecretProvider) {
 }
 
 /// Returns the master secret for health-data vaults (glucose history, medications).
-pub fn phi_secret() -> Result<Vec<u8>, String> {
+pub fn phi_secret() -> Result<Zeroizing<Vec<u8>>, String> {
     if let Some(provider) = SECRET_PROVIDER.get() {
         provider()
     } else {
@@ -489,12 +489,24 @@ fn try_keyring_lookup() -> Option<String> {
         if *program == "flatpak-spawn" && !Path::new("/.flatpak-info").exists() {
             continue;
         }
-        if let Ok(out) = Command::new(program).args(*args).output() {
-            if out.status.success() {
-                let s = String::from_utf8_lossy(&out.stdout).trim().to_string();
+        if let Ok(mut out) = Command::new(program).args(*args).output() {
+            let valid = if out.status.success() {
+                let mut s = String::from_utf8_lossy(&out.stdout).trim().to_string();
+                out.stdout.zeroize();
+                out.stderr.zeroize();
                 if s.len() == KEY_LEN * 2 && s.bytes().all(|b| b.is_ascii_hexdigit()) {
-                    return Some(s);
+                    Some(s)
+                } else {
+                    s.zeroize();
+                    None
                 }
+            } else {
+                out.stdout.zeroize();
+                out.stderr.zeroize();
+                None
+            };
+            if let Some(s) = valid {
+                return Some(s);
             }
         }
     }
@@ -569,7 +581,7 @@ fn try_keyring_store(hex_secret: &str) -> bool {
 /// **Never silently rotates the key.** If a vault already exists but no key can be
 /// recovered, this returns an error instead of minting a new key, because a new key would
 /// make every existing vault permanently undecryptable.
-pub fn load_or_create_master_secret(key_path: &Path) -> Result<Vec<u8>, String> {
+pub fn load_or_create_master_secret(key_path: &Path) -> Result<Zeroizing<Vec<u8>>, String> {
     load_or_create_master_secret_guarded(key_path, None)
 }
 
@@ -578,37 +590,50 @@ pub fn load_or_create_master_secret(key_path: &Path) -> Result<Vec<u8>, String> 
 pub fn load_or_create_master_secret_guarded(
     key_path: &Path,
     vault_path: Option<&Path>,
-) -> Result<Vec<u8>, String> {
+) -> Result<Zeroizing<Vec<u8>>, String> {
+    if let Some(p) = vault_path {
+        load_or_create_master_secret_for_vaults(key_path, &[p])
+    } else if key_path == master_key_file_path() {
+        let creds = credentials_file_path();
+        let meds = crate::paths::medications_file_path();
+        let hist = crate::paths::glucose_history_file_path();
+        load_or_create_master_secret_for_vaults(key_path, &[&creds, &meds, &hist])
+    } else {
+        load_or_create_master_secret_for_vaults(key_path, &[])
+    }
+}
+
+/// Same as [`load_or_create_master_secret`] but refuses to mint a new key when any path
+/// in `guarded_vaults` exists.
+pub fn load_or_create_master_secret_for_vaults(
+    key_path: &Path,
+    guarded_vaults: &[&Path],
+) -> Result<Zeroizing<Vec<u8>>, String> {
     let machine_id = fs::read_to_string("/etc/machine-id")
         .unwrap_or_else(|_| "librelinkup-kde-fallback-machine-id".to_string());
 
     #[cfg(unix)]
     let use_keyring = should_use_desktop_keyring(key_path);
 
-    let vault_exists = match vault_path {
-        Some(p) => p.exists(),
-        None if key_path == master_key_file_path() => {
-            credentials_file_path().exists()
-                || crate::paths::medications_file_path().exists()
-                || crate::paths::glucose_history_file_path().exists()
-        }
-        None => false,
-    };
+    let vault_exists = guarded_vaults.iter().any(|p| p.exists());
 
-    let file_secret = if key_path.exists() {
+    let file_secret: Zeroizing<Vec<u8>> = if key_path.exists() {
         let mut raw_hex =
             fs::read_to_string(key_path).map_err(|e| format!("Failed to read master key file: {e}"))?;
-        let trimmed = raw_hex.trim().to_string();
-        let bytes = hex_to_bytes(&trimmed)?;
+        let mut trimmed = raw_hex.trim().to_string();
+        raw_hex.zeroize();
+        let bytes_res = hex_to_bytes(&trimmed);
         // Keep the 0600 master.key file on disk so both host and Flatpak launches (and early
         // login autostart before keyring unlock) share the exact same key, while mirroring
         // into Secret Service / KWallet as backup.
-        #[cfg(unix)]
-        if use_keyring {
-            let _ = try_keyring_store(&trimmed);
+        if bytes_res.is_ok() {
+            #[cfg(unix)]
+            if use_keyring {
+                let _ = try_keyring_store(&trimmed);
+            }
         }
-        raw_hex.zeroize();
-        bytes
+        trimmed.zeroize();
+        Zeroizing::new(bytes_res?)
     } else {
         #[cfg(unix)]
         let keyring_hex = if use_keyring {
@@ -619,11 +644,12 @@ pub fn load_or_create_master_secret_guarded(
         #[cfg(not(unix))]
         let keyring_hex: Option<String> = None;
 
-        if let Some(mut hex_str) = keyring_hex {
+        if let Some(raw_keyring_hex) = keyring_hex {
+            let mut hex_str = Zeroizing::new(raw_keyring_hex);
             if let Ok(secret) = hex_to_bytes(&hex_str) {
                 let _ = write_file_atomic_0600(key_path, hex_str.as_bytes());
                 hex_str.zeroize();
-                secret
+                Zeroizing::new(secret)
             } else {
                 hex_str.zeroize();
                 return Err("Corrupted master key in desktop keyring".to_string());
@@ -638,8 +664,8 @@ pub fn load_or_create_master_secret_guarded(
                     .to_string(),
             );
         } else {
-            let mut random_key = generate_random_key()?;
-            let mut hex_str = bytes_to_hex(&random_key);
+            let mut random_key = Zeroizing::new(generate_random_key()?);
+            let hex_str = Zeroizing::new(bytes_to_hex(&*random_key));
             random_key.zeroize();
 
             write_file_atomic_0600(key_path, hex_str.as_bytes())
@@ -648,9 +674,7 @@ pub fn load_or_create_master_secret_guarded(
             if use_keyring {
                 let _ = try_keyring_store(&hex_str);
             }
-            let res = hex_to_bytes(&hex_str);
-            hex_str.zeroize();
-            res?
+            Zeroizing::new(hex_to_bytes(&hex_str)?)
         }
     };
 
@@ -658,7 +682,7 @@ pub fn load_or_create_master_secret_guarded(
     combined.extend_from_slice(&file_secret);
     combined.extend_from_slice(b":librelinkup-kde:");
     combined.extend_from_slice(machine_id.trim().as_bytes());
-    Ok(combined)
+    Ok(Zeroizing::new(combined))
 }
 
 pub fn save_credentials_to_path(
@@ -958,6 +982,50 @@ mod tests {
         // No vault -> a key is created normally.
         fs::remove_file(&vault_path).unwrap();
         let secret = load_or_create_master_secret_guarded(&key_path, Some(&vault_path)).unwrap();
+        assert!(!secret.is_empty());
+        assert!(key_path.exists());
+
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn missing_key_refuses_rotation_when_only_phi_vaults_exist_after_signout() {
+        let dir = std::env::temp_dir().join(format!("llu-phiguard-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&dir);
+        fs::create_dir_all(&dir).unwrap();
+        let key_path = dir.join("master.key");
+        let creds_path = dir.join("credentials.enc.json");
+        let meds_path = dir.join("medications.enc.json");
+        let history_path = dir.join("glucose_history.enc.json");
+
+        // Simulate signed-out state where credentials were wiped but 90-day glucose history remains.
+        fs::write(&history_path, b"{}").unwrap();
+        let err = load_or_create_master_secret_for_vaults(
+            &key_path,
+            &[&creds_path, &meds_path, &history_path],
+        )
+        .unwrap_err();
+        assert!(err.contains("Refusing to create a new key"), "{err}");
+        assert!(!key_path.exists(), "must not mint a replacement key");
+
+        // Repeat with only medications vault present.
+        fs::remove_file(&history_path).unwrap();
+        fs::write(&meds_path, b"{}").unwrap();
+        let err = load_or_create_master_secret_for_vaults(
+            &key_path,
+            &[&creds_path, &meds_path, &history_path],
+        )
+        .unwrap_err();
+        assert!(err.contains("Refusing to create a new key"), "{err}");
+        assert!(!key_path.exists(), "must not mint a replacement key");
+
+        // Once no vault exists, a fresh master key may be created.
+        fs::remove_file(&meds_path).unwrap();
+        let secret = load_or_create_master_secret_for_vaults(
+            &key_path,
+            &[&creds_path, &meds_path, &history_path],
+        )
+        .unwrap();
         assert!(!secret.is_empty());
         assert!(key_path.exists());
 

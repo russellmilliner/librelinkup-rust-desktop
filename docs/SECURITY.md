@@ -70,7 +70,7 @@ plaintext (JSON) ──AES-256-GCM(nonce, AAD)──────► envelope JSO
 
 | Situation | Behaviour |
 |---|---|
-| Vault exists, key missing/unreadable | **refuse to start the vault** with an actionable error; never mint a new key |
+| Vault exists, key missing/unreadable | **refuse to start the vault** with an actionable error; never mint a new key (enforced across `credentials.enc.json`, `medications.enc.json`, and `glucose_history.enc.json` on both Linux `master.key` and Windows `master.dpapi`) |
 | Wrong key / tampered ciphertext | GCM tag failure, credentials discarded, error surfaced |
 | Keyring locked | falls back to the `0600` file if present, otherwise the error above |
 
@@ -112,6 +112,8 @@ execute→ Windows: run installer; Linux: `flatpak install --user --reinstall`
   so a stored "region" can never turn into a cleartext password POST to a local port.
 * `patientId` from `/connections` is validated against `[A-Za-z0-9_-]{1,128}` before being
   interpolated into `/connections/<id>/graph` (path-traversal defence).
+* Home Assistant `entity_id` values are validated against `^[a-z0-9_]+\.[a-z0-9_]+$` before query construction in `/api/history/period`, and non-private `http://` Home Assistant URLs trigger a security log warning.
+* `/LibreLinkUpKWin` D-Bus bridge exports only explicit `Q_SCRIPTABLE` slots via `QDBusConnection::ExportScriptableSlots` rather than exporting all Qt object slots.
 * `curl` is used only as a fallback when Cloudflare blocks the rustls TLS fingerprint.
   Sensitive headers and bodies are supplied through `--config -` (stdin), never argv.
 * Polling is clamped to ≥60 s and jittered by ±10%; failed re-authentication backs off

@@ -328,6 +328,56 @@ fn self_test() -> i32 {
         if loaded == creds { Ok("AES-256-GCM envelope with DPAPI-protected key".into()) } else { Err("decrypted credentials differ".into()) }
     })());
 
+    check("vault-key-guard", (|| {
+        let dir = std::env::temp_dir().join(format!("llu-dpapi-guard-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
+        let key_path = dir.join("master.dpapi");
+        let creds_path = dir.join("credentials.enc.json");
+        let meds_path = dir.join("medications.enc.json");
+        let hist_path = dir.join("glucose_history.enc.json");
+
+        // 1. Signed-out state (no credentials.enc.json) with existing glucose history -> must refuse rotation.
+        std::fs::write(&hist_path, b"{}").map_err(|e| e.to_string())?;
+        let res_hist = platform::load_or_create_master_secret_at(
+            &key_path,
+            &[&creds_path, &meds_path, &hist_path],
+        );
+        if !matches!(res_hist, Err(ref e) if e.contains("Refusing to create a new key")) || key_path.exists() {
+            let _ = std::fs::remove_dir_all(&dir);
+            return Err("expected I-5 refusal when glucose_history.enc.json exists without master.dpapi".into());
+        }
+
+        // 2. Signed-out state with existing medications vault -> must refuse rotation.
+        let _ = std::fs::remove_file(&hist_path);
+        std::fs::write(&meds_path, b"{}").map_err(|e| e.to_string())?;
+        let res_meds = platform::load_or_create_master_secret_at(
+            &key_path,
+            &[&creds_path, &meds_path, &hist_path],
+        );
+        if !matches!(res_meds, Err(ref e) if e.contains("Refusing to create a new key")) || key_path.exists() {
+            let _ = std::fs::remove_dir_all(&dir);
+            return Err("expected I-5 refusal when medications.enc.json exists without master.dpapi".into());
+        }
+
+        // 3. Clean directory -> creates master.dpapi and unprotects to identical key on second call.
+        let _ = std::fs::remove_file(&meds_path);
+        let first = platform::load_or_create_master_secret_at(
+            &key_path,
+            &[&creds_path, &meds_path, &hist_path],
+        )?;
+        let second = platform::load_or_create_master_secret_at(
+            &key_path,
+            &[&creds_path, &meds_path, &hist_path],
+        )?;
+        let _ = std::fs::remove_dir_all(&dir);
+        if !first.is_empty() && *first == *second {
+            Ok("I-5 refuses key rotation across credentials/medications/history vaults".into())
+        } else {
+            Err("DPAPI master key mismatch after round-trip".into())
+        }
+    })());
+
     check("registry", Ok(format!("autostart registered = {}", platform::is_autostart_registered())));
 
     check("tray-badge", {

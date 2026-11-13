@@ -964,6 +964,17 @@ private:
     }
 
 public:
+    static void syncSecondaryControllers(Qt::ConnectionType connType) {
+        if (QWindow* mainWin = find_main_window()) {
+            if (QObject* settingsCtrl = mainWin->findChild<QObject*>(QStringLiteral("librelinkupSettingsController"))) {
+                QMetaObject::invokeMethod(settingsCtrl, "sync", connType);
+            }
+            if (QObject* medsCtrl = mainWin->findChild<QObject*>(QStringLiteral("librelinkupMedicationsController"))) {
+                QMetaObject::invokeMethod(medsCtrl, "sync", connType);
+            }
+        }
+    }
+
     bool handleGlobalShortcutAction(const QString& actionId) {
         const QString cleanId = actionId.trimmed();
         if (cleanId.isEmpty()) {
@@ -988,6 +999,9 @@ public:
                     Q_RETURN_ARG(bool, handled),
                     Q_ARG(QString, cleanId)
                 );
+                if (handled) {
+                    syncSecondaryControllers(Qt::DirectConnection);
+                }
                 return handled;
             }
             QMetaObject::invokeMethod(
@@ -996,6 +1010,7 @@ public:
                 Qt::QueuedConnection,
                 Q_ARG(QString, cleanId)
             );
+            syncSecondaryControllers(Qt::QueuedConnection);
             return true;
         }
 

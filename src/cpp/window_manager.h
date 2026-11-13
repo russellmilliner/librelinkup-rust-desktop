@@ -1064,7 +1064,7 @@ inline void ensure_kwin_dbus_bridge() {
     bus.registerObject(
         QStringLiteral("/LibreLinkUpKWin"),
         watcher,
-        QDBusConnection::ExportAllSlots
+        QDBusConnection::ExportScriptableSlots
     );
     // Register our owned well-known D-Bus service name (`io.github.russellmilliner.LibreLinkUpDesktop`)
     // so Flatpak's xdg-dbus-proxy allows host KWin scripts (`callDBus`) to invoke `/LibreLinkUpKWin`

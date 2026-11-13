@@ -1,6 +1,6 @@
 use cxx_qt_lib::QString;
 use librelinkup_kde::bridge::qobject_bridge::qobject::{
-    librelinkup_run_app, librelinkup_try_dispatch_cli_action,
+    librelinkup_run_app, librelinkup_run_ui_overflow_tests, librelinkup_try_dispatch_cli_action,
 };
 
 fn resolve_cli_action(args: &[String]) -> Option<String> {
@@ -61,6 +61,7 @@ fn main() {
              Options:\n  \
                -m, --minimized, --start-minimized, --autostart   Start hidden in the system tray\n  \
                -u, --check-update                                Check GitHub Releases for updates and exit\n  \
+               --ui-test                                         Run headless QtQuick UI/a11y/overflow test suite and exit\n  \
                -V, --version                                     Print version information\n  \
                -h, --help                                        Print this help message\n\n\
              Global Shortcut / Desktop Actions (forward to running instance via D-Bus or run at startup):\n  \
@@ -97,6 +98,22 @@ fn main() {
             }
         }
         return;
+    }
+
+    if args.iter().any(|a| a == "--ui-test") {
+        let dir = std::env::temp_dir().join(format!("llu_cli_uitest_{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        let _ = std::fs::create_dir_all(&dir);
+        std::env::set_var("LIBRELINKUP_CONFIG_DIR", &dir);
+        std::env::set_var("LIBRELINKUP_DATA_DIR", &dir);
+        let report = librelinkup_run_ui_overflow_tests().to_string();
+        let _ = std::fs::remove_dir_all(&dir);
+        if report == "OK" {
+            println!("UI_TEST_OK");
+            return;
+        }
+        eprintln!("{report}");
+        std::process::exit(1);
     }
 
     if let Some(action_id) = resolve_cli_action(&args) {

@@ -6,7 +6,9 @@
 //! Windows-only constants below are legitimately unused).
 #![cfg_attr(not(windows), allow(dead_code))]
 
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
+
+use zeroize::{Zeroize, Zeroizing};
 
 #[cfg(windows)]
 use librelinkup_core::event_log::log_error;
@@ -29,29 +31,50 @@ pub fn dpapi_master_key_path() -> PathBuf {
     librelinkup_core::paths::config_dir().join("master.dpapi")
 }
 
-/// Returns the credential-encryption master secret, creating and DPAPI-protecting a new
-/// random key on first use. DPAPI binds the key to the current Windows user account, so the
-/// vault cannot be decrypted by other users or after copying it to another machine.
-pub fn load_or_create_master_secret() -> Result<Vec<u8>, String> {
-    let path = dpapi_master_key_path();
-    if let Ok(blob) = std::fs::read(&path) {
-        return dpapi_unprotect(&blob);
+/// Returns the credential/PHI-encryption master secret at `key_path`, creating and
+/// DPAPI-protecting a new random key on first use while refusing to rotate if any path in
+/// `guarded_vaults` already exists (Invariant I-5).
+pub fn load_or_create_master_secret_at(
+    key_path: &Path,
+    guarded_vaults: &[&Path],
+) -> Result<Zeroizing<Vec<u8>>, String> {
+    if key_path.exists() {
+        let mut blob = std::fs::read(key_path)
+            .map_err(|e| format!("Failed to read DPAPI master key: {e}"))?;
+        let res = dpapi_unprotect(&blob).map(Zeroizing::new);
+        blob.zeroize();
+        return res;
     }
-    // Fail closed: an existing vault must never be orphaned by rotating the key.
-    if librelinkup_core::paths::credentials_file_path().exists() {
+    // Fail closed (Invariant I-5): never rotate the master key when any encrypted
+    // vault (credentials, medications, or 90-day glucose history) already exists.
+    if guarded_vaults.iter().any(|p| p.exists()) {
         return Err(
-            "An encrypted vault exists but its DPAPI master key is missing (the vault was \
-             copied from another machine or user account?). Refusing to create a new key, \
-             which would make the existing credentials permanently unreadable. Sign in again \
-             to replace the vault."
+            "An encrypted vault exists (credentials, medications, or glucose history) \
+             but its DPAPI master key is missing (was the profile copied from another \
+             machine or user account?). Refusing to create a new key, which would make \
+             existing encrypted health data permanently unreadable."
                 .to_string(),
         );
     }
-    let key = librelinkup_core::crypto::generate_random_key()?;
-    let blob = dpapi_protect(&key)?;
-    librelinkup_core::paths::write_file_atomic_0600(&path, &blob)
+    let mut key = librelinkup_core::crypto::generate_random_key()?;
+    let protect_res = dpapi_protect(&key);
+    let out = Zeroizing::new(key.to_vec());
+    key.zeroize();
+    let blob = protect_res?;
+    librelinkup_core::paths::write_file_atomic_0600(key_path, &blob)
         .map_err(|e| format!("Failed to write master key: {e}"))?;
-    Ok(key.to_vec())
+    Ok(out)
+}
+
+/// Returns the credential-encryption master secret, creating and DPAPI-protecting a new
+/// random key on first use. DPAPI binds the key to the current Windows user account, so the
+/// vault cannot be decrypted by other users or after copying it to another machine.
+pub fn load_or_create_master_secret() -> Result<Zeroizing<Vec<u8>>, String> {
+    let key_path = dpapi_master_key_path();
+    let creds = librelinkup_core::paths::credentials_file_path();
+    let meds = librelinkup_core::paths::medications_file_path();
+    let hist = librelinkup_core::paths::glucose_history_file_path();
+    load_or_create_master_secret_at(&key_path, &[&creds, &meds, &hist])
 }
 
 #[cfg(windows)]
@@ -106,7 +129,15 @@ pub fn dpapi_unprotect(data: &[u8]) -> Result<Vec<u8>, String> {
 #[cfg(windows)]
 fn take_blob(blob: windows_sys::Win32::Security::Cryptography::CRYPT_INTEGER_BLOB) -> Vec<u8> {
     use windows_sys::Win32::Foundation::LocalFree;
-    let out = unsafe { std::slice::from_raw_parts(blob.pbData, blob.cbData as usize) }.to_vec();
+    if blob.pbData.is_null() || blob.cbData == 0 {
+        if !blob.pbData.is_null() {
+            unsafe { LocalFree(blob.pbData as _) };
+        }
+        return Vec::new();
+    }
+    let slice = unsafe { std::slice::from_raw_parts_mut(blob.pbData, blob.cbData as usize) };
+    let out = slice.to_vec();
+    slice.zeroize();
     unsafe { LocalFree(blob.pbData as _) };
     out
 }

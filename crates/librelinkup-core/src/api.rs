@@ -1,6 +1,6 @@
 use std::fmt;
 use std::process::Command;
-use std::sync::OnceLock;
+use std::sync::{Mutex, OnceLock};
 use std::time::Duration;
 
 use reqwest::header::{
@@ -875,6 +875,79 @@ pub async fn fetch_cgm_snapshot_async(
 // Home Assistant LibreLink Integration REST API Support
 // ---------------------------------------------------------------------------
 
+/// Validates a Home Assistant `entity_id` against `^[a-z0-9_]+\.[a-z0-9_]+$` and normalizes
+/// ASCII uppercase letters to lowercase. Rejects characters that could inject URL query
+/// parameters (`&`, `?`, `#`, `/`, whitespace) when querying `/api/history/period`.
+pub fn validate_ha_entity_id(raw: &str) -> Result<String, ApiError> {
+    let clean = raw.trim().to_ascii_lowercase();
+    if clean.is_empty() || clean.len() > 255 {
+        return Err(ApiError::ParseError(format!(
+            "Invalid Home Assistant entity_id '{raw}'"
+        )));
+    }
+    let Some((domain, object_id)) = clean.split_once('.') else {
+        return Err(ApiError::ParseError(format!(
+            "Invalid Home Assistant entity_id '{raw}'"
+        )));
+    };
+    let valid_part = |s: &str| {
+        !s.is_empty()
+            && s.bytes()
+                .all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || b == b'_')
+    };
+    if !valid_part(domain) || !valid_part(object_id) {
+        return Err(ApiError::ParseError(format!(
+            "Invalid Home Assistant entity_id '{raw}'"
+        )));
+    }
+    Ok(clean)
+}
+
+/// Returns `true` when `host_port` targets localhost, a local LAN hostname/address,
+/// RFC1918/ULA private space, or Tailscale (`100.64.0.0/10` / `.ts.net`).
+pub fn is_private_or_local_ha_host(host_port: &str) -> bool {
+    let host = if let Some(after_open) = host_port.strip_prefix('[') {
+        after_open.split(']').next().unwrap_or(after_open)
+    } else {
+        host_port.split(':').next().unwrap_or("")
+    }
+    .trim()
+    .to_ascii_lowercase();
+
+    if host.is_empty() {
+        return false;
+    }
+    if host == "localhost"
+        || host.ends_with(".local")
+        || host.ends_with(".lan")
+        || host.ends_with(".home")
+        || host.ends_with(".arpa")
+        || host.ends_with(".internal")
+        || host.ends_with(".ts.net")
+    {
+        return true;
+    }
+    let ip_candidate = host.split('%').next().unwrap_or(&host);
+    if let Ok(ip) = ip_candidate.parse::<std::net::IpAddr>() {
+        return match ip {
+            std::net::IpAddr::V4(v4) => {
+                let octets = v4.octets();
+                v4.is_loopback()
+                    || v4.is_private()
+                    || v4.is_link_local()
+                    || (octets[0] == 100 && (64..=127).contains(&octets[1]))
+            }
+            std::net::IpAddr::V6(v6) => {
+                let seg = v6.segments();
+                v6.is_loopback()
+                    || v6.is_unicast_link_local()
+                    || (seg[0] & 0xfe00) == 0xfc00
+            }
+        };
+    }
+    !host.contains('.') && !host.contains(':')
+}
+
 /// Validates and normalizes a Home Assistant base URL (e.g. `"http://homeassistant.local:8123"`
 /// or `"https://homeassistant.example.com"`). Strips any trailing `/` or `/api`.
 pub fn validate_ha_base_url(raw_url: &str) -> Result<String, ApiError> {
@@ -886,10 +959,10 @@ pub fn validate_ha_base_url(raw_url: &str) -> Result<String, ApiError> {
                 .to_string(),
         ));
     }
-    let rest = if let Some(r) = trimmed.strip_prefix("https://") {
-        r
+    let (is_http, rest) = if let Some(r) = trimmed.strip_prefix("https://") {
+        (false, r)
     } else if let Some(r) = trimmed.strip_prefix("http://") {
-        r
+        (true, r)
     } else {
         return Err(ApiError::ParseError(
             "Home Assistant URL must start with https:// or http://".to_string(),
@@ -914,6 +987,28 @@ pub fn validate_ha_base_url(raw_url: &str) -> Result<String, ApiError> {
         return Err(ApiError::ParseError(
             "Invalid hostname or port in Home Assistant URL".to_string(),
         ));
+    }
+    if is_http && !is_private_or_local_ha_host(host_port) {
+        static LAST_WARNED_HTTP_HOST: Mutex<String> = Mutex::new(String::new());
+        let should_warn = LAST_WARNED_HTTP_HOST
+            .lock()
+            .map(|mut prev| {
+                if prev.as_str() != host_port {
+                    *prev = host_port.to_string();
+                    true
+                } else {
+                    false
+                }
+            })
+            .unwrap_or(false);
+        if should_warn {
+            crate::event_log::log_warn(
+                "SECURITY",
+                format!(
+                    "Home Assistant URL ({host_port}) uses unencrypted http:// over a non-local network; prefer https:// or Tailscale to protect your Long-Lived Access Token."
+                ),
+            );
+        }
     }
     Ok(trimmed.to_string())
 }
@@ -1111,10 +1206,11 @@ pub fn find_ha_glucose_entity<'a>(
 ) -> Result<&'a Value, ApiError> {
     let hint = entity_id_hint.trim();
     if !hint.is_empty() {
+        let hint = validate_ha_entity_id(hint)?;
         if let Some(found) = states_arr.iter().find(|item| {
             item.get("entity_id")
                 .and_then(|v| v.as_str())
-                .is_some_and(|id| id.eq_ignore_ascii_case(hint))
+                .is_some_and(|id| id.eq_ignore_ascii_case(&hint))
         }) {
             return Ok(found);
         }
@@ -1755,12 +1851,12 @@ pub async fn fetch_ha_cgm_snapshot_and_states_async(
         .unwrap_or("")
         .to_string();
 
-    let history_body = if !matched_entity_id.is_empty() {
+    let history_body = if let Ok(safe_entity_id) = validate_ha_entity_id(&matched_entity_id) {
         let start_iso = (chrono::Utc::now() - chrono::Duration::hours(12))
             .format("%Y-%m-%dT%H:%M:%SZ")
             .to_string();
         let hist_url = format!(
-            "{base}/api/history/period/{start_iso}?filter_entity_id={matched_entity_id}&minimal_response&no_attributes"
+            "{base}/api/history/period/{start_iso}?filter_entity_id={safe_entity_id}&minimal_response&no_attributes"
         );
         send_json_request(
             client,
@@ -2091,5 +2187,58 @@ mod tests {
         assert_eq!(remote_snooze, Some((1793500000, 1793496400)));
         // When local is newer, remote is ignored
         assert_eq!(parse_ha_remote_snooze(states_arr, 1793500000), None);
+    }
+
+    #[test]
+    fn ha_entity_id_validation_blocks_query_injection() {
+        assert_eq!(
+            validate_ha_entity_id("sensor.alex_patient_measurement").unwrap(),
+            "sensor.alex_patient_measurement"
+        );
+        assert_eq!(
+            validate_ha_entity_id("  Sensor.Glucose_1  ").unwrap(),
+            "sensor.glucose_1"
+        );
+
+        for bad in [
+            "sensor.foo&bar=1",
+            "sensor.foo?x=1",
+            "sensor.foo#frag",
+            "sensor.foo/bar",
+            "sensor..bad",
+            "nodot",
+            "",
+        ] {
+            assert!(
+                validate_ha_entity_id(bad).is_err(),
+                "expected '{bad}' to be rejected"
+            );
+        }
+    }
+
+    #[test]
+    fn ha_private_or_local_host_classification() {
+        for local in [
+            "homeassistant.local:8123",
+            "haos.dingo-dory.ts.net",
+            "192.168.0.32:8123",
+            "100.84.233.88:8123",
+            "127.0.0.1:8123",
+            "[::1]:8123",
+            "localhost:8123",
+            "homeassistant:8123",
+        ] {
+            assert!(
+                is_private_or_local_ha_host(local),
+                "expected '{local}' to be classified as private/local"
+            );
+        }
+
+        for remote in ["example.com:8123", "8.8.8.8:8123", "100.128.0.1:8123"] {
+            assert!(
+                !is_private_or_local_ha_host(remote),
+                "expected '{remote}' to be classified as remote"
+            );
+        }
     }
 }

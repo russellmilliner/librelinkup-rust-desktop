@@ -2,6 +2,14 @@
 
 All notable changes and bumped dependencies for `russellmilliner/librelinkup-rust-desktop` are documented in this file.
 
+## [v0.5.14](https://github.com/russellmilliner/librelinkup-rust-desktop/releases/tag/v0.5.14) — 2026-11-13
+
+### Highlights
+- Harden DPAPI 3-vault rotation guard, Home Assistant entity and cleartext HTTP checks, KWin D-Bus scriptable slot scoping, secret zeroization, and --ui-test CLI suite
+
+### Commits
+- fix(security): harden DPAPI vault guard, HA entity validation, KWin D-Bus slots, and test suite (21b1b99)
+
 ## [v0.5.13](https://github.com/russellmilliner/librelinkup-rust-desktop/releases/tag/v0.5.13) — 2026-11-13
 
 ### Highlights

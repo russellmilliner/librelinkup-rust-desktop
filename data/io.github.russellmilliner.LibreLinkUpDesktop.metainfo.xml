@@ -57,6 +57,11 @@
   <url type="donation">https://ko-fi.com/russellmilliner</url>
   <content_rating type="oars-1.1" />
   <releases>
+    <release version="0.5.14" date="2026-11-13">
+      <description>
+        <p>Harden DPAPI 3-vault rotation guard, Home Assistant entity and cleartext HTTP checks, KWin D-Bus scriptable slot scoping, secret zeroization, and --ui-test CLI suite</p>
+      </description>
+    </release>
     <release version="0.5.13" date="2026-11-13">
       <description>
         <p>Add KDE System Settings notification categories (.notifyrc) and customizable global shortcuts (KGlobalAccel, desktop actions, and single-instance D-Bus CLI flags)</p>

@@ -66,14 +66,10 @@ pub fn is_trusted_github_asset_url(url: &str) -> bool {
         return false;
     };
     let segments: Vec<&str> = rest.split('/').collect();
-    if segments.len() != 2
-        || segments
+    segments.len() == 2
+        && !segments
             .iter()
             .any(|s| s.is_empty() || *s == "." || *s == "..")
-    {
-        return false;
-    }
-    true
 }
 
 /// Validates that `url` is an HTTPS GitHub release page URL for this repository.

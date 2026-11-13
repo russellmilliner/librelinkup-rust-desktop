@@ -4,7 +4,6 @@ version = "0.5.12"
 edition = "2021"
 license = "Apache-2.0"
 description = "LibreLinkUp Rust Desktop — KDE Plasma 6 / Kirigami Blood Glucose Monitor for LibreLinkUp"
-homepage = "https://github.com/russellmilliner/librelinkup-rust-desktop"
 repository = "https://github.com/russellmilliner/librelinkup-rust-desktop"
 
 [lib]

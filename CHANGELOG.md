@@ -2,18 +2,28 @@
 
 All notable changes and bumped dependencies for `russellmilliner/librelinkup-rust-desktop` are documented in this file.
 
-## [v0.5.12-deps](https://github.com/russellmilliner/librelinkup-rust-desktop/releases/tag/v0.5.12-deps) — 2026-11-12
+## [v0.5.12-deps](https://github.com/russellmilliner/librelinkup-rust-desktop/releases/tag/v0.5.12-deps) — 2026-11-13
 
-### 📦 Bumped Dependencies (6 packages)
+### 📦 Bumped Dependencies (16 packages)
 
 | Package | Previous | Updated | Scope |
 | :--- | :--- | :--- | :--- |
-| `arc-swap` | `1.9.4` | **`1.9.5`** | Lockfile (`windows/Cargo.lock`) |
-| `crc32fast` | `1.5.4` | **`1.5.5`** | Lockfile (`windows/Cargo.lock`) |
-| `errno` | `0.3.14` | **`0.3.15`** | Lockfile (`windows/Cargo.lock`) |
-| `rustls-pki-types` | `1.15.1` | **`1.16.0`** | Lockfile (`windows/Cargo.lock`) |
-| `webbrowser` | `1.2.6` | **`1.2.7`** | Lockfile (`windows/Cargo.lock`) |
-| `webpki-roots` | `1.0.11` | **`1.0.12`** | Lockfile (`windows/Cargo.lock`) |
+| `cc` | `1.11.1` | **`1.11.2`** | Lockfile (`windows/Cargo.lock`) |
+| `naga` | `30.0.1` | **`30.0.2`** | Lockfile (`windows/Cargo.lock`) |
+| `naga-types` | `30.0.1` | **`30.0.2`** | Lockfile (`windows/Cargo.lock`) |
+| `rustls-webpki` | `0.103.16` | **`0.103.17`** | Lockfile (`windows/Cargo.lock`) |
+| `wgpu` | `30.0.1` | **`30.0.2`** | Lockfile (`windows/Cargo.lock`) |
+| `wgpu-core` | `30.0.1` | **`30.0.2`** | Lockfile (`windows/Cargo.lock`) |
+| `wgpu-core-deps-apple` | `30.0.1` | **`30.0.2`** | Lockfile (`windows/Cargo.lock`) |
+| `wgpu-core-deps-emscripten` | `30.0.1` | **`30.0.2`** | Lockfile (`windows/Cargo.lock`) |
+| `wgpu-core-deps-wasm` | `30.0.1` | **`30.0.2`** | Lockfile (`windows/Cargo.lock`) |
+| `wgpu-core-deps-windows-linux-android` | `30.0.1` | **`30.0.2`** | Lockfile (`windows/Cargo.lock`) |
+| `wgpu-hal` | `30.0.1` | **`30.0.2`** | Lockfile (`windows/Cargo.lock`) |
+| `wgpu-naga-bridge` | `30.0.1` | **`30.0.2`** | Lockfile (`windows/Cargo.lock`) |
+| `wgpu-types` | `30.0.1` | **`30.0.2`** | Lockfile (`windows/Cargo.lock`) |
+| `zbus` | `6.2.1` | **`6.3.0`** | Lockfile (`windows/Cargo.lock`) |
+| `zbus_macros` | `6.2.1` | **`6.3.0`** | Lockfile (`windows/Cargo.lock`) |
+| `zruntime` | `0.2.2` | **`0.2.3`** | Lockfile (`windows/Cargo.lock`) |
 
 ## [v0.5.12](https://github.com/russellmilliner/librelinkup-rust-desktop/releases/tag/v0.5.12) — 2026-11-10
 

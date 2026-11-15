@@ -175,7 +175,7 @@ impl LibreLinkUpApp {
 // ----------------------------------------------------------------------------------------
 
 pub fn hex_color(hex: &str) -> Color32 {
-    let h = hex.trim_start_matches('#');
+    let h = hex.trim_prefix('#');
     let v = u32::from_str_radix(h, 16).unwrap_or(0x22c55e);
     Color32::from_rgb((v >> 16) as u8, (v >> 8) as u8, v as u8)
 }
@@ -251,8 +251,8 @@ pub fn build_tray_view(state: &Shared) -> TrayView {
 
 impl eframe::App for LibreLinkUpApp {
     fn logic(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
-        if self.ui_handle.window_visible.load(Ordering::SeqCst) {
-            if let Some(outer) = ctx.input(|i| i.viewport().outer_rect) {
+        if self.ui_handle.window_visible.load(Ordering::SeqCst)
+            && let Some(outer) = ctx.input(|i| i.viewport().outer_rect) {
                 let wx = outer.min.x.round() as i32;
                 let wy = outer.min.y.round() as i32;
                 let ww = outer.width().round() as i32;
@@ -278,7 +278,6 @@ impl eframe::App for LibreLinkUpApp {
                     }
                 }
             }
-        }
         // Closing the main window hides it to the tray; Quit (tray menu) really exits.
         if ctx.input(|i| i.viewport().close_requested()) && !self.ui_handle.quitting.load(Ordering::SeqCst) {
             ctx.send_viewport_cmd(ViewportCommand::CancelClose);
@@ -321,8 +320,8 @@ impl eframe::App for LibreLinkUpApp {
                     });
                 ui.add_space(6.0);
             }
-            if let Some(ref upd) = state.update_info {
-                if upd.update_available {
+            if let Some(ref upd) = state.update_info
+                && upd.update_available {
                     egui::Frame::new()
                         .fill(Color32::from_rgb(3, 105, 161))
                         .corner_radius(6)
@@ -356,7 +355,6 @@ impl eframe::App for LibreLinkUpApp {
                         });
                     ui.add_space(6.0);
                 }
-            }
             egui::ScrollArea::vertical().auto_shrink([false, false]).show(ui, |ui| match self.tab {
                 Tab::Dashboard if !state.logged_in => self.login_view(ui, &state),
                 Tab::Dashboard => self.dashboard(ui, &state),
@@ -1558,14 +1556,13 @@ impl LibreLinkUpApp {
                 if s.use_custom_sound {
                     ui.horizontal(|ui| {
                         ui.add(egui::TextEdit::singleline(&mut s.custom_sound_path).desired_width(320.0));
-                        if ui.button("Browse…").clicked() {
-                            if let Some(path) = rfd::FileDialog::new()
+                        if ui.button("Browse…").clicked()
+                            && let Some(path) = rfd::FileDialog::new()
                                 .add_filter("Audio", &["wav", "mp3", "ogg"])
                                 .pick_file()
                             {
                                 s.custom_sound_path = path.display().to_string();
                             }
-                        }
                     });
                 }
             });
@@ -1685,15 +1682,14 @@ impl LibreLinkUpApp {
             if ui.button("Clear").clicked() {
                 clear_events();
             }
-            if ui.button("Export…").clicked() {
-                if let Some(path) = rfd::FileDialog::new()
+            if ui.button("Export…").clicked()
+                && let Some(path) = rfd::FileDialog::new()
                     .set_file_name("librelinkup-windows.log")
                     .add_filter("Log", &["log", "txt"])
                     .save_file()
                 {
                     let _ = export_events_to_path(&path);
                 }
-            }
         });
         ui.separator();
         let filter = self.log_filter.to_lowercase();
@@ -1888,8 +1884,8 @@ fn glucose_graph(ui: &mut egui::Ui, state: &Shared) {
     }
 
     // Hover readout: nearest point
-    if let Some(hover) = response.hover_pos() {
-        if let Some((i, pos)) = line
+    if let Some(hover) = response.hover_pos()
+        && let Some((i, pos)) = line
             .iter()
             .enumerate()
             .min_by(|a, b| (a.1.x - hover.x).abs().total_cmp(&(b.1.x - hover.x).abs()))
@@ -1913,7 +1909,6 @@ fn glucose_graph(ui: &mut egui::Ui, state: &Shared) {
             painter.rect_filled(box_rect, CornerRadius::same(4), visuals.window_fill);
             painter.galley(box_rect.min + Vec2::splat(4.0), galley, visuals.text_color());
         }
-    }
     let _ = convert_mg_dl_to_unit; // unit conversion handled by format_glucose_value
 }
 
@@ -2120,7 +2115,7 @@ fn overlay_ui(ui: &mut egui::Ui, shared: &SharedState, tx: &UnboundedSender<Comm
     let btn_theme_resp = draw_overlay_button(ui, btn_theme_rect, "btn_theme", theme_icon, 10.0, &theme_tooltip, false);
     if btn_theme_resp.clicked() {
         let mut ns = s.clone();
-        ns.overlay_dark_theme = !ns.overlay_dark_theme;
+        ns.overlay_dark_theme.toggle();
         if let Ok(mut guard) = shared.lock() {
             guard.settings = ns.clone();
         }
@@ -2141,7 +2136,7 @@ fn overlay_ui(ui: &mut egui::Ui, shared: &SharedState, tx: &UnboundedSender<Comm
     );
     if btn_all_desk_resp.clicked() {
         let mut ns = s.clone();
-        ns.overlay_on_all_desktops = !ns.overlay_on_all_desktops;
+        ns.overlay_on_all_desktops.toggle();
         crate::platform::set_overlay_all_desktops(ns.overlay_on_all_desktops);
         if let Ok(mut guard) = shared.lock() {
             guard.settings = ns.clone();
@@ -2343,7 +2338,7 @@ fn show_overlay_menu(
     };
     if ui.button(all_desk_label).clicked() {
         let mut ns = s.clone();
-        ns.overlay_on_all_desktops = !ns.overlay_on_all_desktops;
+        ns.overlay_on_all_desktops.toggle();
         crate::platform::set_overlay_all_desktops(ns.overlay_on_all_desktops);
         if let Ok(mut guard) = shared.lock() {
             guard.settings = ns.clone();
@@ -2359,7 +2354,7 @@ fn show_overlay_menu(
     };
     if ui.button(theme_label).clicked() {
         let mut ns = s.clone();
-        ns.overlay_dark_theme = !ns.overlay_dark_theme;
+        ns.overlay_dark_theme.toggle();
         if let Ok(mut guard) = shared.lock() {
             guard.settings = ns.clone();
         }

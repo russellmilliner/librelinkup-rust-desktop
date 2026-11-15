@@ -584,12 +584,11 @@ impl qobject::SettingsController {
         let remember_pw = with_state(|s| s.remember_password);
         let updated = with_state(|s| {
             s.country = clean.clone();
-            if let Some(creds) = s.creds.as_mut() {
-                if creds.country != clean {
+            if let Some(creds) = s.creds.as_mut()
+                && creds.country != clean {
                     creds.country = clean.clone();
                     let _ = save_default_credentials(&creds.sanitized_for_storage(remember_pw));
                 }
-            }
             s.logged_in
         });
         let _ = with_state(|s| ops::persist_settings(s));

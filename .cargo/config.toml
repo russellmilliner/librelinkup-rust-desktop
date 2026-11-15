@@ -1,0 +1,4 @@
+[registry]
+# Cargo 1.100+ supply-chain protection: reject newly published crates.io versions
+# until they have aged at least 7 days so RustSec/cargo-audit advisories can land.
+global-min-publish-age = "7 days"

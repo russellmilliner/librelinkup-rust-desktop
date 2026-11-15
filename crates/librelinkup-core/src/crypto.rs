@@ -531,13 +531,12 @@ fn try_keyring_store(hex_secret: &str) -> bool {
         else {
             return false;
         };
-        if let Some(mut stdin) = child.stdin.take() {
-            if stdin.write_all(hex_secret.as_bytes()).is_err() {
+        if let Some(mut stdin) = child.stdin.take()
+            && stdin.write_all(hex_secret.as_bytes()).is_err() {
                 let _ = child.kill();
                 let _ = child.wait();
                 return false;
             }
-        }
         child.wait().map(|s| s.success()).unwrap_or(false)
     };
 

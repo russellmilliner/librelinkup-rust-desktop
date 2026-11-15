@@ -428,11 +428,10 @@ impl Service {
                     log_error("SYSTEM", format!("Failed to save settings: {e}"));
                 }
                 self.update(|s| s.settings = settings);
-                if country_changed || remember_changed {
-                    if let Some(ref creds) = self.creds {
+                if (country_changed || remember_changed)
+                    && let Some(ref creds) = self.creds {
                         self.save_vault(creds);
                     }
-                }
                 self.evaluate_alerts();
                 country_changed
             }
@@ -839,12 +838,11 @@ impl Service {
         let clean_entity = ha_sensor_entity_id.trim().to_string();
         let clean_token = ha_token.trim().to_string();
 
-        if clean_source == "home_assistant" && !clean_url.is_empty() {
-            if let Err(e) = validate_ha_base_url(&clean_url) {
+        if clean_source == "home_assistant" && !clean_url.is_empty()
+            && let Err(e) = validate_ha_base_url(&clean_url) {
                 self.update(|s| s.error = e.to_string());
                 return false;
             }
-        }
 
         let mut creds = self.creds.clone().unwrap_or_default();
         if !clean_token.is_empty() {
@@ -1054,11 +1052,10 @@ impl Service {
                             }
                             push_meds = true;
                         }
-                        if s.settings.ha_sync_snooze {
-                            if let Some((remote_until, remote_updated_at)) =
+                        if s.settings.ha_sync_snooze
+                            && let Some((remote_until, remote_updated_at)) =
                                 parse_ha_remote_snooze(states, now)
-                            {
-                                if remote_updated_at > s.settings.snooze_updated_at_epoch
+                                && remote_updated_at > s.settings.snooze_updated_at_epoch
                                     && remote_until != s.settings.snooze_until_epoch
                                 {
                                     s.settings.snooze_until_epoch =
@@ -1076,8 +1073,6 @@ impl Service {
                                         ),
                                     );
                                 }
-                            }
-                        }
                     }
                     s.snapshot = snap;
                     s.status = "Live CGM telemetry active".into();

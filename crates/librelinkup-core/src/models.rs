@@ -642,13 +642,12 @@ pub fn accessible_glucose_announcement(
 }
 
 pub fn load_settings_from_path(path: &Path) -> AppSettings {
-    if let Ok(raw) = fs::read_to_string(path) {
-        if let Ok(mut parsed) = serde_json::from_str::<AppSettings>(&raw) {
+    if let Ok(raw) = fs::read_to_string(path)
+        && let Ok(mut parsed) = serde_json::from_str::<AppSettings>(&raw) {
             parsed.poll_interval_seconds = clamp_poll_interval(parsed.poll_interval_seconds);
             parsed.ui_text_scale = clamp_ui_zoom_percent(parsed.ui_text_scale);
             return parsed;
         }
-    }
     AppSettings::default()
 }
 

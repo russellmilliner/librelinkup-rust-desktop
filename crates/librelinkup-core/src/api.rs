@@ -344,14 +344,13 @@ fn run_curl_blocking(method: &str, url: &str, secret_config: &str) -> Result<Str
         .spawn()
         .map_err(|e| ApiError::NetworkError(format!("curl fallback failed to start: {e}")))?;
 
-    if let Some(mut stdin) = child.stdin.take() {
-        if let Err(e) = stdin.write_all(secret_config.as_bytes()) {
+    if let Some(mut stdin) = child.stdin.take()
+        && let Err(e) = stdin.write_all(secret_config.as_bytes()) {
             let _ = child.kill();
             let _ = child.wait();
             return Err(ApiError::NetworkError(format!("curl fallback stdin error: {e}")));
         }
         // stdin dropped here -> EOF, curl proceeds with the request.
-    }
 
     let output = child
         .wait_with_output()
@@ -428,11 +427,10 @@ async fn send_json_request(
             let status_u16 = status.as_u16();
             let text = resp.text().await.unwrap_or_default();
 
-            if let Ok(json_val) = serde_json::from_str::<Value>(&text) {
-                if status.is_success() || json_val.get("status").is_some() {
+            if let Ok(json_val) = serde_json::from_str::<Value>(&text)
+                && (status.is_success() || json_val.get("status").is_some()) {
                     return Ok(json_val);
                 }
-            }
 
             if status == reqwest::StatusCode::UNAUTHORIZED {
                 return Err(if token.is_some() {
@@ -444,30 +442,24 @@ async fn send_json_request(
 
             // Cloudflare WAF returned 403 Forbidden without a LibreView JSON body
             // (e.g. TLS JA3/JA4 block on rustls): retry once via system curl (OpenSSL + HTTP/2).
-            if status_u16 == 403 && crate::updater::system_curl_available() {
-                if let Ok((code, val)) =
+            if status_u16 == 403 && crate::updater::system_curl_available()
+                && let Ok((code, val)) =
                     curl_fallback_json(method.as_str(), url, token, account_id, json_payload).await
-                {
-                    if (200..300).contains(&code) || val.get("status").is_some() {
+                    && ((200..300).contains(&code) || val.get("status").is_some()) {
                         return Ok(val);
                     }
-                }
-            }
 
             Err(ApiError::ServerError(status_u16, status.to_string()))
         }
         Err(e) => {
             // Timeouts and connection failures (offline, DNS) would fail identically via
             // curl and only add another 15 s of waiting, so skip the fallback for them.
-            if !e.is_timeout() && !e.is_connect() && crate::updater::system_curl_available() {
-                if let Ok((code, val)) =
+            if !e.is_timeout() && !e.is_connect() && crate::updater::system_curl_available()
+                && let Ok((code, val)) =
                     curl_fallback_json(method.as_str(), url, token, account_id, json_payload).await
-                {
-                    if (200..300).contains(&code) || val.get("status").is_some() {
+                    && ((200..300).contains(&code) || val.get("status").is_some()) {
                         return Ok(val);
                     }
-                }
-            }
             Err(ApiError::NetworkError(e.to_string()))
         }
     }
@@ -1055,15 +1047,14 @@ fn format_rfc3339_as_local_libreview(iso_raw: &str) -> Option<(i64, String)> {
             .to_string();
         return Some((epoch, local_str));
     }
-    if let Some(epoch) = parse_libreview_timestamp(trimmed, true) {
-        if let Some(dt) = chrono::DateTime::from_timestamp(epoch, 0) {
+    if let Some(epoch) = parse_libreview_timestamp(trimmed, true)
+        && let Some(dt) = chrono::DateTime::from_timestamp(epoch, 0) {
             let local_str = dt
                 .with_timezone(&chrono::Local)
                 .format("%m/%d/%Y %I:%M:%S %p")
                 .to_string();
             return Some((epoch, local_str));
         }
-    }
     None
 }
 
@@ -1141,8 +1132,8 @@ pub fn discover_ha_patients(states_arr: &[Value]) -> Vec<HaPatientOption> {
         }
 
         let attrs = item.get("attributes");
-        if patient_name.is_empty() {
-            if let Some(friendly) = attrs
+        if patient_name.is_empty()
+            && let Some(friendly) = attrs
                 .and_then(|a| a.get("friendly_name"))
                 .and_then(|v| v.as_str())
             {
@@ -1154,7 +1145,6 @@ pub fn discover_ha_patients(states_arr: &[Value]) -> Vec<HaPatientOption> {
                     .unwrap_or(friendly.trim());
                 patient_name = cleaned.trim().to_string();
             }
-        }
         if patient_name.is_empty() {
             patient_name = prefix.replace('_', " ");
         }
@@ -1315,11 +1305,10 @@ pub fn parse_ha_states_and_history(
         e.get("entity_id")
             .and_then(|v| v.as_str())
             .is_some_and(|id| id == arrow_entity_id)
-    }) {
-        if let Some(st) = ent.get("state").and_then(|v| v.as_str()) {
+    })
+        && let Some(st) = ent.get("state").and_then(|v| v.as_str()) {
             trend_arrow = parse_ha_trend_str(st);
         }
-    }
 
     // Check `sensor.<prefix>_trend` or `sensor.<prefix>_trend_2`
     if trend_arrow.is_none() {
@@ -1330,41 +1319,36 @@ pub fn parse_ha_states_and_history(
                 .is_some_and(|id| id == trend_prefix || id.starts_with(&format!("{trend_prefix}_")))
         }) {
             if let Some(ent_attrs) = ent.get("attributes") {
-                if let Some(arr_str) = ent_attrs.get("trend_arrow").and_then(|v| v.as_str()) {
-                    if let Some(code) = parse_ha_trend_str(arr_str) {
+                if let Some(arr_str) = ent_attrs.get("trend_arrow").and_then(|v| v.as_str())
+                    && let Some(code) = parse_ha_trend_str(arr_str) {
                         trend_arrow = Some(code);
                         break;
                     }
-                }
-                if let Some(cat_str) = ent_attrs.get("trend_category").and_then(|v| v.as_str()) {
-                    if let Some(code) = parse_ha_trend_str(cat_str) {
+                if let Some(cat_str) = ent_attrs.get("trend_category").and_then(|v| v.as_str())
+                    && let Some(code) = parse_ha_trend_str(cat_str) {
                         trend_arrow = Some(code);
                         break;
                     }
-                }
             }
-            if let Some(st) = ent.get("state").and_then(|v| v.as_str()) {
-                if let Some(code) = parse_ha_trend_str(st) {
+            if let Some(st) = ent.get("state").and_then(|v| v.as_str())
+                && let Some(code) = parse_ha_trend_str(st) {
                     trend_arrow = Some(code);
                     break;
                 }
-            }
         }
     }
 
     // Fallback to primary sensor's own attributes (`trend_arrow` or `icon`)
-    if trend_arrow.is_none() {
-        if let Some(a) = attrs {
+    if trend_arrow.is_none()
+        && let Some(a) = attrs {
             if let Some(s) = a.get("trend_arrow").and_then(|v| v.as_str()) {
                 trend_arrow = parse_ha_trend_str(s);
             }
-            if trend_arrow.is_none() {
-                if let Some(icon) = a.get("icon").and_then(|v| v.as_str()) {
+            if trend_arrow.is_none()
+                && let Some(icon) = a.get("icon").and_then(|v| v.as_str()) {
                     trend_arrow = parse_ha_trend_str(icon);
                 }
-            }
         }
-    }
     let trend_arrow = trend_arrow.unwrap_or(3);
 
     // 2. Timestamp & measured_at_epoch discovery
@@ -1375,22 +1359,20 @@ pub fn parse_ha_states_and_history(
             .and_then(|v| v.as_str())
             .is_some_and(|id| id == ts_prefix || id.starts_with(&format!("{ts_prefix}_")))
     }) {
-        if let Some(st) = ent.get("state").and_then(|v| v.as_str()) {
-            if let Some(parsed) = format_rfc3339_as_local_libreview(st) {
+        if let Some(st) = ent.get("state").and_then(|v| v.as_str())
+            && let Some(parsed) = format_rfc3339_as_local_libreview(st) {
                 ts_pair = Some(parsed);
                 break;
             }
-        }
     }
-    if ts_pair.is_none() {
-        if let Some(lu) = primary
+    if ts_pair.is_none()
+        && let Some(lu) = primary
             .get("last_updated")
             .and_then(|v| v.as_str())
             .or_else(|| primary.get("last_changed").and_then(|v| v.as_str()))
         {
             ts_pair = format_rfc3339_as_local_libreview(lu);
         }
-    }
     let (measured_at_epoch, timestamp) = match ts_pair {
         Some((ep, s)) => (Some(ep), s),
         None => (None, String::new()),
@@ -1429,38 +1411,33 @@ pub fn parse_ha_states_and_history(
             }
         }
         if let Some(a) = ent.get("attributes") {
-            if patient_id.is_empty() {
-                if let Some(pid) = a.get("Patient ID").and_then(|v| v.as_str()) {
+            if patient_id.is_empty()
+                && let Some(pid) = a.get("Patient ID").and_then(|v| v.as_str()) {
                     patient_id = pid.trim().to_string();
                 }
-            }
-            if full_name.is_empty() {
-                if let Some(pname) = a.get("Patient").and_then(|v| v.as_str()) {
+            if full_name.is_empty()
+                && let Some(pname) = a.get("Patient").and_then(|v| v.as_str()) {
                     full_name = pname.trim().to_string();
                 }
-            }
-            if sensor_serial.is_empty() {
-                if let Some(sn) = a.get("Serial number").and_then(|v| v.as_str()) {
+            if sensor_serial.is_empty()
+                && let Some(sn) = a.get("Serial number").and_then(|v| v.as_str()) {
                     sensor_serial = sn.trim().to_string();
                 }
-            }
-            if sensor_activated_at_epoch.is_none() {
-                if let Some(act_str) = a.get("Activation date").and_then(|v| v.as_str()) {
+            if sensor_activated_at_epoch.is_none()
+                && let Some(act_str) = a.get("Activation date").and_then(|v| v.as_str()) {
                     sensor_activated_at_epoch = parse_libreview_timestamp(act_str, true);
                 }
-            }
-            if sensor_lifespan_days <= 0 {
-                if let Some(days) = a.get("Sensor lifespan days").and_then(|v| v.as_i64()) {
+            if sensor_lifespan_days <= 0
+                && let Some(days) = a.get("Sensor lifespan days").and_then(|v| v.as_i64()) {
                     sensor_lifespan_days = days.clamp(1, 60) as i32;
                 }
-            }
             if let Some(plus) = a.get("Sensor plus model").and_then(|v| v.as_bool()) {
                 sensor_plus_model = plus;
             }
         }
     }
-    if sensor_expires_at_epoch.is_none() {
-        if let Some(act) = sensor_activated_at_epoch {
+    if sensor_expires_at_epoch.is_none()
+        && let Some(act) = sensor_activated_at_epoch {
             let days = if sensor_lifespan_days > 0 {
                 i64::from(sensor_lifespan_days)
             } else if sensor_plus_model {
@@ -1470,9 +1447,8 @@ pub fn parse_ha_states_and_history(
             };
             sensor_expires_at_epoch = Some(act + days * 86_400);
         }
-    }
-    if full_name.is_empty() {
-        if let Some(friendly) = attrs
+    if full_name.is_empty()
+        && let Some(friendly) = attrs
             .and_then(|a| a.get("friendly_name"))
             .and_then(|v| v.as_str())
         {
@@ -1483,7 +1459,6 @@ pub fn parse_ha_states_and_history(
                 .unwrap_or(friendly.trim());
             full_name = cleaned.trim().to_string();
         }
-    }
     let (first_name, last_name) = match full_name.split_once(' ') {
         Some((f, l)) => (f.trim().to_string(), l.trim().to_string()),
         None => (full_name, String::new()),
@@ -1501,16 +1476,14 @@ pub fn parse_ha_states_and_history(
             .is_some_and(|id| id.contains(prefix) && id.contains("time_in_range"))
     }) {
         if let Some(a) = ent.get("attributes") {
-            if let Some(low) = a.get("target_low_mgdl").and_then(|v| v.as_f64()) {
-                if low > 0.0 {
+            if let Some(low) = a.get("target_low_mgdl").and_then(|v| v.as_f64())
+                && low > 0.0 {
                     target_low_mg_dl = low;
                 }
-            }
-            if let Some(high) = a.get("target_high_mgdl").and_then(|v| v.as_f64()) {
-                if high > 0.0 {
+            if let Some(high) = a.get("target_high_mgdl").and_then(|v| v.as_f64())
+                && high > 0.0 {
                     target_high_mg_dl = high;
                 }
-            }
         }
     }
 

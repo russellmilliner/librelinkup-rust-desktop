@@ -128,18 +128,22 @@ pub fn dpapi_unprotect(data: &[u8]) -> Result<Vec<u8>, String> {
 
 #[cfg(windows)]
 fn take_blob(blob: windows_sys::Win32::Security::Cryptography::CRYPT_INTEGER_BLOB) -> Vec<u8> {
+    use std::mem::DropGuard;
     use windows_sys::Win32::Foundation::LocalFree;
-    if blob.pbData.is_null() || blob.cbData == 0 {
-        if !blob.pbData.is_null() {
-            unsafe { LocalFree(blob.pbData as _) };
+    let guard = DropGuard::new(blob, |b| {
+        if !b.pbData.is_null() {
+            if b.cbData > 0 {
+                let s = unsafe { std::slice::from_raw_parts_mut(b.pbData, b.cbData as usize) };
+                s.zeroize();
+            }
+            unsafe { LocalFree(b.pbData as _) };
         }
+    });
+    if guard.pbData.is_null() || guard.cbData == 0 {
         return Vec::new();
     }
-    let slice = unsafe { std::slice::from_raw_parts_mut(blob.pbData, blob.cbData as usize) };
-    let out = slice.to_vec();
-    slice.zeroize();
-    unsafe { LocalFree(blob.pbData as _) };
-    out
+    let slice = unsafe { std::slice::from_raw_parts(guard.pbData, guard.cbData as usize) };
+    slice.to_vec()
 }
 
 #[cfg(not(windows))]

@@ -29,12 +29,11 @@ struct Notifier {
 impl UiNotifier for Notifier {
     fn state_changed(&self) {
         self.ui.repaint_all();
-        if let (Some(shared), Ok(tray)) = (self.shared.get(), self.tray.lock()) {
-            if let Some(tray) = tray.as_ref() {
+        if let (Some(shared), Ok(tray)) = (self.shared.get(), self.tray.lock())
+            && let Some(tray) = tray.as_ref() {
                 let view = build_tray_view(&shared.lock().unwrap_or_else(|p| p.into_inner()));
                 let _ = tray.send(view);
             }
-        }
     }
 
     fn attention(&self, flash: bool, bring_to_front: bool) {
@@ -309,7 +308,12 @@ fn self_test() -> i32 {
     check("vault", (|| {
         let key = librelinkup_core::crypto::generate_random_key()?;
         let secret = platform::dpapi_unprotect(&platform::dpapi_protect(&key)?)?;
-        let path = std::env::temp_dir().join(format!("llu-selftest-{}.json", std::process::id()));
+        let path = std::mem::DropGuard::new(
+            std::env::temp_dir().join(format!("llu-selftest-{}.json", std::process::id())),
+            |p| {
+                let _ = std::fs::remove_file(p);
+            },
+        );
         let creds = StoredCredentials {
             username: "self-test@example.com".into(),
             password: "p\"w\\d".into(),
@@ -324,7 +328,6 @@ fn self_test() -> i32 {
         };
         save_credentials_with_secret(&creds, &path, &secret)?;
         let loaded = load_credentials_with_secret(&path, &secret)?.ok_or("vault missing")?;
-        let _ = std::fs::remove_file(&path);
         if loaded == creds { Ok("AES-256-GCM envelope with DPAPI-protected key".into()) } else { Err("decrypted credentials differ".into()) }
     })());
 
@@ -332,6 +335,9 @@ fn self_test() -> i32 {
         let dir = std::env::temp_dir().join(format!("llu-dpapi-guard-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&dir);
         std::fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
+        let dir = std::mem::DropGuard::new(dir, |d| {
+            let _ = std::fs::remove_dir_all(d);
+        });
         let key_path = dir.join("master.dpapi");
         let creds_path = dir.join("credentials.enc.json");
         let meds_path = dir.join("medications.enc.json");
@@ -344,7 +350,6 @@ fn self_test() -> i32 {
             &[&creds_path, &meds_path, &hist_path],
         );
         if !matches!(res_hist, Err(ref e) if e.contains("Refusing to create a new key")) || key_path.exists() {
-            let _ = std::fs::remove_dir_all(&dir);
             return Err("expected I-5 refusal when glucose_history.enc.json exists without master.dpapi".into());
         }
 
@@ -356,7 +361,6 @@ fn self_test() -> i32 {
             &[&creds_path, &meds_path, &hist_path],
         );
         if !matches!(res_meds, Err(ref e) if e.contains("Refusing to create a new key")) || key_path.exists() {
-            let _ = std::fs::remove_dir_all(&dir);
             return Err("expected I-5 refusal when medications.enc.json exists without master.dpapi".into());
         }
 
@@ -370,7 +374,6 @@ fn self_test() -> i32 {
             &key_path,
             &[&creds_path, &meds_path, &hist_path],
         )?;
-        let _ = std::fs::remove_dir_all(&dir);
         if !first.is_empty() && *first == *second {
             Ok("I-5 refuses key rotation across credentials/medications/history vaults".into())
         } else {

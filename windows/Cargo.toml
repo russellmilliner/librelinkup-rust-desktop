@@ -1,7 +1,8 @@
 [package]
 name = "librelinkup-windows"
 version = "0.5.14"
-edition = "2021"
+edition = "2024"
+rust-version = "1.100"
 license = "Apache-2.0"
 description = "LibreLinkUp Rust Desktop for Windows — blood glucose monitor for LibreLinkUp"
 repository = "https://github.com/russellmilliner/librelinkup-rust-desktop"
@@ -27,7 +28,6 @@ notify-rust = "4.18.2"
 raw-window-handle = "0.6"
 rfd = "0.17.2"
 rodio = { version = "0.23.0", default-features = false, features = ["playback", "wav", "mp3", "vorbis"] }
-serde_json = "1.0.154"
 tokio = { version = "1.54.0", features = ["rt-multi-thread", "macros", "sync", "time"] }
 tray-icon = { version = "0.26.1", default-features = false, features = ["ksni"] }
 zeroize = "1.9.1"
@@ -42,3 +42,6 @@ strip = true
 
 [build-dependencies]
 winresource = "0.1.34"
+
+[lints.cargo]
+unused_dependencies = "warn"

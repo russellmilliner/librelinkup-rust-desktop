@@ -104,8 +104,11 @@ fn main() {
         let dir = std::env::temp_dir().join(format!("llu_cli_uitest_{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&dir);
         let _ = std::fs::create_dir_all(&dir);
-        std::env::set_var("LIBRELINKUP_CONFIG_DIR", &dir);
-        std::env::set_var("LIBRELINKUP_DATA_DIR", &dir);
+        // SAFETY: single-threaded CLI startup before Qt or Tokio worker threads exist.
+        unsafe {
+            std::env::set_var("LIBRELINKUP_CONFIG_DIR", &dir);
+            std::env::set_var("LIBRELINKUP_DATA_DIR", &dir);
+        }
         let report = librelinkup_run_ui_overflow_tests().to_string();
         let _ = std::fs::remove_dir_all(&dir);
         if report == "OK" {
@@ -120,7 +123,10 @@ fn main() {
         if librelinkup_try_dispatch_cli_action(&QString::from(action_id.as_str())) {
             return;
         }
-        std::env::set_var("LIBRELINKUP_INITIAL_ACTION", &action_id);
+        // SAFETY: single-threaded CLI startup before librelinkup_run_app spawns threads.
+        unsafe {
+            std::env::set_var("LIBRELINKUP_INITIAL_ACTION", &action_id);
+        }
     }
 
     let start_minimized = args.iter().any(|a| {

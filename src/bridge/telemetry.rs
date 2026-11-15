@@ -685,11 +685,10 @@ impl qobject::TelemetryController {
             return false;
         }
 
-        if creds.has_valid_session() {
-            if let Err(e) = save_default_credentials(&creds.sanitized_for_storage(remember_pw)) {
+        if creds.has_valid_session()
+            && let Err(e) = save_default_credentials(&creds.sanitized_for_storage(remember_pw)) {
                 log_error("CRYPTO", format!("Failed to save encrypted credentials: {e}"));
             }
-        }
 
         let valid_active = creds.has_valid_session_for(&src_clean, &clean_url);
         let has_ha_tok = creds.has_valid_ha_session();
@@ -926,14 +925,13 @@ impl qobject::TelemetryController {
                                 push_initial_ha_meds = true;
                             }
                         }
-                        if s.ha_sync_snooze {
-                            if let Some((remote_until, remote_updated)) =
+                        if s.ha_sync_snooze
+                            && let Some((remote_until, remote_updated)) =
                                 crate::api::parse_ha_remote_snooze(
                                     states_arr,
                                     s.snooze_updated_at_epoch,
                                 )
-                            {
-                                if s.snooze_until_epoch != remote_until {
+                                && s.snooze_until_epoch != remote_until {
                                     s.snooze_until_epoch = remote_until;
                                     s.snooze_updated_at_epoch = remote_updated;
                                     if remote_until == 0 {
@@ -945,8 +943,6 @@ impl qobject::TelemetryController {
                                         "Synchronized cross-device alert snooze state from Home Assistant.",
                                     );
                                 }
-                            }
-                        }
                     }
                     ops::refresh_display(s);
                 });

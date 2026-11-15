@@ -259,8 +259,8 @@ fn parse_single_time_slot(raw_part: &str) -> Option<NaiveTime> {
             Some((h, m)) => (h.trim(), m.trim()),
             None => (num_part, "0"),
         };
-        if let (Ok(mut hour), Ok(min)) = (h_str.parse::<u32>(), m_str.parse::<u32>()) {
-            if (1..=12).contains(&hour) && min < 60 {
+        if let (Ok(mut hour), Ok(min)) = (h_str.parse::<u32>(), m_str.parse::<u32>())
+            && (1..=12).contains(&hour) && min < 60 {
                 if is_pm && hour < 12 {
                     hour += 12;
                 } else if !is_pm && hour == 12 {
@@ -268,7 +268,6 @@ fn parse_single_time_slot(raw_part: &str) -> Option<NaiveTime> {
                 }
                 return NaiveTime::from_hms_opt(hour, min, 0);
             }
-        }
     }
     None
 }
@@ -280,18 +279,15 @@ pub fn parse_scheduled_slots(raw: &str, schedule: MedicationSchedule) -> Vec<Nai
         .filter_map(parse_single_time_slot)
         .collect();
 
-    if slots.is_empty() {
-        if let Some(t) = NaiveTime::from_hms_opt(8, 0, 0) {
+    if slots.is_empty()
+        && let Some(t) = NaiveTime::from_hms_opt(8, 0, 0) {
             slots.push(t);
         }
-    }
-    if schedule == MedicationSchedule::TwiceDaily && slots.len() == 1 {
-        if let Some(t2) = NaiveTime::from_hms_opt(20, 0, 0) {
-            if slots[0] != t2 {
+    if schedule == MedicationSchedule::TwiceDaily && slots.len() == 1
+        && let Some(t2) = NaiveTime::from_hms_opt(20, 0, 0)
+            && slots[0] != t2 {
                 slots.push(t2);
             }
-        }
-    }
     slots.sort();
     slots.dedup();
     slots
@@ -445,15 +441,14 @@ impl MedicationStore {
         };
 
         let dup_window = if notes.contains("desktop reminder") { 600 } else { 60 };
-        if med_id != "adhoc" {
-            if let Some(existing) = self.dose_logs.iter().find(|d| {
+        if med_id != "adhoc"
+            && let Some(existing) = self.dose_logs.iter().find(|d| {
                 d.medication_id == med_id
                     && !d.skipped
                     && (d.taken_at_epoch - taken_at_epoch).abs() < dup_window
             }) {
                 return Ok(existing.clone());
             }
-        }
 
         let entry = MedicationDoseLog {
             id: format!("dose-{taken_at_epoch}-{}", self.dose_logs.len() + 1),
@@ -585,9 +580,9 @@ impl MedicationStore {
                     format!("✓ Taken {}", d.taken_at_display),
                 );
             }
-            if today_wd == med.weekday % 7 {
-                if let Some(slot) = slots.first() {
-                    if now_dt.time() >= *slot {
+            if today_wd == med.weekday % 7
+                && let Some(slot) = slots.first()
+                    && now_dt.time() >= *slot {
                         return (
                             DoseStatusKind::DueNow,
                             format!(
@@ -597,8 +592,6 @@ impl MedicationStore {
                             ),
                         );
                     }
-                }
-            }
             return (
                 DoseStatusKind::Upcoming,
                 format!(
@@ -622,8 +615,8 @@ impl MedicationStore {
             .filter(|d| d.medication_id == med.id && d.taken_at_epoch >= day_start_epoch)
             .collect();
 
-        if doses_today.len() >= slots.len() {
-            if let Some(latest) = doses_today.first() {
+        if doses_today.len() >= slots.len()
+            && let Some(latest) = doses_today.first() {
                 if latest.skipped {
                     return (
                         DoseStatusKind::Skipped,
@@ -635,7 +628,6 @@ impl MedicationStore {
                     format!("✓ Taken ({})", latest.taken_at_display),
                 );
             }
-        }
 
         // Check if any slot today is due and not yet satisfied
         for (idx, slot) in slots.iter().enumerate() {
@@ -682,9 +674,9 @@ impl MedicationStore {
             if taken_this_week {
                 return None;
             }
-            if today_wd == med.weekday % 7 {
-                if let Some(slot) = slots.first() {
-                    if now_dt.time() >= *slot {
+            if today_wd == med.weekday % 7
+                && let Some(slot) = slots.first()
+                    && now_dt.time() >= *slot {
                         return Some((
                             *slot,
                             format!(
@@ -694,8 +686,6 @@ impl MedicationStore {
                             ),
                         ));
                     }
-                }
-            }
             return None;
         }
 
@@ -760,17 +750,15 @@ impl MedicationStore {
             if last_notified.contains_key(&slot_key) {
                 continue;
             }
-            if let Some(&last_ts) = self.notified_slots.get(&slot_key) {
-                if now_epoch - last_ts < 86_400 {
+            if let Some(&last_ts) = self.notified_slots.get(&slot_key)
+                && now_epoch - last_ts < 86_400 {
                     last_notified.insert(slot_key, last_ts);
                     continue;
                 }
-            }
-            if let Some(&last_ts) = last_notified.get(&med.id) {
-                if now_epoch - last_ts < MEDICATION_REMINDER_REPEAT_SECONDS {
+            if let Some(&last_ts) = last_notified.get(&med.id)
+                && now_epoch - last_ts < MEDICATION_REMINDER_REPEAT_SECONDS {
                     continue;
                 }
-            }
 
             last_notified.insert(slot_key, now_epoch);
             last_notified.insert(med.id.clone(), now_epoch);
@@ -1027,8 +1015,8 @@ impl MedicationStore {
         let mut changed = false;
 
         // 1. Merge remote medication definitions
-        if let Some(meds_val) = attrs.get("medications") {
-            if let Ok(remote_meds) = serde_json::from_value::<Vec<MedicationDef>>(meds_val.clone())
+        if let Some(meds_val) = attrs.get("medications")
+            && let Ok(remote_meds) = serde_json::from_value::<Vec<MedicationDef>>(meds_val.clone())
             {
                 for rm in remote_meds {
                     if rm.name.trim().is_empty() {
@@ -1045,11 +1033,10 @@ impl MedicationStore {
                     }
                 }
             }
-        }
 
         // 2. Merge remote dose logs
-        if let Some(doses_val) = attrs.get("recent_doses") {
-            if let Ok(remote_doses) =
+        if let Some(doses_val) = attrs.get("recent_doses")
+            && let Ok(remote_doses) =
                 serde_json::from_value::<Vec<MedicationDoseLog>>(doses_val.clone())
             {
                 for mut rd in remote_doses {
@@ -1076,7 +1063,6 @@ impl MedicationStore {
                     }
                 }
             }
-        }
 
         // 3. Support simple Home Assistant automation/button triggers via attributes:
         //    `trigger_take_medication`: medication name or ID, `trigger_epoch`: unix epoch seconds
@@ -1241,8 +1227,8 @@ pub fn load_default_medications() -> MedicationStore {
     }
 
     let legacy_path = legacy_medications_file_path();
-    if let Ok(raw) = fs::read_to_string(&legacy_path) {
-        if let Ok(store) = serde_json::from_str::<MedicationStore>(&raw) {
+    if let Ok(raw) = fs::read_to_string(&legacy_path)
+        && let Ok(store) = serde_json::from_str::<MedicationStore>(&raw) {
             match save_medications_to_path(&store, &enc_path) {
                 Ok(()) => {
                     let _ = fs::remove_file(&legacy_path);
@@ -1261,7 +1247,6 @@ pub fn load_default_medications() -> MedicationStore {
             }
             return store;
         }
-    }
     MedicationStore::default()
 }
 

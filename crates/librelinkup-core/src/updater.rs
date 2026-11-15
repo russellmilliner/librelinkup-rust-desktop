@@ -128,11 +128,10 @@ pub fn parse_sha256_checksum(
                 .rsplit(['/', '\\'])
                 .next()
                 .unwrap_or("");
-            if let Some(expected) = expected_file_name {
-                if !clean_file.is_empty() && clean_file != expected {
+            if let Some(expected) = expected_file_name
+                && !clean_file.is_empty() && clean_file != expected {
                     continue;
                 }
-            }
         }
         return Ok(hash.to_ascii_lowercase());
     }
@@ -419,15 +418,12 @@ fn curl_get_github_release(url: &str, current_version: &str) -> Result<String, S
 /// Fetches a small text asset (checksum / signature) with a `curl` fallback on Unix, used
 /// when Cloudflare-style TLS fingerprint filtering blocks the rustls client.
 async fn fetch_release_text(client: &reqwest::Client, url: &str) -> Option<String> {
-    if let Ok(resp) = client.get(url).send().await {
-        if resp.status().is_success() {
-            if let Ok(text) = resp.text().await {
-                if !text.trim().is_empty() {
+    if let Ok(resp) = client.get(url).send().await
+        && resp.status().is_success()
+            && let Ok(text) = resp.text().await
+                && !text.trim().is_empty() {
                     return Some(text);
                 }
-            }
-        }
-    }
     #[cfg(unix)]
     if system_curl_available() {
         let owned = url.to_string();
@@ -435,11 +431,9 @@ async fn fetch_release_text(client: &reqwest::Client, url: &str) -> Option<Strin
             curl_get_github_release(&owned, env!("CARGO_PKG_VERSION"))
         })
         .await
-        {
-            if !raw.trim().is_empty() {
+            && !raw.trim().is_empty() {
                 return Some(raw);
             }
-        }
     }
     None
 }
@@ -536,13 +530,12 @@ pub fn check_for_updates_blocking(current_version: &str) -> Result<UpdateCheckRe
         }
         Err(err) => {
             #[cfg(unix)]
-            if system_curl_available() {
-                if let Ok(raw) =
+            if system_curl_available()
+                && let Ok(raw) =
                     curl_get_github_release(GITHUB_RELEASES_LATEST_URL, current_version)
                 {
                     return parse_github_release_json(&raw, current_version);
                 }
-            }
             Err(format!("Update check failed: {err}"))
         }
     }
@@ -628,15 +621,12 @@ pub async fn download_and_install_update_async(
 
     // 2. Download the installer/bundle and verify its SHA-256 digest before execution.
     let mut verified_bytes: Option<Vec<u8>> = None;
-    if let Ok(resp) = client.get(download_url).send().await {
-        if resp.status().is_success() {
-            if let Ok(bytes) = resp.bytes().await {
-                if bytes.len() > 1024 {
+    if let Ok(resp) = client.get(download_url).send().await
+        && resp.status().is_success()
+            && let Ok(bytes) = resp.bytes().await
+                && bytes.len() > 1024 {
                     verified_bytes = Some(bytes.to_vec());
                 }
-            }
-        }
-    }
 
     #[cfg(unix)]
     if verified_bytes.is_none() && system_curl_available() {

@@ -829,12 +829,8 @@ dependencies = [
  "cxx-qt-build",
  "cxx-qt-lib",
  "librelinkup-core",
- "reqwest",
- "ring",
- "serde",
  "serde_json",
  "tokio",
- "zeroize",
 ]
 
 [[package]]

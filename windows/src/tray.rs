@@ -152,12 +152,11 @@ fn run(rx: Receiver<TrayView>, on_action: impl Fn(TrayAction)) {
         while let Ok(view) = rx.try_recv() {
             latest = Some(view);
         }
-        if let (Some(view), Some(tray)) = (latest, tray.as_ref()) {
-            if current.as_ref() != Some(&view) {
+        if let (Some(view), Some(tray)) = (latest, tray.as_ref())
+            && current.as_ref() != Some(&view) {
                 apply_view(tray, &ids, &view, current.as_ref(), font.as_ref());
                 current = Some(view);
             }
-        }
     }
 }
 
@@ -189,11 +188,10 @@ fn load_badge_font() -> Option<FontArc> {
     let windir = std::env::var("WINDIR").unwrap_or_else(|_| "C:\\Windows".into());
     for name in ["segoeuib.ttf", "arialbd.ttf", "segoeui.ttf", "arial.ttf"] {
         let path = std::path::Path::new(&windir).join("Fonts").join(name);
-        if let Ok(bytes) = std::fs::read(&path) {
-            if let Ok(font) = FontArc::try_from_vec(bytes) {
+        if let Ok(bytes) = std::fs::read(&path)
+            && let Ok(font) = FontArc::try_from_vec(bytes) {
                 return Some(font);
             }
-        }
     }
     FontArc::try_from_slice(epaint_default_fonts::UBUNTU_LIGHT).ok()
 }

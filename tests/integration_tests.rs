@@ -303,7 +303,10 @@ fn test_log_viewer_filtering_and_export() {
 fn test_mock_librelinkup_api_server() {
     // Loopback plaintext endpoints are refused unless explicitly opted into (release builds
     // and shipped binaries never are).
-    std::env::set_var("LIBRELINKUP_ALLOW_INSECURE_TEST_ENDPOINT", "1");
+    // SAFETY: integration tests run sequentially (--test-threads=1) before worker threads start.
+    unsafe {
+        std::env::set_var("LIBRELINKUP_ALLOW_INSECURE_TEST_ENDPOINT", "1");
+    }
     assert_eq!(normalize_country_code("ch"), "eu");
     assert_eq!(resolve_base_url("us"), "https://api-us.libreview.io/llu");
     assert_eq!(resolve_base_url("global"), "https://api.libreview.io/llu");
@@ -384,7 +387,10 @@ fn test_mock_librelinkup_api_server() {
 
 #[test]
 fn test_mock_api_regional_redirect_and_error_handling() {
-    std::env::set_var("LIBRELINKUP_ALLOW_INSECURE_TEST_ENDPOINT", "1");
+    // SAFETY: integration tests run sequentially (--test-threads=1) before worker threads start.
+    unsafe {
+        std::env::set_var("LIBRELINKUP_ALLOW_INSECURE_TEST_ENDPOINT", "1");
+    }
     let listener = TcpListener::bind("127.0.0.1:0").unwrap();
     let addr = listener.local_addr().unwrap();
 
@@ -511,8 +517,11 @@ fn test_qml_ui_layout_no_box_or_window_overflow() {
     let dir = std::env::temp_dir().join(format!("llu_uitest_cfg_{}", std::process::id()));
     let _ = std::fs::remove_dir_all(&dir);
     std::fs::create_dir_all(&dir).unwrap();
-    std::env::set_var("LIBRELINKUP_CONFIG_DIR", &dir);
-    std::env::set_var("LIBRELINKUP_DATA_DIR", &dir);
+    // SAFETY: integration tests run sequentially (--test-threads=1) before Qt initializes.
+    unsafe {
+        std::env::set_var("LIBRELINKUP_CONFIG_DIR", &dir);
+        std::env::set_var("LIBRELINKUP_DATA_DIR", &dir);
+    }
 
     let report =
         librelinkup_kde::bridge::qobject_bridge::qobject::librelinkup_run_ui_overflow_tests()

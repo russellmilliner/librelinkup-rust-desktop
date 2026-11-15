@@ -2106,7 +2106,6 @@ dependencies = [
  "raw-window-handle",
  "rfd",
  "rodio",
- "serde_json",
  "tokio",
  "tray-icon",
  "windows-sys 0.61.2",

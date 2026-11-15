@@ -22,11 +22,10 @@ pub fn play_alert_sound(custom_sound: Option<PathBuf>) {
             if let Err(e) = play_blocking(custom_sound.clone()) {
                 log_warn("ALERT", format!("Alert sound failed: {e}"));
                 // A broken custom file must never silence the alarm: retry with the built-in one.
-                if custom_sound.is_some() {
-                    if let Err(e) = play_blocking(None) {
+                if custom_sound.is_some()
+                    && let Err(e) = play_blocking(None) {
                         log_warn("ALERT", format!("Built-in alarm failed: {e}"));
                     }
-                }
             }
         })
         .ok();

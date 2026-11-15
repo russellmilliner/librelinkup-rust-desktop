@@ -81,11 +81,10 @@ pub fn encode_wav(samples: &[i16]) -> Vec<u8> {
 /// Writes the default alarm WAV to `path` unless an identical file already exists.
 pub fn ensure_alert_sound_at(path: &Path) -> io::Result<()> {
     let wav = encode_wav(&generate_alert_samples());
-    if let Ok(existing) = fs::read(path) {
-        if existing == wav {
+    if let Ok(existing) = fs::read(path)
+        && existing == wav {
             return Ok(());
         }
-    }
     crate::paths::write_file_atomic_0600(path, &wav).map_err(io::Error::other)
 }
 

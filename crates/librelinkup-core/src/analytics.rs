@@ -319,8 +319,8 @@ impl GlucoseHistoryStore {
             .map(|s| (s.epoch, s.value_mg_dl))
             .collect();
 
-        if values.is_empty() {
-            if let Some(snap) = fallback_snapshot {
+        if values.is_empty()
+            && let Some(snap) = fallback_snapshot {
                 for (idx, pt) in snap.graph_points.iter().enumerate() {
                     if pt.value_mg_dl > 0.0 && !pt.value_mg_dl.is_nan() {
                         let ep = parse_libreview_timestamp(&pt.timestamp, false).unwrap_or_else(
@@ -339,7 +339,6 @@ impl GlucoseHistoryStore {
                     ));
                 }
             }
-        }
 
         if values.is_empty() {
             return GlycemicStats {
@@ -492,8 +491,8 @@ pub fn load_default_glucose_history() -> GlucoseHistoryStore {
     }
 
     let legacy_path = legacy_glucose_history_file_path();
-    if let Ok(raw) = fs::read_to_string(&legacy_path) {
-        if let Ok(mut store) = serde_json::from_str::<GlucoseHistoryStore>(&raw) {
+    if let Ok(raw) = fs::read_to_string(&legacy_path)
+        && let Ok(mut store) = serde_json::from_str::<GlucoseHistoryStore>(&raw) {
             store.samples.retain(|s| s.value_mg_dl > 0.0);
             store.samples.sort_by_key(|s| s.epoch);
             match save_glucose_history_to_path(&store, &enc_path) {
@@ -513,7 +512,6 @@ pub fn load_default_glucose_history() -> GlucoseHistoryStore {
             }
             return store;
         }
-    }
     GlucoseHistoryStore::default()
 }
 

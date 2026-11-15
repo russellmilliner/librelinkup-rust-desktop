@@ -1,6 +1,6 @@
 [package]
 name = "librelinkup-windows"
-version = "0.5.14"
+version = "0.5.15"
 edition = "2024"
 rust-version = "1.100"
 license = "Apache-2.0"

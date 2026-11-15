@@ -57,6 +57,11 @@
   <url type="donation">https://ko-fi.com/russellmilliner</url>
   <content_rating type="oars-1.1" />
   <releases>
+    <release version="0.5.15" date="2026-11-15">
+      <description>
+        <p>Modernize workspace to Rust 1.100.0 and Edition 2024, add 7-day Cargo publish-age supply-chain cooldown, prune unused dependencies, and adopt std::mem::DropGuard, str::trim_prefix, and bool::toggle on Windows</p>
+      </description>
+    </release>
     <release version="0.5.14" date="2026-11-13">
       <description>
         <p>Harden DPAPI 3-vault rotation guard, Home Assistant entity and cleartext HTTP checks, KWin D-Bus scriptable slot scoping, secret zeroization, and --ui-test CLI suite</p>

@@ -2,6 +2,24 @@
 
 All notable changes and bumped dependencies for `russellmilliner/librelinkup-rust-desktop` are documented in this file.
 
+## [v0.5.15](https://github.com/russellmilliner/librelinkup-rust-desktop/releases/tag/v0.5.15) — 2026-11-15
+
+### Highlights
+- Modernize workspace to Rust 1.100.0 and Edition 2024, add 7-day Cargo publish-age supply-chain cooldown, prune unused dependencies, and adopt std::mem::DropGuard, str::trim_prefix, and bool::toggle on Windows
+
+### Commits
+- feat(rust): modernize workspace to Rust 1.100.0 and Edition 2024 (e3413b4)
+- chore(deps): update dependencies (rand 0.10.4) (56c2eca)
+- chore(deps): update dependencies (bumpalo 3.20.4, mio 1.2.5) (0dbe47e)
+
+### 📦 Bumped Dependencies (3 packages)
+
+| Package | Previous | Updated | Scope |
+| :--- | :--- | :--- | :--- |
+| `bumpalo` | `3.20.3` | **`3.20.4`** | Lockfile (`windows/Cargo.lock`) |
+| `mio` | `1.2.4` | **`1.2.5`** | Lockfile (`windows/Cargo.lock`) |
+| `rand` | `0.10.3` | **`0.10.4`** | Lockfile (`windows/Cargo.lock`) |
+
 ## [v0.5.14-deps](https://github.com/russellmilliner/librelinkup-rust-desktop/releases/tag/v0.5.14-deps) — 2026-11-15
 
 ### 📦 Bumped Dependencies (1 package)

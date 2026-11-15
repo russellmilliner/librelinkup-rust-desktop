@@ -2,14 +2,13 @@
 
 All notable changes and bumped dependencies for `russellmilliner/librelinkup-rust-desktop` are documented in this file.
 
-## [v0.5.14-deps](https://github.com/russellmilliner/librelinkup-rust-desktop/releases/tag/v0.5.14-deps) — 2026-11-14
+## [v0.5.14-deps](https://github.com/russellmilliner/librelinkup-rust-desktop/releases/tag/v0.5.14-deps) — 2026-11-15
 
-### 📦 Bumped Dependencies (2 packages)
+### 📦 Bumped Dependencies (1 package)
 
 | Package | Previous | Updated | Scope |
 | :--- | :--- | :--- | :--- |
-| `bumpalo` | `3.20.3` | **`3.20.4`** | Lockfile (`windows/Cargo.lock`) |
-| `mio` | `1.2.4` | **`1.2.5`** | Lockfile (`windows/Cargo.lock`) |
+| `rand` | `0.10.3` | **`0.10.4`** | Lockfile (`windows/Cargo.lock`) |
 
 ## [v0.5.14](https://github.com/russellmilliner/librelinkup-rust-desktop/releases/tag/v0.5.14) — 2026-11-13
 

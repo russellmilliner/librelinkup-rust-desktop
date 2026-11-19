@@ -8,7 +8,6 @@ mod service;
 mod tray;
 
 use std::sync::atomic::{AtomicBool, AtomicIsize, Ordering};
-use std::sync::mpsc::Sender;
 use std::sync::{Arc, Mutex, OnceLock};
 
 use eframe::egui;
@@ -16,14 +15,14 @@ use librelinkup_core::event_log::{log_error, log_info};
 
 use crate::app::{build_tray_view, LibreLinkUpApp, UiHandle};
 use crate::service::{Command, SharedState, UiNotifier};
-use crate::tray::{TrayAction, TrayView};
+use crate::tray::{TrayAction, TraySender};
 
 const ICON_256: &[u8] = include_bytes!("../assets/icon-256.png");
 
 struct Notifier {
     ui: Arc<UiHandle>,
     shared: OnceLock<SharedState>,
-    tray: Mutex<Option<Sender<TrayView>>>,
+    tray: Mutex<Option<TraySender>>,
 }
 
 impl UiNotifier for Notifier {

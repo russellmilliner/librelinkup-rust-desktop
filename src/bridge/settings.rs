@@ -12,7 +12,7 @@ use cxx_qt_lib::QString;
 use crate::bridge::autostart::sync_autostart_desktop_file;
 use crate::bridge::ops;
 use crate::bridge::qobject_bridge::{qobject, SettingsControllerRust};
-use crate::bridge::state::with_state;
+use crate::bridge::state::{mark_state_dirty, with_state};
 use crate::crypto::save_default_credentials;
 use crate::event_log::{
     clear_events, export_events_to_path, get_event_count, get_events_json, log_error, log_info,
@@ -464,6 +464,7 @@ impl qobject::SettingsController {
         let _ = with_state(|s| ops::persist_settings(s));
         log_info("SYSTEM", format!("Switched color theme mode to '{valid}'."));
         self.as_mut().sync();
+        mark_state_dirty();
     }
 
     pub fn update_ui_zoom_percent(mut self: Pin<&mut Self>, zoom_percent: i32) {
@@ -472,6 +473,7 @@ impl qobject::SettingsController {
         let _ = with_state(|s| ops::persist_settings(s));
         log_info("SYSTEM", format!("Set UI zoom scale to {clamped}%."));
         self.as_mut().sync();
+        mark_state_dirty();
     }
 
     pub fn zoom_in(mut self: Pin<&mut Self>) {
@@ -496,6 +498,7 @@ impl qobject::SettingsController {
             format!("Set high contrast accessibility mode to {enabled}."),
         );
         self.as_mut().sync();
+        mark_state_dirty();
     }
 
     pub fn update_data_source(mut self: Pin<&mut Self>, data_source: QString) {
@@ -517,6 +520,7 @@ impl qobject::SettingsController {
         let _ = with_state(|s| ops::persist_settings(s));
         log_info("API", format!("Set telemetry data source to '{clean}'."));
         self.as_mut().sync();
+        mark_state_dirty();
     }
 
     pub fn update_ha_sync_medications(mut self: Pin<&mut Self>, enabled: bool) {
@@ -530,6 +534,7 @@ impl qobject::SettingsController {
             ops::spawn_ha_medications_push(None);
         }
         self.as_mut().sync();
+        mark_state_dirty();
     }
 
     pub fn update_ha_sync_snooze(mut self: Pin<&mut Self>, enabled: bool) {
@@ -543,6 +548,7 @@ impl qobject::SettingsController {
             ops::spawn_ha_snooze_push();
         }
         self.as_mut().sync();
+        mark_state_dirty();
     }
 
     pub fn update_sensor_expiry_alert_hours(mut self: Pin<&mut Self>, hours: i32) {
@@ -557,6 +563,7 @@ impl qobject::SettingsController {
             format!("Set CGM sensor expiry alert threshold to {clamped}h."),
         );
         self.as_mut().sync();
+        mark_state_dirty();
     }
 
     pub fn update_result_unit(mut self: Pin<&mut Self>, unit: QString) {
@@ -573,6 +580,7 @@ impl qobject::SettingsController {
         let _ = with_state(|s| ops::persist_settings(s));
         log_info("GLUCOSE", format!("Changed display unit to '{clean}'."));
         self.as_mut().sync();
+        mark_state_dirty();
     }
 
     pub fn update_country(mut self: Pin<&mut Self>, country: QString) {
@@ -594,14 +602,13 @@ impl qobject::SettingsController {
         let _ = with_state(|s| ops::persist_settings(s));
         log_info("API", format!("Updated regional server to '{clean}'."));
         if updated {
-            // A region change invalidates the current token; the telemetry controller owns
-            // refreshes, so the UI timer picks this up on the next tick.
             with_state(|s| {
                 s.active_refresh = None;
                 s.snapshot = crate::models::GlucoseSnapshot::default();
             });
         }
         self.as_mut().sync();
+        mark_state_dirty();
     }
 
     pub fn update_remember_password(mut self: Pin<&mut Self>, enabled: bool) {
@@ -618,7 +625,6 @@ impl qobject::SettingsController {
                 })
             });
             if let Some(creds) = sanitized {
-                // Persist without a stored password; the session token is retained.
                 let _ = save_default_credentials(&creds);
                 log_info(
                     "CRYPTO",
@@ -632,6 +638,7 @@ impl qobject::SettingsController {
             format!("Updated remember_password setting to {enabled}"),
         );
         self.as_mut().sync();
+        mark_state_dirty();
     }
 
     pub fn update_window_mode(mut self: Pin<&mut Self>, mode: QString) {
@@ -673,6 +680,7 @@ impl qobject::SettingsController {
         let _ = with_state(|s| ops::persist_settings(s));
         log_info("SYSTEM", format!("Set window mode to '{valid}'."));
         self.as_mut().sync();
+        mark_state_dirty();
     }
 
     pub fn update_overlay_visible(mut self: Pin<&mut Self>, visible: bool) {
@@ -709,17 +717,24 @@ impl qobject::SettingsController {
             format!("Floating desktop overlay visible: {visible}"),
         );
         self.as_mut().sync();
+        mark_state_dirty();
     }
 
     pub fn update_overlay_only_mode(mut self: Pin<&mut Self>, only_overlay: bool) {
-        with_state(|s| {
+        let changed = with_state(|s| {
             let effective = only_overlay && s.overlay_visible;
             if s.overlay_only_mode != effective {
                 s.overlay_only_mode = effective;
                 let _ = ops::persist_settings(s);
+                true
+            } else {
+                false
             }
         });
         self.as_mut().sync();
+        if changed {
+            mark_state_dirty();
+        }
     }
 
     pub fn update_overlay_on_all_desktops(mut self: Pin<&mut Self>, enabled: bool) {
@@ -731,6 +746,7 @@ impl qobject::SettingsController {
             format!("Desktop overlay on all virtual desktops: {enabled}"),
         );
         self.as_mut().sync();
+        mark_state_dirty();
     }
 
     pub fn update_overlay_dark_theme(mut self: Pin<&mut Self>, enabled: bool) {
@@ -738,6 +754,7 @@ impl qobject::SettingsController {
         let _ = with_state(|s| ops::persist_settings(s));
         log_info("SYSTEM", format!("Desktop overlay dark theme: {enabled}"));
         self.as_mut().sync();
+        mark_state_dirty();
     }
 
     pub fn update_overlay_opacity_percent(mut self: Pin<&mut Self>, opacity_percent: i32) {
@@ -759,6 +776,7 @@ impl qobject::SettingsController {
             format!("Desktop overlay opacity set to {clamped}%"),
         );
         self.as_mut().sync();
+        mark_state_dirty();
     }
 
     pub fn save_overlay_placement(
@@ -863,6 +881,7 @@ impl qobject::SettingsController {
             format!("Show glucose level in tray icon badge: {enabled}"),
         );
         self.as_mut().sync();
+        mark_state_dirty();
     }
 
     pub fn update_show_glucose_in_tray_tooltip(mut self: Pin<&mut Self>, enabled: bool) {
@@ -873,6 +892,7 @@ impl qobject::SettingsController {
             format!("Show glucose telemetry in tray hover tooltip: {enabled}"),
         );
         self.as_mut().sync();
+        mark_state_dirty();
     }
 
     pub fn update_tray_only_relevant_out_of_range(mut self: Pin<&mut Self>, enabled: bool) {
@@ -883,6 +903,7 @@ impl qobject::SettingsController {
             format!("Tray icon only relevant when out of range: {enabled}"),
         );
         self.as_mut().sync();
+        mark_state_dirty();
     }
 
     pub fn update_autostart_enabled(mut self: Pin<&mut Self>, enabled: bool) {
@@ -893,6 +914,7 @@ impl qobject::SettingsController {
         sync_autostart_desktop_file(enabled, minimized);
         let _ = with_state(|s| ops::persist_settings(s));
         self.as_mut().sync();
+        mark_state_dirty();
     }
 
     pub fn update_start_minimized(mut self: Pin<&mut Self>, enabled: bool) {
@@ -909,6 +931,7 @@ impl qobject::SettingsController {
             format!("Start minimized to tray on login: {enabled}"),
         );
         self.as_mut().sync();
+        mark_state_dirty();
     }
 
     pub fn update_poll_interval_seconds(mut self: Pin<&mut Self>, seconds: i32) {
@@ -923,6 +946,7 @@ impl qobject::SettingsController {
             format!("Updated polling interval to {clamped} seconds."),
         );
         self.as_mut().sync();
+        mark_state_dirty();
     }
 
     #[allow(clippy::too_many_arguments)]
@@ -963,6 +987,7 @@ impl qobject::SettingsController {
             ),
         );
         self.as_mut().sync();
+        mark_state_dirty();
     }
 
     pub fn test_alert_now(self: Pin<&mut Self>) {
@@ -1005,6 +1030,7 @@ impl qobject::SettingsController {
             ),
         );
         self.as_mut().sync();
+        mark_state_dirty();
     }
 
     pub fn update_check_updates_on_startup(mut self: Pin<&mut Self>, enabled: bool) {
@@ -1015,6 +1041,7 @@ impl qobject::SettingsController {
             format!("Updated check_updates_on_startup setting to {enabled}"),
         );
         self.as_mut().sync();
+        mark_state_dirty();
     }
 
     // ---- diagnostics ----
@@ -1058,6 +1085,7 @@ impl qobject::SettingsController {
         });
         qobject::librelinkup_show_main_window();
         self.as_mut().sync();
+        mark_state_dirty();
     }
 
     pub fn hide_main_window(mut self: Pin<&mut Self>) {
@@ -1067,6 +1095,7 @@ impl qobject::SettingsController {
         });
         qobject::librelinkup_hide_main_window();
         self.as_mut().sync();
+        mark_state_dirty();
     }
 
     pub fn quit_application(self: Pin<&mut Self>) {

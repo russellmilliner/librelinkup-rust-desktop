@@ -3,7 +3,8 @@
 //! Runs on a dedicated thread with its own Win32 message pump, so it stays responsive and
 //! up to date even while the main window is hidden.
 
-use std::sync::mpsc::{Receiver, RecvTimeoutError, Sender};
+use std::sync::mpsc::{channel, Receiver, Sender, TryRecvError};
+use std::sync::{Arc, OnceLock};
 use std::time::Duration;
 
 use ab_glyph::{Font, FontArc, PxScale, ScaleFont};
@@ -38,13 +39,98 @@ pub enum TrayAction {
     Quit,
 }
 
-pub fn start(on_action: impl Fn(TrayAction) + Send + 'static) -> Sender<TrayView> {
-    let (tx, rx) = std::sync::mpsc::channel::<TrayView>();
+#[cfg(windows)]
+struct WakeEvent(windows_sys::Win32::Foundation::HANDLE);
+
+#[cfg(windows)]
+unsafe impl Send for WakeEvent {}
+#[cfg(windows)]
+unsafe impl Sync for WakeEvent {}
+
+#[cfg(windows)]
+impl WakeEvent {
+    fn new() -> Option<Arc<Self>> {
+        let h = unsafe {
+            windows_sys::Win32::System::Threading::CreateEventW(
+                std::ptr::null(),
+                0,
+                0,
+                std::ptr::null(),
+            )
+        };
+        if h.is_null() {
+            None
+        } else {
+            Some(Arc::new(Self(h)))
+        }
+    }
+
+    fn signal(&self) {
+        unsafe {
+            windows_sys::Win32::System::Threading::SetEvent(self.0);
+        }
+    }
+}
+
+#[cfg(windows)]
+impl Drop for WakeEvent {
+    fn drop(&mut self) {
+        unsafe {
+            windows_sys::Win32::Foundation::CloseHandle(self.0);
+        }
+    }
+}
+
+/// Handle to send updated tray views while immediately waking an idle Win32 message pump.
+pub struct TraySender {
+    tx: Option<Sender<TrayView>>,
+    #[cfg(windows)]
+    wake: Option<Arc<WakeEvent>>,
+}
+
+impl TraySender {
+    pub fn send(&self, view: TrayView) -> Result<(), std::sync::mpsc::SendError<TrayView>> {
+        if let Some(ref tx) = self.tx {
+            tx.send(view)?;
+        }
+        #[cfg(windows)]
+        if let Some(ref wake) = self.wake {
+            wake.signal();
+        }
+        Ok(())
+    }
+}
+
+impl Drop for TraySender {
+    fn drop(&mut self) {
+        self.tx.take();
+        #[cfg(windows)]
+        if let Some(ref wake) = self.wake {
+            wake.signal();
+        }
+    }
+}
+
+pub fn start(on_action: impl Fn(TrayAction) + Send + 'static) -> TraySender {
+    let (tx, rx) = channel::<TrayView>();
+    #[cfg(windows)]
+    let wake = WakeEvent::new();
+    #[cfg(windows)]
+    let thread_wake = wake.clone();
     std::thread::Builder::new()
         .name("llu-tray".into())
-        .spawn(move || run(rx, on_action))
+        .spawn(move || {
+            #[cfg(windows)]
+            run(rx, thread_wake, on_action);
+            #[cfg(not(windows))]
+            run(rx, on_action);
+        })
         .expect("spawn tray thread");
-    tx
+    TraySender {
+        tx: Some(tx),
+        #[cfg(windows)]
+        wake,
+    }
 }
 
 struct MenuIds {
@@ -93,7 +179,11 @@ fn build_menu() -> (Menu, MenuIds) {
     (menu, MenuIds { show, refresh, status, snooze_status, snooze, overlay, autostart, check_updates, quit })
 }
 
-fn run(rx: Receiver<TrayView>, on_action: impl Fn(TrayAction)) {
+fn run(
+    rx: Receiver<TrayView>,
+    #[cfg(windows)] wake: Option<Arc<WakeEvent>>,
+    on_action: impl Fn(TrayAction),
+) {
     let font = load_badge_font();
     let (menu, ids) = build_menu();
     let tray = match TrayIconBuilder::new()
@@ -142,21 +232,50 @@ fn run(rx: Receiver<TrayView>, on_action: impl Fn(TrayAction)) {
             }
         }
 
-        // Apply only the newest view; wait briefly so the loop doesn't spin.
+        // Coalesce pending views and keep only the newest one.
         let mut latest = None;
-        match rx.recv_timeout(Duration::from_millis(40)) {
-            Ok(view) => latest = Some(view),
-            Err(RecvTimeoutError::Timeout) => {}
-            Err(RecvTimeoutError::Disconnected) => return,
-        }
-        while let Ok(view) = rx.try_recv() {
-            latest = Some(view);
+        let mut disconnected = false;
+        loop {
+            match rx.try_recv() {
+                Ok(view) => latest = Some(view),
+                Err(TryRecvError::Empty) => break,
+                Err(TryRecvError::Disconnected) => {
+                    disconnected = true;
+                    break;
+                }
+            }
         }
         if let (Some(view), Some(tray)) = (latest, tray.as_ref())
-            && current.as_ref() != Some(&view) {
-                apply_view(tray, &ids, &view, current.as_ref(), font.as_ref());
-                current = Some(view);
+            && current.as_ref() != Some(&view)
+        {
+            apply_view(tray, &ids, &view, current.as_ref(), font.as_ref());
+            current = Some(view);
+        }
+        if disconnected {
+            return;
+        }
+
+        #[cfg(windows)]
+        {
+            if let Some(ref ev) = wake {
+                use windows_sys::Win32::UI::WindowsAndMessaging::{
+                    MsgWaitForMultipleObjectsEx, MWMO_INPUTAVAILABLE, QS_ALLINPUT,
+                };
+                unsafe {
+                    MsgWaitForMultipleObjectsEx(
+                        1,
+                        &ev.0,
+                        2000,
+                        QS_ALLINPUT,
+                        MWMO_INPUTAVAILABLE,
+                    );
+                }
+            } else {
+                std::thread::sleep(Duration::from_millis(150));
             }
+        }
+        #[cfg(not(windows))]
+        std::thread::sleep(Duration::from_millis(150));
     }
 }
 
@@ -180,8 +299,12 @@ fn apply_view(tray: &TrayIcon, ids: &MenuIds, view: &TrayView, prev: Option<&Tra
 }
 
 fn app_icon() -> Icon {
-    let data = eframe::icon_data::from_png_bytes(APP_ICON_PNG).expect("valid embedded icon");
-    Icon::from_rgba(data.rgba, data.width, data.height).expect("valid icon size")
+    static RGBA: OnceLock<(Vec<u8>, u32, u32)> = OnceLock::new();
+    let (rgba, w, h) = RGBA.get_or_init(|| {
+        let data = eframe::icon_data::from_png_bytes(APP_ICON_PNG).expect("valid embedded icon");
+        (data.rgba, data.width, data.height)
+    });
+    Icon::from_rgba(rgba.clone(), *w, *h).expect("valid icon size")
 }
 
 fn load_badge_font() -> Option<FontArc> {

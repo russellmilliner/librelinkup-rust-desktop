@@ -15,7 +15,7 @@ use crate::bridge::autostart::{
 };
 use crate::bridge::ops;
 use crate::bridge::qobject_bridge::{qobject, TelemetryControllerRust};
-use crate::bridge::state::{with_state, AppState};
+use crate::bridge::state::{register_telemetry_qt_thread, with_state, AppState};
 use crate::crypto::{
     clear_default_credentials, load_default_credentials, save_default_credentials,
     try_load_host_ha_env, StoredCredentials,
@@ -26,7 +26,7 @@ use crate::models::{
     DEFAULT_TARGET_HIGH_MG_DL, DEFAULT_TARGET_LOW_MG_DL,
 };
 use crate::session::{
-    build_demo_snapshot, evaluate_alert_decision, fetch_snapshot_for_source_async,
+    build_demo_snapshot, evaluate_alert_decision, fetch_snapshot_for_source_with_sync_async,
     record_reauth_success, reset_reauth_backoff, RefreshOutcome,
 };
 use crate::updater::{check_for_updates_async, download_and_install_update_async, UpdateCheckResult};
@@ -169,9 +169,11 @@ impl qobject::TelemetryController {
             sync_autostart_desktop_file(true, minimized);
         }
 
+        register_telemetry_qt_thread(self.qt_thread());
         self.as_mut().restore_session();
         self.as_mut().sync();
         self.as_mut().sync_tray();
+        self.as_mut().shared_state_changed();
 
         if with_state(|s| s.check_updates_on_startup) && !is_offscreen() {
             self.as_mut().start_update_check(false);
@@ -416,7 +418,8 @@ impl qobject::TelemetryController {
         sync_val!(self, set_sensor_expiring_soon, sensor_expiring_soon, exp_soon);
     }
 
-    /// The single periodic entry point: apply derived state, refresh the tray, evaluate alerts.
+    /// The single periodic entry point: apply derived state, refresh the tray, evaluate alerts,
+    /// and notify sibling controllers to sync their properties.
     pub fn tick(mut self: Pin<&mut Self>) {
         with_state(|s| {
             ops::refresh_display(s);
@@ -428,6 +431,7 @@ impl qobject::TelemetryController {
         self.as_mut().sync();
         self.as_mut().sync_tray();
         self.as_mut().evaluate_alerts();
+        self.as_mut().shared_state_changed();
     }
 
     pub fn evaluate_staleness(mut self: Pin<&mut Self>) {
@@ -584,6 +588,7 @@ impl qobject::TelemetryController {
                     format!("Login succeeded (resolved region: '{auth_country}')."),
                 );
                 self.as_mut().sync();
+                self.as_mut().shared_state_changed();
                 self.as_mut().refresh_glucose_now();
             }
             Err(err) => {
@@ -626,6 +631,7 @@ impl qobject::TelemetryController {
         with_state(ops::refresh_display);
         self.as_mut().sync();
         self.as_mut().sync_tray();
+        self.as_mut().shared_state_changed();
     }
 
     /// Saves Home Assistant LibreLink integration settings and Long-Lived Access Token into the
@@ -809,12 +815,14 @@ impl qobject::TelemetryController {
         if with_state(|s| s.active_refresh.is_some() || s.login_in_flight) {
             return;
         }
-        let (Some(creds), data_source, ha_url, ha_entity) = with_state(|s| {
+        let (Some(creds), data_source, ha_url, ha_entity, sync_meds, sync_snooze) = with_state(|s| {
             (
                 s.creds.clone(),
                 s.data_source.clone(),
                 s.ha_url.clone(),
                 s.ha_sensor_entity_id.clone(),
+                s.ha_sync_medications,
+                s.ha_sync_snooze,
             )
         }) else {
             return;
@@ -838,8 +846,15 @@ impl qobject::TelemetryController {
 
         let qt_thread = self.qt_thread();
         runtime.spawn(async move {
-            let outcome =
-                fetch_snapshot_for_source_async(&data_source, &ha_url, &ha_entity, &creds).await;
+            let outcome = fetch_snapshot_for_source_with_sync_async(
+                &data_source,
+                &ha_url,
+                &ha_entity,
+                &creds,
+                sync_meds,
+                sync_snooze,
+            )
+            .await;
             let queued = qt_thread.queue(move |qobject| {
                 qobject.apply_refresh_outcome(generation, seq, outcome);
             });

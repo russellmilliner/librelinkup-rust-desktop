@@ -9,7 +9,7 @@ use cxx_qt_lib::QString;
 
 use crate::bridge::ops;
 use crate::bridge::qobject_bridge::{qobject, MedicationsControllerRust};
-use crate::bridge::state::{now_epoch, with_state};
+use crate::bridge::state::{mark_state_dirty, now_epoch, with_state};
 use crate::event_log::{log_info, log_warn};
 use crate::medications::MedicationSchedule;
 
@@ -119,6 +119,7 @@ impl qobject::MedicationsController {
                 );
                 ops::spawn_ha_medications_push(None);
                 self.as_mut().sync();
+                mark_state_dirty();
                 true
             }
             Err(err) => {
@@ -141,6 +142,7 @@ impl qobject::MedicationsController {
             log_info("MEDS", "Removed scheduled medication.");
             ops::spawn_ha_medications_push(None);
             self.as_mut().sync();
+            mark_state_dirty();
         }
         removed
     }
@@ -181,6 +183,7 @@ impl qobject::MedicationsController {
                 );
                 ops::spawn_ha_medications_push(Some(e));
                 self.as_mut().sync();
+                mark_state_dirty();
                 true
             }
             Err(err) => {
@@ -214,6 +217,7 @@ impl qobject::MedicationsController {
                 );
                 ops::spawn_ha_medications_push(Some(e));
                 self.as_mut().sync();
+                mark_state_dirty();
                 true
             }
             Err(err) => {
@@ -236,6 +240,7 @@ impl qobject::MedicationsController {
             log_info("MEDS", "Removed logged medication dose entry.");
             ops::spawn_ha_medications_push(None);
             self.as_mut().sync();
+            mark_state_dirty();
         }
         removed
     }

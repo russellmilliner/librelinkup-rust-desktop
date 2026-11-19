@@ -6,8 +6,8 @@ use std::sync::{Mutex, OnceLock};
 use chrono::{Duration as ChronoDuration, Local, TimeZone};
 
 use crate::api::{
-    authenticate_async, fetch_cgm_snapshot_async, fetch_ha_cgm_snapshot_and_states_async,
-    fetch_ha_states_array_async, ApiError,
+    authenticate_async, fetch_cgm_snapshot_with_patient_hint_async,
+    fetch_ha_cgm_snapshot_and_states_async, fetch_ha_sync_states_async, ApiError,
 };
 use crate::crypto::StoredCredentials;
 use crate::event_log::{log_info, log_warn};
@@ -86,10 +86,13 @@ pub async fn fetch_snapshot_with_reauth_async(
     let mut active_creds = creds.clone();
     let mut reauthenticated = false;
 
-    let mut result = fetch_cgm_snapshot_async(
+    let patient_hint = (!active_creds.patient_id.trim().is_empty())
+        .then_some(active_creds.patient_id.as_str());
+    let mut result = fetch_cgm_snapshot_with_patient_hint_async(
         &active_creds.country,
         &active_creds.token,
         &active_creds.account_id,
+        patient_hint,
     )
     .await;
 
@@ -121,10 +124,13 @@ pub async fn fetch_snapshot_with_reauth_async(
                     active_creds.account_id = std::mem::take(&mut reauth.account_id);
                     active_creds.country = std::mem::take(&mut reauth.country);
                     reauthenticated = true;
-                    result = fetch_cgm_snapshot_async(
+                    let reauth_hint = (!active_creds.patient_id.trim().is_empty())
+                        .then_some(active_creds.patient_id.as_str());
+                    result = fetch_cgm_snapshot_with_patient_hint_async(
                         &active_creds.country,
                         &active_creds.token,
                         &active_creds.account_id,
+                        reauth_hint,
                     )
                     .await;
                 }
@@ -169,6 +175,27 @@ pub async fn fetch_snapshot_for_source_async(
     ha_sensor_entity_id: &str,
     creds: &StoredCredentials,
 ) -> Result<RefreshOutcome, ApiError> {
+    fetch_snapshot_for_source_with_sync_async(
+        data_source,
+        ha_url,
+        ha_sensor_entity_id,
+        creds,
+        true,
+        true,
+    )
+    .await
+}
+
+/// Fetches the latest CGM snapshot plus only the Home Assistant sync states enabled by
+/// `sync_meds` / `sync_snooze` when running in LibreLinkUp mode.
+pub async fn fetch_snapshot_for_source_with_sync_async(
+    data_source: &str,
+    ha_url: &str,
+    ha_sensor_entity_id: &str,
+    creds: &StoredCredentials,
+    sync_meds: bool,
+    sync_snooze: bool,
+) -> Result<RefreshOutcome, ApiError> {
     if data_source.trim().eq_ignore_ascii_case("home_assistant") {
         let (snapshot, states) =
             fetch_ha_cgm_snapshot_and_states_async(ha_url, &creds.ha_token, ha_sensor_entity_id)
@@ -194,8 +221,18 @@ pub async fn fetch_snapshot_for_source_async(
         })
     } else {
         let mut outcome = fetch_snapshot_with_reauth_async(creds).await?;
-        if !ha_url.trim().is_empty() && !creds.ha_token.trim().is_empty() {
-            outcome.ha_states = fetch_ha_states_array_async(ha_url, &creds.ha_token).await.ok();
+        if (sync_meds || sync_snooze)
+            && !ha_url.trim().is_empty()
+            && !creds.ha_token.trim().is_empty()
+        {
+            outcome.ha_states = fetch_ha_sync_states_async(
+                ha_url,
+                &creds.ha_token,
+                sync_meds,
+                sync_snooze,
+            )
+            .await
+            .ok();
         }
         Ok(outcome)
     }

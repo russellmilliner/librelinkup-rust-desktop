@@ -1016,13 +1016,56 @@ pub async fn authenticate_async(
     ))
 }
 
+fn is_safe_patient_id_hint(raw: &str) -> bool {
+    !raw.is_empty()
+        && raw.len() <= 128
+        && raw
+            .bytes()
+            .all(|b| b.is_ascii_alphanumeric() || b == b'-' || b == b'_')
+}
+
 pub async fn fetch_cgm_snapshot_async(
     country: &str,
     token: &str,
     account_id: &str,
 ) -> Result<GlucoseSnapshot, ApiError> {
+    fetch_cgm_snapshot_with_patient_hint_async(country, token, account_id, None).await
+}
+
+/// Fetches the current CGM snapshot, skipping `/llu/connections` when a valid `patient_id_hint`
+/// succeeds on `/llu/connections/{id}/graph` directly (falling back cleanly if invalid/empty).
+pub async fn fetch_cgm_snapshot_with_patient_hint_async(
+    country: &str,
+    token: &str,
+    account_id: &str,
+    patient_id_hint: Option<&str>,
+) -> Result<GlucoseSnapshot, ApiError> {
     let base = resolve_base_url(country);
     let client = shared_libreview_client(base.starts_with("http://"))?;
+
+    if let Some(hint) = patient_id_hint.map(str::trim).filter(|h| is_safe_patient_id_hint(h)) {
+        let graph_url = format!("{base}/connections/{hint}/graph");
+        match send_json_request(
+            client,
+            reqwest::Method::GET,
+            &graph_url,
+            Some(token),
+            Some(account_id),
+            None,
+        )
+        .await
+        {
+            Ok(graph_body) => {
+                if let Ok(snap) = parse_graph_response(&graph_body, hint, "", "")
+                    && (snap.value_mg_dl > 0.0 || !snap.graph_points.is_empty())
+                {
+                    return Ok(snap);
+                }
+            }
+            Err(ApiError::Unauthorized) => return Err(ApiError::Unauthorized),
+            Err(_) => {}
+        }
+    }
 
     let conn_url = format!("{base}/connections");
     let conn_body = send_json_request(
@@ -1472,6 +1515,14 @@ pub fn parse_ha_states_and_history(
     let states_arr = states_body.as_array().ok_or_else(|| {
         ApiError::ParseError("Home Assistant /api/states did not return a JSON array".to_string())
     })?;
+    parse_ha_states_slice_and_history(states_arr, history_body, entity_id_hint)
+}
+
+fn parse_ha_states_slice_and_history(
+    states_arr: &[Value],
+    history_body: Option<&Value>,
+    entity_id_hint: &str,
+) -> Result<GlucoseSnapshot, ApiError> {
 
     let primary = find_ha_glucose_entity(states_arr, entity_id_hint)?;
     let entity_id = primary
@@ -1905,9 +1956,92 @@ pub async fn fetch_ha_states_array_async(
         None,
     )
     .await?;
-    states_body.as_array().cloned().ok_or_else(|| {
-        ApiError::ParseError("Home Assistant /api/states did not return a JSON array".to_string())
-    })
+    if let Value::Array(arr) = states_body {
+        Ok(arr)
+    } else {
+        Err(ApiError::ParseError(
+            "Home Assistant /api/states did not return a JSON array".to_string(),
+        ))
+    }
+}
+
+async fn fetch_optional_ha_entity_state(
+    client: &reqwest::Client,
+    base: &str,
+    token: &str,
+    entity_id: &str,
+) -> Result<Option<Value>, ApiError> {
+    let url = format!("{base}/api/states/{entity_id}");
+    match send_ha_json_request(client, reqwest::Method::GET, &url, token, None).await {
+        Ok(val) => Ok(Some(val)),
+        Err(ApiError::ServerError(404, _)) => Ok(None),
+        Err(e) => Err(e),
+    }
+}
+
+/// Fetches ONLY the specific Home Assistant entities required for cross-device medications and/or
+/// alert snooze synchronization instead of downloading the entire `/api/states` array.
+pub async fn fetch_ha_sync_states_async(
+    ha_url: &str,
+    ha_token: &str,
+    sync_meds: bool,
+    sync_snooze: bool,
+) -> Result<Vec<Value>, ApiError> {
+    let base = validate_ha_base_url(ha_url)?;
+    let token = ha_token.trim();
+    if token.is_empty() {
+        return Err(ApiError::InvalidCredentials);
+    }
+    if !sync_meds && !sync_snooze {
+        return Ok(Vec::new());
+    }
+    let client = shared_ha_client()?;
+    let meds_fut = async {
+        if sync_meds {
+            fetch_optional_ha_entity_state(client, &base, token, "sensor.librelinkup_medications")
+                .await
+        } else {
+            Ok(None)
+        }
+    };
+    let snooze_sensor_fut = async {
+        if sync_snooze {
+            fetch_optional_ha_entity_state(
+                client,
+                &base,
+                token,
+                "sensor.librelinkup_alert_snooze",
+            )
+            .await
+        } else {
+            Ok(None)
+        }
+    };
+    let snooze_dt_fut = async {
+        if sync_snooze {
+            fetch_optional_ha_entity_state(
+                client,
+                &base,
+                token,
+                "input_datetime.librelinkup_snooze_until",
+            )
+            .await
+        } else {
+            Ok(None)
+        }
+    };
+
+    let (meds_res, snooze_res, dt_res) = tokio::join!(meds_fut, snooze_sensor_fut, snooze_dt_fut);
+    let mut out = Vec::with_capacity(3);
+    for res in [meds_res, snooze_res, dt_res] {
+        match res {
+            Ok(Some(v)) => out.push(v),
+            Ok(None) => {}
+            Err(ApiError::Unauthorized) => return Err(ApiError::Unauthorized),
+            Err(_) => {}
+        }
+    }
+    Ok(out)
 }
 
 /// Publishes the current alert snooze state to Home Assistant
@@ -2030,10 +2164,12 @@ pub async fn fetch_ha_cgm_snapshot_and_states_async(
     )
     .await?;
 
-    let states_arr = states_body.as_array().ok_or_else(|| {
-        ApiError::ParseError("Home Assistant /api/states did not return a JSON array".to_string())
-    })?;
-    let primary = find_ha_glucose_entity(states_arr, entity_id_hint)?;
+    let Value::Array(states_arr) = states_body else {
+        return Err(ApiError::ParseError(
+            "Home Assistant /api/states did not return a JSON array".to_string(),
+        ));
+    };
+    let primary = find_ha_glucose_entity(&states_arr, entity_id_hint)?;
     let matched_entity_id = primary
         .get("entity_id")
         .and_then(|v| v.as_str())
@@ -2060,8 +2196,8 @@ pub async fn fetch_ha_cgm_snapshot_and_states_async(
         None
     };
 
-    let snap = parse_ha_states_and_history(&states_body, history_body.as_ref(), entity_id_hint)?;
-    Ok((snap, states_arr.clone()))
+    let snap = parse_ha_states_slice_and_history(&states_arr, history_body.as_ref(), entity_id_hint)?;
+    Ok((snap, states_arr))
 }
 
 /// Fetches the current CGM reading, trend arrow, patient metadata, and 12-hour history from

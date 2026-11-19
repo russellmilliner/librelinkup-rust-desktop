@@ -258,6 +258,11 @@ pub mod qobject {
         #[qinvokable]
         fn tick(self: Pin<&mut TelemetryController>);
 
+        /// Emitted whenever `TelemetryController::tick()` or a session transition updates shared state
+        /// so `SettingsController` and `MedicationsController` can sync without polling.
+        #[qsignal]
+        fn shared_state_changed(self: Pin<&mut TelemetryController>);
+
         #[qinvokable]
         fn login(
             self: Pin<&mut TelemetryController>,

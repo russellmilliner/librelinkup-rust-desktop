@@ -4,6 +4,7 @@
 use std::fs::File;
 use std::num::NonZero;
 use std::path::PathBuf;
+use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 
 use librelinkup_core::alert_sound::{generate_alert_samples, SAMPLE_RATE};
 use librelinkup_core::event_log::{log_info, log_warn};
@@ -14,11 +15,36 @@ use librelinkup_core::models::{
 #[cfg(target_os = "windows")]
 use crate::platform::APP_USER_MODEL_ID;
 
+static AUDIO_PLAYING: AtomicBool = AtomicBool::new(false);
+static ACTIVE_NOTIF_THREADS: AtomicUsize = AtomicUsize::new(0);
+const MAX_ACTIVE_NOTIF_THREADS: usize = 4;
+
+struct BoolResetGuard(&'static AtomicBool);
+impl Drop for BoolResetGuard {
+    fn drop(&mut self) {
+        self.0.store(false, Ordering::Release);
+    }
+}
+
+struct CounterDecGuard(&'static AtomicUsize);
+impl Drop for CounterDecGuard {
+    fn drop(&mut self) {
+        self.0.fetch_sub(1, Ordering::AcqRel);
+    }
+}
+
 /// Plays the alert on a background thread so callers never block.
 pub fn play_alert_sound(custom_sound: Option<PathBuf>) {
-    std::thread::Builder::new()
+    if AUDIO_PLAYING
+        .compare_exchange(false, true, Ordering::AcqRel, Ordering::Acquire)
+        .is_err()
+    {
+        return;
+    }
+    if std::thread::Builder::new()
         .name("llu-alert-audio".into())
         .spawn(move || {
+            let _guard = BoolResetGuard(&AUDIO_PLAYING);
             if let Err(e) = play_blocking(custom_sound.clone()) {
                 log_warn("ALERT", format!("Alert sound failed: {e}"));
                 // A broken custom file must never silence the alarm: retry with the built-in one.
@@ -28,7 +54,10 @@ pub fn play_alert_sound(custom_sound: Option<PathBuf>) {
                     }
             }
         })
-        .ok();
+        .is_err()
+    {
+        AUDIO_PLAYING.store(false, Ordering::Release);
+    }
 }
 
 fn play_blocking(custom_sound: Option<PathBuf>) -> Result<(), String> {
@@ -58,12 +87,18 @@ fn play_blocking(custom_sound: Option<PathBuf>) -> Result<(), String> {
 
 /// Shows a toast notification (attributed to our AppUserModelID).
 pub fn show_notification(title: &str, body: &str) {
+    let cur = ACTIVE_NOTIF_THREADS.load(Ordering::Acquire);
+    if cur >= MAX_ACTIVE_NOTIF_THREADS {
+        return;
+    }
+    ACTIVE_NOTIF_THREADS.fetch_add(1, Ordering::AcqRel);
     let title = title.to_string();
     let body = body.to_string();
     // WinRT toast APIs can block briefly; keep them off the UI/worker threads.
-    std::thread::Builder::new()
+    if std::thread::Builder::new()
         .name("llu-notify".into())
         .spawn(move || {
+            let _guard = CounterDecGuard(&ACTIVE_NOTIF_THREADS);
             let mut notif = notify_rust::Notification::new();
             notif.summary(&title).body(&body);
             #[cfg(target_os = "windows")]
@@ -72,7 +107,10 @@ pub fn show_notification(title: &str, body: &str) {
                 log_warn("ALERT", format!("Desktop notification failed: {e}"));
             }
         })
-        .ok();
+        .is_err()
+    {
+        ACTIVE_NOTIF_THREADS.fetch_sub(1, Ordering::AcqRel);
+    }
 }
 
 /// Shows an alert toast notification with interactive snooze buttons
@@ -84,13 +122,19 @@ pub fn show_alert_notification(
     critical: bool,
     on_snooze: impl FnOnce(i32) + Send + 'static,
 ) {
+    let cur = ACTIVE_NOTIF_THREADS.load(Ordering::Acquire);
+    if cur >= MAX_ACTIVE_NOTIF_THREADS {
+        return;
+    }
+    ACTIVE_NOTIF_THREADS.fetch_add(1, Ordering::AcqRel);
     let title = title.to_string();
     let body = body.to_string();
     // WinRT toast APIs and action waits block on the notification lifecycle; run on a
     // dedicated background thread so the service and UI threads never block.
-    std::thread::Builder::new()
+    if std::thread::Builder::new()
         .name("llu-notify".into())
         .spawn(move || {
+            let _guard = CounterDecGuard(&ACTIVE_NOTIF_THREADS);
             let mut notif = notify_rust::Notification::new();
             notif
                 .summary(&title)
@@ -124,5 +168,8 @@ pub fn show_alert_notification(
                 }
             }
         })
-        .ok();
+        .is_err()
+    {
+        ACTIVE_NOTIF_THREADS.fetch_sub(1, Ordering::AcqRel);
+    }
 }

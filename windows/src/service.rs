@@ -6,7 +6,7 @@
 
 use std::collections::HashMap;
 use std::fmt;
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Mutex, OnceLock};
 use std::time::Duration;
 
 use librelinkup_core::analytics::{
@@ -14,9 +14,9 @@ use librelinkup_core::analytics::{
     StatsWindow,
 };
 use librelinkup_core::api::{
-    authenticate_async, discover_ha_patients, fetch_ha_states_array_async, normalize_country_code,
-    parse_ha_remote_snooze, publish_ha_medications_state_async, publish_ha_snooze_state_async,
-    validate_ha_base_url, HaPatientOption,
+    authenticate_async, discover_ha_patients, normalize_country_code, parse_ha_remote_snooze,
+    publish_ha_medications_state_async, publish_ha_snooze_state_async, validate_ha_base_url,
+    HaPatientOption,
 };
 use librelinkup_core::crypto::{
     clear_credentials_at_path, load_credentials_with_secret, save_credentials_with_secret,
@@ -33,7 +33,7 @@ use librelinkup_core::models::{
 };
 use librelinkup_core::paths::credentials_file_path;
 use librelinkup_core::session::{
-    build_demo_snapshot, evaluate_alert_decision, fetch_snapshot_for_source_async,
+    build_demo_snapshot, evaluate_alert_decision, fetch_snapshot_for_source_with_sync_async,
     reset_reauth_backoff,
 };
 use librelinkup_core::updater::{
@@ -48,6 +48,7 @@ use crate::{alerts, platform};
 /// State shared between the service thread, the UI and the tray.
 #[derive(Debug, Clone, Default)]
 pub struct Shared {
+    pub data_rev: u64,
     pub settings: AppSettings,
     pub logged_in: bool,
     pub demo: bool,
@@ -55,10 +56,10 @@ pub struct Shared {
     pub username: String,
     pub status: String,
     pub error: String,
-    pub snapshot: GlucoseSnapshot,
+    pub snapshot: Arc<GlucoseSnapshot>,
     pub stats_window: StatsWindow,
-    pub glucose_history: GlucoseHistoryStore,
-    pub medication_store: MedicationStore,
+    pub glucose_history: Arc<GlucoseHistoryStore>,
+    pub medication_store: Arc<MedicationStore>,
     pub history_vault_load_failed: bool,
     pub meds_vault_load_failed: bool,
     pub last_alert: Option<(AlertKind, i64)>,
@@ -184,43 +185,16 @@ fn lock(shared: &SharedState) -> std::sync::MutexGuard<'_, Shared> {
 }
 
 /// Loads settings and starts the service thread. Returns the shared state and command sender.
+/// Health-data vaults load asynchronously at startup on the service thread so the window opens cleanly.
 pub fn start(notifier: Arc<dyn UiNotifier>) -> (SharedState, UnboundedSender<Command>) {
     let mut settings = load_default_settings();
     settings.country = normalize_country_code(&settings.country);
     // The registry Run key is the source of truth on Windows (the installer may set it).
     settings.autostart_enabled = platform::is_autostart_registered();
-    let (glucose_history, history_vault_load_failed) = match try_load_default_glucose_history() {
-        Ok(store) => (store, false),
-        Err(e) => {
-            log_error(
-                "CRYPTO",
-                format!(
-                    "Could not open glucose history vault (refusing to overwrite vault on disk): {e}"
-                ),
-            );
-            (GlucoseHistoryStore::default(), true)
-        }
-    };
-    let (medication_store, meds_vault_load_failed) = match try_load_default_medications() {
-        Ok(store) => (store, false),
-        Err(e) => {
-            log_error(
-                "CRYPTO",
-                format!(
-                    "Could not open medication vault (refusing to overwrite vault on disk): {e}"
-                ),
-            );
-            (MedicationStore::default(), true)
-        }
-    };
     let stats_window = StatsWindow::from_code(&settings.stats_window);
     let shared = Arc::new(Mutex::new(Shared {
         settings,
         stats_window,
-        glucose_history,
-        medication_store,
-        history_vault_load_failed,
-        meds_vault_load_failed,
         status: "Ready".into(),
         ..Default::default()
     }));
@@ -250,12 +224,28 @@ pub fn start(notifier: Arc<dyn UiNotifier>) -> (SharedState, UnboundedSender<Com
                     medication_last_notified: HashMap::new(),
                     sensor_expiry_last_notified_epoch: 0,
                     demo_backup: None,
+                    pending_settings_save: None,
                 }
                 .run(rx),
             );
         })
         .expect("spawn service thread");
     (shared, tx)
+}
+
+fn vault_save_lock() -> &'static Mutex<()> {
+    static LOCK: OnceLock<Mutex<()>> = OnceLock::new();
+    LOCK.get_or_init(|| Mutex::new(()))
+}
+
+fn history_save_lock() -> &'static Mutex<()> {
+    static LOCK: OnceLock<Mutex<()>> = OnceLock::new();
+    LOCK.get_or_init(|| Mutex::new(()))
+}
+
+fn meds_save_lock() -> &'static Mutex<()> {
+    static LOCK: OnceLock<Mutex<()>> = OnceLock::new();
+    LOCK.get_or_init(|| Mutex::new(()))
 }
 
 struct Service {
@@ -265,31 +255,55 @@ struct Service {
     creds: Option<StoredCredentials>,
     medication_last_notified: HashMap<String, i64>,
     sensor_expiry_last_notified_epoch: i64,
-    demo_backup: Option<(GlucoseHistoryStore, MedicationStore)>,
+    demo_backup: Option<(Arc<GlucoseHistoryStore>, Arc<MedicationStore>)>,
+    pending_settings_save: Option<(Instant, AppSettings)>,
 }
 
 impl Service {
-    fn save_history_if_safe(s: &mut Shared, now: i64) {
+    fn save_history_if_safe(s: &mut Shared, now: i64, blocking: bool) {
         if s.demo || s.history_vault_load_failed {
             return;
         }
+        if !blocking {
+            let hist = Arc::clone(&s.glucose_history);
+            s.last_history_persist_epoch = now;
+            tokio::task::spawn_blocking(move || {
+                let _guard = history_save_lock().lock().unwrap_or_else(|e| e.into_inner());
+                if let Err(e) = save_default_glucose_history(&hist) {
+                    log_error("CRYPTO", format!("Failed to persist glucose history vault: {e}"));
+                }
+            });
+            return;
+        }
+        let _guard = history_save_lock().lock().unwrap_or_else(|e| e.into_inner());
         match save_default_glucose_history(&s.glucose_history) {
             Ok(()) => s.last_history_persist_epoch = now,
             Err(e) => log_error("CRYPTO", format!("Failed to persist glucose history vault: {e}")),
         }
     }
 
-    fn save_meds_if_safe(s: &Shared) {
+    fn save_meds_if_safe(s: &Shared, blocking: bool) {
         if s.demo || s.meds_vault_load_failed {
             return;
         }
+        if !blocking {
+            let meds = Arc::clone(&s.medication_store);
+            tokio::task::spawn_blocking(move || {
+                let _guard = meds_save_lock().lock().unwrap_or_else(|e| e.into_inner());
+                if let Err(e) = save_default_medications(&meds) {
+                    log_error("CRYPTO", format!("Failed to persist medication vault: {e}"));
+                }
+            });
+            return;
+        }
+        let _guard = meds_save_lock().lock().unwrap_or_else(|e| e.into_inner());
         if let Err(e) = save_default_medications(&s.medication_store) {
             log_error("CRYPTO", format!("Failed to persist medication vault: {e}"));
         }
     }
 
     fn restore_demo_backup_from(
-        backup: &mut Option<(GlucoseHistoryStore, MedicationStore)>,
+        backup: &mut Option<(Arc<GlucoseHistoryStore>, Arc<MedicationStore>)>,
         s: &mut Shared,
     ) {
         if let Some((orig_hist, orig_meds)) = backup.take() {
@@ -303,6 +317,7 @@ impl Service {
             let mut s = lock(&self.shared);
             Self::restore_demo_backup_from(&mut self.demo_backup, &mut s);
             f(&mut s);
+            s.data_rev = s.data_rev.wrapping_add(1);
         }
         self.notifier.state_changed();
     }
@@ -311,7 +326,7 @@ impl Service {
             "SYSTEM",
             format!("Starting LibreLinkUp Rust Desktop v{} (Windows)", env!("CARGO_PKG_VERSION")),
         );
-        self.load_vault();
+        self.load_startup_vaults().await;
         if lock(&self.shared).settings.check_updates_on_startup {
             self.spawn_update_check(false);
         }
@@ -341,6 +356,21 @@ impl Service {
                     self.refresh().await;
                     next_poll = Instant::now() + self.poll_interval();
                 }
+                _ = async {
+                    if let Some((deadline, _)) = self.pending_settings_save {
+                        sleep_until(deadline).await;
+                    } else {
+                        std::future::pending::<()>().await;
+                    }
+                } => {
+                    if let Some((_, to_save)) = self.pending_settings_save.take() {
+                        tokio::task::spawn_blocking(move || {
+                            if let Err(e) = save_default_settings(&to_save) {
+                                log_error("SYSTEM", format!("Failed to save settings: {e}"));
+                            }
+                        });
+                    }
+                }
                 _ = staleness.tick() => {
                     self.evaluate_alerts();
                     self.notifier.state_changed();
@@ -352,12 +382,62 @@ impl Service {
                 }
             }
         }
+        if let Some((_, to_save)) = self.pending_settings_save.take() {
+            let _ = save_default_settings(&to_save);
+        }
         let now = now_epoch();
         let mut s = lock(&self.shared);
         Self::restore_demo_backup_from(&mut self.demo_backup, &mut s);
         if !s.glucose_history.samples.is_empty() {
-            Self::save_history_if_safe(&mut s, now);
+            Self::save_history_if_safe(&mut s, now, true);
         }
+    }
+
+    async fn load_startup_vaults(&mut self) {
+        let (hist_res, meds_res) = tokio::task::spawn_blocking(|| {
+            (try_load_default_glucose_history(), try_load_default_medications())
+        })
+        .await
+        .unwrap_or_else(|e| (Err(format!("vault task panic: {e}")), Err(format!("vault task panic: {e}"))));
+
+        let (glucose_history, history_vault_load_failed) = match hist_res {
+            Ok(store) => (store, false),
+            Err(e) => {
+                log_error(
+                    "CRYPTO",
+                    format!(
+                        "Could not open glucose history vault (refusing to overwrite vault on disk): {e}"
+                    ),
+                );
+                (GlucoseHistoryStore::default(), true)
+            }
+        };
+        let (medication_store, meds_vault_load_failed) = match meds_res {
+            Ok(store) => (store, false),
+            Err(e) => {
+                log_error(
+                    "CRYPTO",
+                    format!(
+                        "Could not open medication vault (refusing to overwrite vault on disk): {e}"
+                    ),
+                );
+                (MedicationStore::default(), true)
+            }
+        };
+        {
+            let mut s = lock(&self.shared);
+            if !s.demo {
+                s.glucose_history = Arc::new(glucose_history);
+                if s.medication_store.medications.is_empty() && s.medication_store.dose_logs.is_empty() {
+                    s.medication_store = Arc::new(medication_store);
+                }
+            }
+            s.history_vault_load_failed = history_vault_load_failed;
+            s.meds_vault_load_failed = meds_vault_load_failed;
+            s.data_rev = s.data_rev.wrapping_add(1);
+        }
+        self.notifier.state_changed();
+        self.load_vault();
     }
 
     fn poll_interval(&self) -> Duration {
@@ -367,7 +447,11 @@ impl Service {
     }
 
     fn update(&self, f: impl FnOnce(&mut Shared)) {
-        f(&mut lock(&self.shared));
+        {
+            let mut s = lock(&self.shared);
+            f(&mut s);
+            s.data_rev = s.data_rev.wrapping_add(1);
+        }
         self.notifier.state_changed();
     }
 
@@ -453,16 +537,19 @@ impl Service {
     fn save_vault(&self, creds: &StoredCredentials) {
         let remember_pw = lock(&self.shared).settings.remember_password;
         let sanitized = creds.sanitized_for_storage(remember_pw);
-        let result = platform::load_or_create_master_secret().and_then(|secret| {
-            save_credentials_with_secret(&sanitized, &credentials_file_path(), &secret)
+        tokio::task::spawn_blocking(move || {
+            let _guard = vault_save_lock().lock().unwrap_or_else(|e| e.into_inner());
+            let result = platform::load_or_create_master_secret().and_then(|secret| {
+                save_credentials_with_secret(&sanitized, &credentials_file_path(), &secret)
+            });
+            match result {
+                Ok(()) => log_info(
+                    "CRYPTO",
+                    "Saved credentials (AES-256-GCM, key protected by Windows DPAPI).",
+                ),
+                Err(e) => log_error("CRYPTO", format!("Failed to save credentials: {e}")),
+            }
         });
-        match result {
-            Ok(()) => log_info(
-                "CRYPTO",
-                "Saved credentials (AES-256-GCM, key protected by Windows DPAPI).",
-            ),
-            Err(e) => log_error("CRYPTO", format!("Failed to save credentials: {e}")),
-        }
     }
 
     /// Returns true if an immediate refresh should follow.
@@ -504,14 +591,14 @@ impl Service {
                 log_info("AUTH", "Signed out; encrypted vault deleted.");
                 self.update_restore_demo(|s| {
                     if !s.glucose_history.samples.is_empty() {
-                        Self::save_history_if_safe(s, now);
+                        Self::save_history_if_safe(s, now, true);
                     }
                     s.logged_in = false;
                     s.demo = false;
                     s.vault_ok = false;
                     s.ha_token_configured = false;
                     s.username.clear();
-                    s.snapshot = GlucoseSnapshot::default();
+                    s.snapshot = Arc::new(GlucoseSnapshot::default());
                     s.last_alert = None;
                     s.last_successful_fetch_epoch = None;
                     s.error.clear();
@@ -561,10 +648,9 @@ impl Service {
                         *creds = creds.sanitized_for_storage(false);
                     }
                 }
-                if let Err(e) = save_default_settings(&settings) {
-                    log_error("SYSTEM", format!("Failed to save settings: {e}"));
-                }
-                self.update(|s| s.settings = settings);
+                self.update(|s| s.settings = settings.clone());
+                self.pending_settings_save =
+                    Some((Instant::now() + Duration::from_millis(400), settings));
                 if (country_changed || remember_changed)
                     && let Some(ref creds) = self.creds {
                         self.save_vault(creds);
@@ -612,22 +698,23 @@ impl Service {
                 {
                     let mut s = lock(&self.shared);
                     if !s.demo && self.demo_backup.is_none() {
-                        Self::save_history_if_safe(&mut s, now);
+                        Self::save_history_if_safe(&mut s, now, false);
                         self.demo_backup = Some((
-                            s.glucose_history.clone(),
-                            s.medication_store.clone(),
+                            Arc::clone(&s.glucose_history),
+                            Arc::clone(&s.medication_store),
                         ));
-                        s.glucose_history = GlucoseHistoryStore::default();
-                        s.medication_store = build_demo_medication_store(now);
+                        s.glucose_history = Arc::new(GlucoseHistoryStore::default());
+                        s.medication_store = Arc::new(build_demo_medication_store(now));
                     }
                     s.demo = true;
                     s.logged_in = true;
                     s.status = "Sample CGM telemetry loaded".into();
-                    s.glucose_history.ingest_snapshot(&snap, now);
+                    Arc::make_mut(&mut s.glucose_history).ingest_snapshot(&snap, now);
                     if s.medication_store.medications.is_empty() {
-                        s.medication_store = build_demo_medication_store(now);
+                        s.medication_store = Arc::new(build_demo_medication_store(now));
                     }
-                    s.snapshot = snap;
+                    s.snapshot = Arc::new(snap);
+                    s.data_rev = s.data_rev.wrapping_add(1);
                 }
                 self.notifier.state_changed();
                 false
@@ -662,7 +749,7 @@ impl Service {
                 let mut changed = false;
                 let mut push_ha = false;
                 self.update(|s| {
-                    if s.medication_store
+                    if Arc::make_mut(&mut s.medication_store)
                         .upsert_medication(
                             &id,
                             &name,
@@ -675,7 +762,7 @@ impl Service {
                         )
                         .is_ok()
                     {
-                        Self::save_meds_if_safe(s);
+                        Self::save_meds_if_safe(s, false);
                         log_info(
                             "MEDS",
                             format!("Saved scheduled medication ({}).", schedule.label()),
@@ -693,8 +780,8 @@ impl Service {
                 let mut changed = false;
                 let mut push_ha = false;
                 self.update(|s| {
-                    if s.medication_store.remove_medication(&id) {
-                        Self::save_meds_if_safe(s);
+                    if Arc::make_mut(&mut s.medication_store).remove_medication(&id) {
+                        Self::save_meds_if_safe(s, false);
                         log_info("MEDS", "Removed scheduled medication.");
                         changed = true;
                         push_ha = !s.demo;
@@ -716,8 +803,8 @@ impl Service {
                 self.update(|s| {
                     let g = (s.snapshot.value_mg_dl > 0.0).then_some(s.snapshot.value_mg_dl);
                     let cd = (!custom_dosage.trim().is_empty()).then_some(custom_dosage.as_str());
-                    if let Ok(entry) = s.medication_store.log_dose(&medication_id, cd, now, g, &notes) {
-                        Self::save_meds_if_safe(s);
+                    if let Ok(entry) = Arc::make_mut(&mut s.medication_store).log_dose(&medication_id, cd, now, g, &notes) {
+                        Self::save_meds_if_safe(s, false);
                         log_info(
                             "MEDS",
                             format!("Logged medication dose at {}.", entry.taken_at_display),
@@ -739,8 +826,8 @@ impl Service {
                 let mut skipped_entry: Option<MedicationDoseLog> = None;
                 let mut push_ha = false;
                 self.update(|s| {
-                    if let Ok(entry) = s.medication_store.skip_dose(&medication_id, now, &notes) {
-                        Self::save_meds_if_safe(s);
+                    if let Ok(entry) = Arc::make_mut(&mut s.medication_store).skip_dose(&medication_id, now, &notes) {
+                        Self::save_meds_if_safe(s, false);
                         log_info(
                             "MEDS",
                             format!("Skipped medication dose at {}.", entry.taken_at_display),
@@ -758,8 +845,8 @@ impl Service {
                 let mut changed = false;
                 let mut push_ha = false;
                 self.update(|s| {
-                    if s.medication_store.remove_dose_log(&dose_id) {
-                        Self::save_meds_if_safe(s);
+                    if Arc::make_mut(&mut s.medication_store).remove_dose_log(&dose_id) {
+                        Self::save_meds_if_safe(s, false);
                         log_info("MEDS", "Removed logged medication dose entry.");
                         changed = true;
                         push_ha = !s.demo;
@@ -1050,6 +1137,7 @@ impl Service {
             } else {
                 "Please sign in to LibreLinkUp".into()
             };
+            s.data_rev = s.data_rev.wrapping_add(1);
             s.settings.clone()
         };
         let _ = save_default_settings(&settings);
@@ -1163,23 +1251,23 @@ impl Service {
         }
         self.update(|s| s.busy = true);
 
-        match fetch_snapshot_for_source_async(&data_source, &ha_url, &ha_entity_id, &creds).await {
+        match fetch_snapshot_for_source_with_sync_async(
+            &data_source,
+            &ha_url,
+            &ha_entity_id,
+            &creds,
+            sync_meds,
+            sync_snooze,
+        )
+        .await
+        {
             Ok(mut outcome) => {
                 if let Some(updated_creds) = outcome.updated_credentials.take() {
                     self.save_vault(&updated_creds);
                     self.creds = Some(updated_creds);
                 }
                 let snap = outcome.snapshot;
-                let ha_states = match outcome.ha_states {
-                    Some(states) => Some(states),
-                    None if (sync_meds || sync_snooze)
-                        && !ha_url.trim().is_empty()
-                        && !creds.ha_token.trim().is_empty() =>
-                    {
-                        fetch_ha_states_array_async(&ha_url, &creds.ha_token).await.ok()
-                    }
-                    None => None,
-                };
+                let ha_states = outcome.ha_states;
                 let unit = lock(&self.shared).settings.result_unit.clone();
                 log_info(
                     "GLUCOSE",
@@ -1198,12 +1286,12 @@ impl Service {
                     s.error.clear();
                     s.demo = false;
                     s.last_successful_fetch_epoch = Some(now);
-                    if s.glucose_history.ingest_snapshot(&snap, now)
+                    if Arc::make_mut(&mut s.glucose_history).ingest_snapshot(&snap, now)
                         && !s.history_vault_load_failed
                         && now - s.last_history_persist_epoch
                             >= librelinkup_core::analytics::HISTORY_PERSIST_MIN_INTERVAL_SECS
                     {
-                        Self::save_history_if_safe(s, now);
+                        Self::save_history_if_safe(s, now, false);
                     }
                     if let Some(ref states) = ha_states {
                         s.discovered_ha_patients = discover_ha_patients(states);
@@ -1219,8 +1307,8 @@ impl Service {
                                 .and_then(|a| a.get("recent_doses"))
                                 .and_then(|r| r.as_array())
                                 .map(Vec::len);
-                            if s.medication_store.merge_from_ha_states(states) {
-                                Self::save_meds_if_safe(s);
+                            if Arc::make_mut(&mut s.medication_store).merge_from_ha_states(states) {
+                                Self::save_meds_if_safe(s, false);
                                 log_info(
                                     "MEDS",
                                     "Merged remote medication schedule/dose updates from Home Assistant",
@@ -1253,7 +1341,7 @@ impl Service {
                             );
                         }
                     }
-                    s.snapshot = snap;
+                    s.snapshot = Arc::new(snap);
                     s.status = "Live CGM telemetry active".into();
                 });
                 if push_meds {
@@ -1277,15 +1365,16 @@ impl Service {
         let now = now_epoch();
         let reminders = {
             let mut s = lock(&self.shared);
-            let list = s
-                .medication_store
-                .evaluate_due_reminders(now, &mut self.medication_last_notified);
-            if !list.is_empty() {
-                s.medication_store
-                    .record_notified_slots(now, &self.medication_last_notified);
-                Self::save_meds_if_safe(&s);
+            let mut due = Vec::new();
+            if !s.medication_store.medications.is_empty() {
+                let store = Arc::make_mut(&mut s.medication_store);
+                due = store.evaluate_due_reminders(now, &mut self.medication_last_notified);
+                if !due.is_empty() {
+                    store.record_notified_slots(now, &self.medication_last_notified);
+                    Self::save_meds_if_safe(&s, false);
+                }
             }
-            list
+            due
         };
         for r in reminders {
             log_info("MEDS", "Triggered due medication reminder.");
@@ -1296,7 +1385,7 @@ impl Service {
             let s = lock(&self.shared);
             (
                 s.settings.clone(),
-                s.snapshot.clone(),
+                Arc::clone(&s.snapshot),
                 s.last_alert,
                 s.logged_in,
                 s.demo,

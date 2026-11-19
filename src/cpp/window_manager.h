@@ -4,6 +4,9 @@
 #include <QCursor>
 #include <QDBusConnection>
 #include <QDBusMessage>
+#include <QDBusPendingCall>
+#include <QDBusPendingCallWatcher>
+#include <QDBusPendingReply>
 #include <QDBusReply>
 #include <QDBusServiceWatcher>
 #include <QDateTime>
@@ -1059,12 +1062,14 @@ inline void install_kwin_resident_script() {
     if (qEnvironmentVariable("QT_QPA_PLATFORM") == QStringLiteral("offscreen")) {
         return;
     }
+    if (!QCoreApplication::instance() || QCoreApplication::closingDown()) {
+        return;
+    }
     QDBusConnection bus = QDBusConnection::sessionBus();
     if (!bus.isConnected()) {
         return;
     }
     const QString pluginName = QStringLiteral("librelinkup_kwin_resident_watcher");
-    stop_and_unload_resident_script();
 
     int initOvX = -1;
     int initOvY = -1;
@@ -1100,38 +1105,80 @@ inline void install_kwin_resident_script() {
     }
 
     const QString scriptPath = resident_kwin_js_path();
-    if (scriptPath.isEmpty() || !write_private_kwin_script(scriptPath, jsBody.toUtf8(), false)) {
+    if (scriptPath.isEmpty()) {
         return;
     }
 
-    QDBusMessage loadMsg = QDBusMessage::createMethodCall(
+    QDBusMessage unloadMsg = QDBusMessage::createMethodCall(
         QStringLiteral("org.kde.KWin"),
         QStringLiteral("/Scripting"),
         QStringLiteral("org.kde.kwin.Scripting"),
-        QStringLiteral("loadScript")
+        QStringLiteral("unloadScript")
     );
-    loadMsg << scriptPath << pluginName;
-    QDBusReply<int> loadReply = bus.call(loadMsg);
-    if (loadReply.isValid() && loadReply.value() >= 0) {
-        const int sid = loadReply.value();
-        resident_kwin_script_id_ref() = sid;
-        const QString sidPath = resident_kwin_sid_path();
-        if (!sidPath.isEmpty()) {
-            write_private_kwin_script(sidPath, QString::number(sid).toUtf8(), false);
+    unloadMsg << pluginName;
+    QDBusPendingCall unloadCall = bus.asyncCall(unloadMsg);
+    auto* unloadWatcher = new QDBusPendingCallWatcher(unloadCall, QCoreApplication::instance());
+    QObject::connect(
+        unloadWatcher,
+        &QDBusPendingCallWatcher::finished,
+        QCoreApplication::instance(),
+        [pluginName, scriptPath, jsBody](QDBusPendingCallWatcher* uw) {
+            uw->deleteLater();
+            if (QCoreApplication::closingDown()) {
+                return;
+            }
+            if (!write_private_kwin_script(scriptPath, jsBody.toUtf8(), false)) {
+                return;
+            }
+            QDBusConnection session = QDBusConnection::sessionBus();
+            if (!session.isConnected()) {
+                QFile::remove(scriptPath);
+                return;
+            }
+            QDBusMessage loadMsg = QDBusMessage::createMethodCall(
+                QStringLiteral("org.kde.KWin"),
+                QStringLiteral("/Scripting"),
+                QStringLiteral("org.kde.kwin.Scripting"),
+                QStringLiteral("loadScript")
+            );
+            loadMsg << scriptPath << pluginName;
+            QDBusPendingCall loadCall = session.asyncCall(loadMsg);
+            auto* loadWatcher = new QDBusPendingCallWatcher(loadCall, QCoreApplication::instance());
+            QObject::connect(
+                loadWatcher,
+                &QDBusPendingCallWatcher::finished,
+                QCoreApplication::instance(),
+                [scriptPath](QDBusPendingCallWatcher* lw) {
+                    QDBusPendingReply<int> loadReply = *lw;
+                    lw->deleteLater();
+                    if (!QCoreApplication::closingDown()
+                        && loadReply.isValid()
+                        && loadReply.value() >= 0) {
+                        const int sid = loadReply.value();
+                        resident_kwin_script_id_ref() = sid;
+                        const QString sidPath = resident_kwin_sid_path();
+                        if (!sidPath.isEmpty()) {
+                            write_private_kwin_script(sidPath, QString::number(sid).toUtf8(), false);
+                        }
+                        QDBusConnection busNow = QDBusConnection::sessionBus();
+                        if (busNow.isConnected()) {
+                            // Start via `/Scripting` `org.kde.kwin.Scripting.start` rather than
+                            // `/Scripting/Script<sid>` `run()`, avoiding sparse slot collisions.
+                            QDBusMessage startMsg = QDBusMessage::createMethodCall(
+                                QStringLiteral("org.kde.KWin"),
+                                QStringLiteral("/Scripting"),
+                                QStringLiteral("org.kde.kwin.Scripting"),
+                                QStringLiteral("start")
+                            );
+                            busNow.asyncCall(startMsg);
+                        }
+                    } else {
+                        QFile::remove(scriptPath);
+                    }
+                }
+            );
         }
-        // Start via `/Scripting` `org.kde.kwin.Scripting.start` rather than `/Scripting/Script<sid>`
-        // `run()`, because KWin 6's `scripts.size()` index can collide with an already-occupied
-        // `/Scripting/Script<N>` D-Bus path when an earlier script slot was unloaded.
-        QDBusMessage startMsg = QDBusMessage::createMethodCall(
-            QStringLiteral("org.kde.KWin"),
-            QStringLiteral("/Scripting"),
-            QStringLiteral("org.kde.kwin.Scripting"),
-            QStringLiteral("start")
-        );
-        bus.call(startMsg);
-    } else {
-        QFile::remove(scriptPath);
-    }
+    );
 }
 
 inline void ensure_kwin_dbus_bridge() {
@@ -1268,6 +1315,10 @@ inline void run_kwin_oneshot_script(const QString& jsBody) {
         return;
     }
 
+    if (!QCoreApplication::instance() || QCoreApplication::closingDown()) {
+        QFile::remove(scriptPath);
+        return;
+    }
     const QString pluginName = QStringLiteral("librelinkup_kwin_%1").arg(uid);
     QDBusMessage loadMsg = QDBusMessage::createMethodCall(
         QStringLiteral("org.kde.KWin"),
@@ -1276,35 +1327,48 @@ inline void run_kwin_oneshot_script(const QString& jsBody) {
         QStringLiteral("loadScript")
     );
     loadMsg << scriptPath << pluginName;
-    QDBusReply<int> loadReply = bus.call(loadMsg);
-    if (loadReply.isValid() && loadReply.value() >= 0) {
-        active_oneshot_kwin_scripts_ref().append(qMakePair(pluginName, scriptPath));
-        QDBusMessage startMsg = QDBusMessage::createMethodCall(
-            QStringLiteral("org.kde.KWin"),
-            QStringLiteral("/Scripting"),
-            QStringLiteral("org.kde.kwin.Scripting"),
-            QStringLiteral("start")
-        );
-        bus.call(startMsg);
-        QTimer::singleShot(300, QCoreApplication::instance(), [pluginName, scriptPath]() {
-            auto& active = active_oneshot_kwin_scripts_ref();
-            active.removeAll(qMakePair(pluginName, scriptPath));
-            QDBusConnection session = QDBusConnection::sessionBus();
-            if (session.isConnected()) {
-                QDBusMessage cleanupMsg = QDBusMessage::createMethodCall(
-                    QStringLiteral("org.kde.KWin"),
-                    QStringLiteral("/Scripting"),
-                    QStringLiteral("org.kde.kwin.Scripting"),
-                    QStringLiteral("unloadScript")
-                );
-                cleanupMsg << pluginName;
-                session.call(cleanupMsg);
+    QDBusPendingCall loadCall = bus.asyncCall(loadMsg);
+    auto* watcher = new QDBusPendingCallWatcher(loadCall, QCoreApplication::instance());
+    QObject::connect(
+        watcher,
+        &QDBusPendingCallWatcher::finished,
+        QCoreApplication::instance(),
+        [pluginName, scriptPath](QDBusPendingCallWatcher* w) {
+            QDBusPendingReply<int> loadReply = *w;
+            w->deleteLater();
+            if (!QCoreApplication::closingDown() && loadReply.isValid() && loadReply.value() >= 0) {
+                active_oneshot_kwin_scripts_ref().append(qMakePair(pluginName, scriptPath));
+                QDBusConnection session = QDBusConnection::sessionBus();
+                if (session.isConnected()) {
+                    QDBusMessage startMsg = QDBusMessage::createMethodCall(
+                        QStringLiteral("org.kde.KWin"),
+                        QStringLiteral("/Scripting"),
+                        QStringLiteral("org.kde.kwin.Scripting"),
+                        QStringLiteral("start")
+                    );
+                    session.asyncCall(startMsg);
+                }
+                QTimer::singleShot(300, QCoreApplication::instance(), [pluginName, scriptPath]() {
+                    auto& active = active_oneshot_kwin_scripts_ref();
+                    active.removeAll(qMakePair(pluginName, scriptPath));
+                    QDBusConnection s = QDBusConnection::sessionBus();
+                    if (s.isConnected()) {
+                        QDBusMessage cleanupMsg = QDBusMessage::createMethodCall(
+                            QStringLiteral("org.kde.KWin"),
+                            QStringLiteral("/Scripting"),
+                            QStringLiteral("org.kde.kwin.Scripting"),
+                            QStringLiteral("unloadScript")
+                        );
+                        cleanupMsg << pluginName;
+                        s.asyncCall(cleanupMsg);
+                    }
+                    QFile::remove(scriptPath);
+                });
+            } else {
+                QFile::remove(scriptPath);
             }
-            QFile::remove(scriptPath);
-        });
-    } else {
-        QFile::remove(scriptPath);
-    }
+        }
+    );
 }
 
 inline void sync_kwin_overlay_window(int globalX, int globalY, int w, int h, bool onAllDesktops) {
@@ -2057,8 +2121,8 @@ protected:
                 auto* ke = static_cast<QKeyEvent*>(event);
                 const Qt::KeyboardModifiers mods = ke->modifiers();
                 const int key = ke->key();
-                QObject* settingsCtrl = quickWin->findChild<QObject*>(QStringLiteral("librelinkupSettingsController"));
-                QObject* appCtrl = quickWin->findChild<QObject*>(QStringLiteral("librelinkupAppController"));
+                QObject* settingsCtrl = cachedSettingsController(quickWin);
+                QObject* appCtrl = cachedAppController(quickWin);
 
                 if ((mods & Qt::ControlModifier) != 0 && (mods & Qt::AltModifier) == 0) {
                     if (key == Qt::Key_Plus || key == Qt::Key_Equal) {
@@ -2132,7 +2196,7 @@ protected:
         auto* we = static_cast<QWheelEvent*>(event);
         if ((we->modifiers() & Qt::ControlModifier) != 0) {
             if (quickWin->objectName() == QStringLiteral("librelinkupMainWindow")) {
-                if (QObject* settingsCtrl = quickWin->findChild<QObject*>(QStringLiteral("librelinkupSettingsController"))) {
+                if (QObject* settingsCtrl = cachedSettingsController(quickWin)) {
                     const int dy = !we->angleDelta().isNull() ? we->angleDelta().y() : we->pixelDelta().y();
                     if (dy > 0) {
                         QMetaObject::invokeMethod(settingsCtrl, "zoomIn", Qt::DirectConnection);
@@ -2195,6 +2259,22 @@ protected:
 private:
     QPointer<QQuickWindow> m_scrollWindow;
     QPointer<QQuickItem> m_lockedFlickable;
+    QPointer<QObject> m_cachedSettingsCtrl;
+    QPointer<QObject> m_cachedAppCtrl;
+
+    QObject* cachedSettingsController(QQuickWindow* win) {
+        if (!m_cachedSettingsCtrl && win) {
+            m_cachedSettingsCtrl = win->findChild<QObject*>(QStringLiteral("librelinkupSettingsController"));
+        }
+        return m_cachedSettingsCtrl.data();
+    }
+
+    QObject* cachedAppController(QQuickWindow* win) {
+        if (!m_cachedAppCtrl && win) {
+            m_cachedAppCtrl = win->findChild<QObject*>(QStringLiteral("librelinkupAppController"));
+        }
+        return m_cachedAppCtrl.data();
+    }
     QPointF m_lastWheelScenePos;
     QPointF m_lastWheelGlobalPos;
     Qt::KeyboardModifiers m_lastWheelModifiers = Qt::NoModifier;

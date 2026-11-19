@@ -37,3 +37,8 @@ chrono = "0.4"
 
 [build-dependencies]
 cxx-qt-build = { version = "0.7.2", features = ["link_qt_object_files"] }
+
+[profile.release]
+lto = "thin"
+codegen-units = 1
+strip = "symbols"

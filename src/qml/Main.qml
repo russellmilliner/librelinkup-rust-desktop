@@ -349,9 +349,15 @@ Kirigami.ApplicationWindow {
             settings.initialize()
             telemetry.initialize()
             medications.initialize()
-            appSyncTimer.start()
         }
-        onGraphPointsJsonChanged: glucoseCanvas.requestPaint()
+        onSharedStateChanged: {
+            settings.sync()
+            medications.sync()
+        }
+        onGraphPointsJsonChanged: {
+            glucoseCanvas.updateParsedPoints()
+            glucoseCanvas.requestPaint()
+        }
         onResultUnitChanged: glucoseCanvas.requestPaint()
     }
 
@@ -364,26 +370,20 @@ Kirigami.ApplicationWindow {
             glucoseCanvas.requestPaint()
             root.recheckHeaderWidth()
         }
+        onPollIntervalSecondsChanged: {
+            if (telemetry.loggedIn) {
+                pollTimer.interval = telemetry.nextPollIntervalMs()
+                pollTimer.restart()
+            }
+        }
     }
 
     MedicationsController {
         id: medications
         objectName: "librelinkupMedicationsController"
-        onGraphDosesJsonChanged: glucoseCanvas.requestPaint()
-    }
-
-    // Single refresh tick: applies pending async results, recomputes derived strings,
-    // updates the tray and evaluates alerts. Replaces the previous pull of separate
-    // per-property signals.
-    Timer {
-        id: appSyncTimer
-        interval: 250
-        repeat: true
-        running: false
-        onTriggered: {
-            telemetry.tick()
-            settings.sync()
-            medications.sync()
+        onGraphDosesJsonChanged: {
+            glucoseCanvas.updateParsedDoses()
+            glucoseCanvas.requestPaint()
         }
     }
 
@@ -404,6 +404,7 @@ Kirigami.ApplicationWindow {
         running: false
         onTriggered: {
             telemetry.refreshGlucoseNow()
+            pollTimer.interval = telemetry.nextPollIntervalMs()
             pollTimer.restart()
         }
     }
@@ -412,6 +413,7 @@ Kirigami.ApplicationWindow {
         target: telemetry
         function onLoggedInChanged() {
             if (telemetry.loggedIn) {
+                pollTimer.interval = telemetry.nextPollIntervalMs()
                 pollTimer.restart()
             } else {
                 pollTimer.stop()
@@ -1774,6 +1776,29 @@ Kirigami.ApplicationWindow {
                             property string hoveredStatusText: ""
                             property string hoveredTimeText: ""
                             property string hoveredColorHex: "#22c55e"
+                            property var parsedPoints: []
+                            property var parsedDoseMarkers: []
+
+                            function updateParsedPoints() {
+                                try {
+                                    parsedPoints = JSON.parse(telemetry.graphPointsJson || "[]")
+                                } catch (e) {
+                                    parsedPoints = []
+                                }
+                            }
+
+                            function updateParsedDoses() {
+                                try {
+                                    parsedDoseMarkers = JSON.parse(medications.graphDosesJson || "[]")
+                                } catch (e) {
+                                    parsedDoseMarkers = []
+                                }
+                            }
+
+                            Component.onCompleted: {
+                                updateParsedPoints()
+                                updateParsedDoses()
+                            }
 
                             function clearHover() {
                                 if (hoveredIndex !== -1) {
@@ -1786,12 +1811,7 @@ Kirigami.ApplicationWindow {
                             }
 
                             function selectPointByIndex(idx) {
-                                let pts = []
-                                try {
-                                    pts = JSON.parse(telemetry.graphPointsJson || "[]")
-                                } catch (e) {
-                                    pts = []
-                                }
+                                const pts = parsedPoints
                                 if (pts.length === 0 || width <= 0 || height <= 0) {
                                     clearHover()
                                     return
@@ -1848,15 +1868,13 @@ Kirigami.ApplicationWindow {
                                 hoveredValueText = formattedVal
                                 hoveredStatusText = statusLabel
                                 let timeStr = String(pt.timestamp || qsTr("Unknown time"))
-                                try {
-                                    const dMarkers = JSON.parse(medications.graphDosesJson || "[]")
-                                    for (let d = 0; d < dMarkers.length; ++d) {
-                                        const dm = dMarkers[d]
-                                        if (Math.abs(Number(dm.point_index || 0) - clampedIdx) <= 0.75) {
-                                            timeStr += " • 💊 " + String(dm.medication_name || "") + " (" + String(dm.dosage || "") + ")"
-                                        }
+                                const dMarkers = parsedDoseMarkers
+                                for (let d = 0; d < dMarkers.length; ++d) {
+                                    const dm = dMarkers[d]
+                                    if (Math.abs(Number(dm.point_index || 0) - clampedIdx) <= 0.75) {
+                                        timeStr += " • 💊 " + String(dm.medication_name || "") + " (" + String(dm.dosage || "") + ")"
                                     }
-                                } catch (e) {}
+                                }
                                 hoveredTimeText = timeStr
                                 hoveredColorHex = ptColor
                                 requestPaint()
@@ -1865,8 +1883,7 @@ Kirigami.ApplicationWindow {
                             onActiveFocusChanged: requestPaint()
 
                             Keys.onPressed: function(event) {
-                                let pts = []
-                                try { pts = JSON.parse(telemetry.graphPointsJson || "[]") } catch (e) {}
+                                const pts = parsedPoints
                                 if (event.key === Qt.Key_Left && pts.length > 0) {
                                     const nextIdx = hoveredIndex < 0 ? (pts.length - 1) : Math.max(0, hoveredIndex - 1)
                                     selectPointByIndex(nextIdx)
@@ -1888,12 +1905,7 @@ Kirigami.ApplicationWindow {
                             }
 
                             function updateHoverAt(mx, my) {
-                                let pts = []
-                                try {
-                                    pts = JSON.parse(telemetry.graphPointsJson || "[]")
-                                } catch (e) {
-                                    pts = []
-                                }
+                                const pts = parsedPoints
                                 if (pts.length === 0 || width <= 0 || height <= 0) {
                                     clearHover()
                                     return
@@ -1979,15 +1991,13 @@ Kirigami.ApplicationWindow {
                                 hoveredValueText = formattedVal
                                 hoveredStatusText = statusLabel
                                 let timeStr = String(pt.timestamp || qsTr("Unknown time"))
-                                try {
-                                    const dMarkers = JSON.parse(medications.graphDosesJson || "[]")
-                                    for (let d = 0; d < dMarkers.length; ++d) {
-                                        const dm = dMarkers[d]
-                                        if (Math.abs(Number(dm.point_index || 0) - bestIdx) <= 0.75) {
-                                            timeStr += " • 💊 " + String(dm.medication_name || "") + " (" + String(dm.dosage || "") + ")"
-                                        }
+                                const dMarkers = parsedDoseMarkers
+                                for (let d = 0; d < dMarkers.length; ++d) {
+                                    const dm = dMarkers[d]
+                                    if (Math.abs(Number(dm.point_index || 0) - bestIdx) <= 0.75) {
+                                        timeStr += " • 💊 " + String(dm.medication_name || "") + " (" + String(dm.dosage || "") + ")"
                                     }
-                                } catch (e) {}
+                                }
                                 hoveredTimeText = timeStr
                                 hoveredColorHex = ptColor
                                 requestPaint()
@@ -2124,12 +2134,7 @@ Kirigami.ApplicationWindow {
                                 const ctx = getContext("2d")
                                 ctx.clearRect(0, 0, width, height)
 
-                                let pts = []
-                                try {
-                                    pts = JSON.parse(telemetry.graphPointsJson || "[]")
-                                } catch (e) {
-                                    pts = []
-                                }
+                                const pts = parsedPoints
 
                                 const padLeft = Math.round(48 * Math.min(1.25, root.zoomScale))
                                 const padRight = 20
@@ -2278,12 +2283,7 @@ Kirigami.ApplicationWindow {
                                 }
 
                                 // Logged Medication Dose Markers (#a855f7 diamond + vertical guide)
-                                let doseMarkers = []
-                                try {
-                                    doseMarkers = JSON.parse(medications.graphDosesJson || "[]")
-                                } catch (e) {
-                                    doseMarkers = []
-                                }
+                                const doseMarkers = parsedDoseMarkers
                                 for (let d = 0; d < doseMarkers.length; ++d) {
                                     const dm = doseMarkers[d]
                                     const pIdx = Number(dm.point_index || 0)

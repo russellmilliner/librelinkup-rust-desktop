@@ -400,11 +400,15 @@ public:
 
         if (m_lastIconKey != cacheKey) {
             m_lastIconKey = cacheKey;
-            QIcon baseAppIcon = build_multisize_svg_icon(
-                useLightOnDarkIcon
-                    ? QStringLiteral(":/qt/qml/io/github/librelinkup/src/qml/icons/tray-icon-dark.svg")
-                    : QStringLiteral(":/qt/qml/io/github/librelinkup/src/qml/icons/tray-icon-light.svg")
-            );
+            QIcon& cachedBase = useLightOnDarkIcon ? m_cachedDarkBaseIcon : m_cachedLightBaseIcon;
+            if (cachedBase.isNull()) {
+                cachedBase = build_multisize_svg_icon(
+                    useLightOnDarkIcon
+                        ? QStringLiteral(":/qt/qml/io/github/librelinkup/src/qml/icons/tray-icon-dark.svg")
+                        : QStringLiteral(":/qt/qml/io/github/librelinkup/src/qml/icons/tray-icon-light.svg")
+                );
+            }
+            const QIcon& baseAppIcon = cachedBase;
             QGuiApplication::setWindowIcon(baseAppIcon);
             if (QWindow* win = find_main_window()) {
                 win->setIcon(baseAppIcon);
@@ -1069,6 +1073,8 @@ private:
     QPointer<KStatusNotifierItem> m_sni;
     QPointer<QSystemTrayIcon> m_tray;
     QIcon m_currentTrayIcon;
+    QIcon m_cachedDarkBaseIcon;
+    QIcon m_cachedLightBaseIcon;
     QPointer<QMenu> m_menu;
     QPointer<QAction> m_statusAction;
     QPointer<QAction> m_rangeAction;

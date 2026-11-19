@@ -7,9 +7,9 @@ use eframe::egui::{
     self, Align, Align2, Color32, CornerRadius, FontId, Layout, Pos2, Rect, RichText, Sense, Shape,
     Stroke, Vec2, ViewportBuilder, ViewportCommand, ViewportId,
 };
-use librelinkup_core::analytics::StatsWindow;
+use librelinkup_core::analytics::{GlycemicStats, StatsWindow};
 use librelinkup_core::api::normalize_country_code;
-use librelinkup_core::event_log::{clear_events, export_events_to_path, get_all_events};
+use librelinkup_core::event_log::{clear_events, export_events_to_path, get_all_events, get_event_seq};
 use librelinkup_core::medications::{weekday_full_name, MedicationSchedule};
 use librelinkup_core::models::{
     accessible_glucose_announcement, clamp_ui_zoom_percent, convert_mg_dl_to_unit,
@@ -97,6 +97,8 @@ enum Tab {
     About,
 }
 
+type StatsCacheKey = (u64, StatsWindow, u64, u64, i64);
+
 pub struct LibreLinkUpApp {
     shared: SharedState,
     tx: UnboundedSender<Command>,
@@ -117,6 +119,14 @@ pub struct LibreLinkUpApp {
     med_reminder: bool,
     log_filter: String,
     log_min_level: usize,
+    last_theme_key: Option<(String, i32, bool, bool)>,
+    cached_stats: Option<(StatsCacheKey, GlycemicStats)>,
+    cached_graph_key: Option<(u64, i64)>,
+    cached_graph_points: Vec<(i64, f64)>,
+    cached_logs_key: Option<(u64, usize, String)>,
+    cached_log_rows: Vec<(u8, String)>,
+    pending_sound_rx: Option<std::sync::mpsc::Receiver<Option<std::path::PathBuf>>>,
+    pending_export_rx: Option<std::sync::mpsc::Receiver<()>>,
 }
 
 const LOGIN_PW_EDIT_SALT: &str = "llu_login_password_edit";
@@ -169,7 +179,97 @@ impl LibreLinkUpApp {
             med_reminder: true,
             log_filter: String::new(),
             log_min_level: 0,
+            last_theme_key: None,
+            cached_stats: None,
+            cached_graph_key: None,
+            cached_graph_points: Vec::new(),
+            cached_logs_key: None,
+            cached_log_rows: Vec::new(),
+            pending_sound_rx: None,
+            pending_export_rx: None,
         }
+    }
+
+    fn compute_cached_stats(&mut self, state: &Shared, now: i64) -> GlycemicStats {
+        let low = state
+            .settings
+            .effective_target_low(state.snapshot.target_low_mg_dl);
+        let high = state
+            .settings
+            .effective_target_high(state.snapshot.target_high_mg_dl);
+        let key = (
+            state.data_rev,
+            state.stats_window,
+            low.to_bits(),
+            high.to_bits(),
+            now / 60,
+        );
+        if let Some((cached_key, ref stats)) = self.cached_stats
+            && cached_key == key
+        {
+            return stats.clone();
+        }
+        let stats = state.glucose_history.compute_stats(
+            state.stats_window,
+            now,
+            low,
+            high,
+            Some(&state.snapshot),
+        );
+        self.cached_stats = Some((key, stats.clone()));
+        stats
+    }
+
+    fn cached_graph_points_for(&mut self, state: &Shared, now: i64) -> &[(i64, f64)] {
+        let key = (state.data_rev, now / 60);
+        if self.cached_graph_key != Some(key) {
+            let start = now - 12 * 3600;
+            let mut points: Vec<(i64, f64)> = state
+                .snapshot
+                .graph_points
+                .iter()
+                .filter_map(|p| parse_libreview_timestamp(&p.timestamp, false).map(|t| (t, p.value_mg_dl)))
+                .filter(|(t, _)| *t >= start)
+                .collect();
+            points.sort_by_key(|(t, _)| *t);
+            self.cached_graph_points = points;
+            self.cached_graph_key = Some(key);
+        }
+        &self.cached_graph_points
+    }
+
+    fn ensure_cached_logs(&mut self) {
+        let seq = get_event_seq();
+        let filter_lower = self.log_filter.to_ascii_lowercase();
+        let key = (seq, self.log_min_level, filter_lower);
+        if self.cached_logs_key.as_ref() == Some(&key) {
+            return;
+        }
+        let rank = |l: &str| match l {
+            "ERROR" => 3,
+            "WARN" => 2,
+            "INFO" => 1,
+            _ => 0,
+        };
+        let min = key.1;
+        let query = &key.2;
+        self.cached_log_rows.clear();
+        for e in get_all_events().iter().rev() {
+            if rank(&e.level) < min {
+                continue;
+            }
+            let line = format!("{}  [{}] {}: {}", e.timestamp, e.level, e.category, e.message);
+            if !query.is_empty() && !line.to_ascii_lowercase().contains(query) {
+                continue;
+            }
+            let level_tag = match e.level.as_str() {
+                "ERROR" => 2,
+                "WARN" => 1,
+                _ => 0,
+            };
+            self.cached_log_rows.push((level_tag, line));
+        }
+        self.cached_logs_key = Some(key);
     }
 
     fn snapshot(&self) -> Shared {
@@ -302,10 +402,8 @@ impl eframe::App for LibreLinkUpApp {
             ctx.send_viewport_cmd(ViewportCommand::CancelClose);
             self.ui_handle.hide_main_window();
         }
-        // Keep the overlay viewport alive and updating while the main window is hidden.
-        let overlay = self.shared.lock().map(|s| s.settings.overlay_visible).unwrap_or(false);
-        if overlay && !self.ui_handle.window_visible.load(Ordering::SeqCst) {
-            ctx.send_viewport_cmd(ViewportCommand::RequestPaintWhileHidden);
+        if !self.shared.lock().map(|s| s.settings.overlay_visible).unwrap_or(false) {
+            reset_overlay_desktop_cache();
         }
         // Reading age / snooze countdowns change over time even without new data.
         ctx.request_repaint_after(std::time::Duration::from_secs(30));
@@ -317,12 +415,26 @@ impl eframe::App for LibreLinkUpApp {
 
     fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
         let state = self.snapshot();
-        apply_theme(
-            ui.ctx(),
-            &state.settings.theme_mode,
+        let theme_key = (
+            state.settings.theme_mode.clone(),
             state.settings.ui_text_scale,
             state.settings.high_contrast_mode,
+            ui.visuals().dark_mode,
         );
+        if self.last_theme_key.as_ref() != Some(&theme_key) {
+            apply_theme(
+                ui.ctx(),
+                &state.settings.theme_mode,
+                state.settings.ui_text_scale,
+                state.settings.high_contrast_mode,
+            );
+            self.last_theme_key = Some((
+                theme_key.0,
+                theme_key.1,
+                theme_key.2,
+                ui.visuals().dark_mode,
+            ));
+        }
         self.handle_keyboard_shortcuts(ui.ctx(), &state);
 
         egui::Panel::top("header").show(ui, |ui| self.header(ui, &state));
@@ -931,13 +1043,7 @@ impl LibreLinkUpApp {
                 let low = s.effective_target_low(snap.target_low_mg_dl);
                 let high = s.effective_target_high(snap.target_high_mg_dl);
                 let now = now_epoch();
-                let stats = state.glucose_history.compute_stats(
-                    state.stats_window,
-                    now,
-                    low,
-                    high,
-                    Some(snap),
-                );
+                let stats = self.compute_cached_stats(state, now);
                 egui::Grid::new("details").num_columns(2).spacing([12.0, 5.0]).show(ui, |ui| {
                     ui.label("Target range");
                     ui.label(format_target_range(low, high, &s.result_unit));
@@ -1028,23 +1134,16 @@ impl LibreLinkUpApp {
         ui.add_space(10.0);
         egui::Frame::group(ui.style()).inner_margin(12).show(ui, |ui| {
             ui.label(RichText::new("Last 12 hours").strong());
-            glucose_graph(ui, state);
+            let now = now_epoch();
+            let points = self.cached_graph_points_for(state, now).to_vec();
+            glucose_graph(ui, state, &points, now);
         });
     }
 
     fn medications_view(&mut self, ui: &mut egui::Ui, state: &Shared) {
         let s = &state.settings;
-        let snap = &state.snapshot;
         let now = now_epoch();
-        let low = s.effective_target_low(snap.target_low_mg_dl);
-        let high = s.effective_target_high(snap.target_high_mg_dl);
-        let stats = state.glucose_history.compute_stats(
-            state.stats_window,
-            now,
-            low,
-            high,
-            Some(snap),
-        );
+        let stats = self.compute_cached_stats(state, now);
 
         ui.heading("Medications, Dose Log & Estimated A1C");
 
@@ -1307,32 +1406,39 @@ impl LibreLinkUpApp {
                     .weak(),
                 );
             } else {
-                for dose in state.medication_store.dose_logs.iter().take(25) {
-                    ui.horizontal(|ui| {
-                        let label_txt = if dose.skipped {
-                            format!("⏭ {} ({}) — Skipped", dose.medication_name, dose.dosage)
-                        } else {
-                            format!("💊 {} ({})", dose.medication_name, dose.dosage)
-                        };
-                        ui.label(RichText::new(label_txt).strong());
-                        let g_part = dose
-                            .glucose_mg_dl_at_dose
-                            .map(|g| format!(" • {:.0} mg/dL", g))
-                            .unwrap_or_default();
-                        ui.label(
-                            RichText::new(format!("{}{}", dose.taken_at_display, g_part)).small(),
-                        );
-                        ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
-                            if ui
-                                .button("🗑")
-                                .on_hover_text("Remove dose log entry")
-                                .clicked()
-                            {
-                                self.send(Command::RemoveMedicationDose(dose.id.clone()));
-                            }
-                        });
+                let total_rows = state.medication_store.dose_logs.len().min(200);
+                egui::ScrollArea::vertical()
+                    .id_salt("dose_history_scroll")
+                    .max_height(260.0)
+                    .show_rows(ui, 24.0, total_rows, |ui, row_range| {
+                        for idx in row_range {
+                            let dose = &state.medication_store.dose_logs[idx];
+                            ui.horizontal(|ui| {
+                                let label_txt = if dose.skipped {
+                                    format!("⏭ {} ({}) — Skipped", dose.medication_name, dose.dosage)
+                                } else {
+                                    format!("💊 {} ({})", dose.medication_name, dose.dosage)
+                                };
+                                ui.label(RichText::new(label_txt).strong());
+                                let g_part = dose
+                                    .glucose_mg_dl_at_dose
+                                    .map(|g| format!(" • {:.0} mg/dL", g))
+                                    .unwrap_or_default();
+                                ui.label(
+                                    RichText::new(format!("{}{}", dose.taken_at_display, g_part)).small(),
+                                );
+                                ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+                                    if ui
+                                        .button("🗑")
+                                        .on_hover_text("Remove dose log entry")
+                                        .clicked()
+                                    {
+                                        self.send(Command::RemoveMedicationDose(dose.id.clone()));
+                                    }
+                                });
+                            });
+                        }
                     });
-                }
             }
         });
     }
@@ -1573,6 +1679,21 @@ impl LibreLinkUpApp {
 
     fn alerts_view(&mut self, ui: &mut egui::Ui, state: &Shared) {
         let mut s = state.settings.clone();
+        if let Some(ref rx) = self.pending_sound_rx {
+            match rx.try_recv() {
+                Ok(Some(path)) => {
+                    s.custom_sound_path = path.display().to_string();
+                    self.pending_sound_rx = None;
+                }
+                Ok(None) => {
+                    self.pending_sound_rx = None;
+                }
+                Err(std::sync::mpsc::TryRecvError::Disconnected) => {
+                    self.pending_sound_rx = None;
+                }
+                Err(std::sync::mpsc::TryRecvError::Empty) => {}
+            }
+        }
         ui.heading("Alerts");
         egui::Frame::group(ui.style()).inner_margin(12).show(ui, |ui| {
             ui.checkbox(&mut s.audio_alert_enabled, "Play an alarm sound");
@@ -1581,13 +1702,21 @@ impl LibreLinkUpApp {
                 if s.use_custom_sound {
                     ui.horizontal(|ui| {
                         ui.add(egui::TextEdit::singleline(&mut s.custom_sound_path).desired_width(320.0));
-                        if ui.button("Browse…").clicked()
-                            && let Some(path) = rfd::FileDialog::new()
-                                .add_filter("Audio", &["wav", "mp3", "ogg"])
-                                .pick_file()
-                            {
-                                s.custom_sound_path = path.display().to_string();
-                            }
+                        let picking = self.pending_sound_rx.is_some();
+                        if ui.add_enabled(!picking, egui::Button::new("Browse…")).clicked() {
+                            let (tx, rx) = std::sync::mpsc::channel();
+                            let ui_handle = self.ui_handle.clone();
+                            self.pending_sound_rx = Some(rx);
+                            let _ = std::thread::Builder::new()
+                                .name("llu-file-dialog".into())
+                                .spawn(move || {
+                                    let picked = rfd::FileDialog::new()
+                                        .add_filter("Audio", &["wav", "mp3", "ogg"])
+                                        .pick_file();
+                                    let _ = tx.send(picked);
+                                    ui_handle.repaint_all();
+                                });
+                        }
                     });
                 }
             });
@@ -1698,6 +1827,14 @@ impl LibreLinkUpApp {
     }
 
     fn logs_view(&mut self, ui: &mut egui::Ui) {
+        if let Some(ref rx) = self.pending_export_rx {
+            match rx.try_recv() {
+                Ok(()) | Err(std::sync::mpsc::TryRecvError::Disconnected) => {
+                    self.pending_export_rx = None;
+                }
+                Err(std::sync::mpsc::TryRecvError::Empty) => {}
+            }
+        }
         ui.heading("Diagnostic Log");
         let levels = ["ALL", "INFO", "WARN", "ERROR"];
         ui.horizontal(|ui| {
@@ -1712,39 +1849,50 @@ impl LibreLinkUpApp {
             if ui.button("Clear").clicked() {
                 clear_events();
             }
-            if ui.button("Export…").clicked()
-                && let Some(path) = rfd::FileDialog::new()
-                    .set_file_name("librelinkup-windows.log")
-                    .add_filter("Log", &["log", "txt"])
-                    .save_file()
-                {
-                    let _ = export_events_to_path(&path);
-                }
+            let exporting = self.pending_export_rx.is_some();
+            if ui.add_enabled(!exporting, egui::Button::new("Export…")).clicked() {
+                let (tx, rx) = std::sync::mpsc::channel();
+                let ui_handle = self.ui_handle.clone();
+                self.pending_export_rx = Some(rx);
+                let _ = std::thread::Builder::new()
+                    .name("llu-export-dialog".into())
+                    .spawn(move || {
+                        if let Some(path) = rfd::FileDialog::new()
+                            .set_file_name("librelinkup-windows.log")
+                            .add_filter("Log", &["log", "txt"])
+                            .save_file()
+                        {
+                            let _ = export_events_to_path(&path);
+                        }
+                        let _ = tx.send(());
+                        ui_handle.repaint_all();
+                    });
+            }
         });
         ui.separator();
-        let filter = self.log_filter.to_lowercase();
-        let rank = |l: &str| match l {
-            "ERROR" => 3,
-            "WARN" => 2,
-            "INFO" => 1,
-            _ => 0,
-        };
-        let min = self.log_min_level;
-        for e in get_all_events().iter().rev() {
-            if rank(&e.level) < min {
-                continue;
-            }
-            let line = format!("{}  [{}] {}: {}", e.timestamp, e.level, e.category, e.message);
-            if !filter.is_empty() && !line.to_lowercase().contains(&filter) {
-                continue;
-            }
-            let color = match e.level.as_str() {
-                "ERROR" => Color32::from_rgb(239, 68, 68),
-                "WARN" => Color32::from_rgb(234, 179, 8),
-                _ => ui.visuals().text_color(),
-            };
-            ui.label(RichText::new(line).monospace().size(11.5).color(color));
+        self.ensure_cached_logs();
+        let row_count = self.cached_log_rows.len();
+        if row_count == 0 {
+            ui.label(RichText::new("No matching log entries.").weak());
+            return;
         }
+        let normal_color = ui.visuals().text_color();
+        let warn_color = Color32::from_rgb(234, 179, 8);
+        let err_color = Color32::from_rgb(239, 68, 68);
+        egui::ScrollArea::vertical()
+            .id_salt("logs_virtual_scroll")
+            .auto_shrink([false, false])
+            .show_rows(ui, 18.0, row_count, |ui, row_range| {
+                for idx in row_range {
+                    let (tag, line) = &self.cached_log_rows[idx];
+                    let color = match *tag {
+                        2 => err_color,
+                        1 => warn_color,
+                        _ => normal_color,
+                    };
+                    ui.label(RichText::new(line).monospace().size(11.5).color(color));
+                }
+            });
     }
 
     fn show_overlay(&self, ctx: &egui::Context) {
@@ -1811,7 +1959,7 @@ fn region_combo(ui: &mut egui::Ui, region: &mut String) {
 }
 
 /// 12-hour trend graph with target band and hover readout.
-fn glucose_graph(ui: &mut egui::Ui, state: &Shared) {
+fn glucose_graph(ui: &mut egui::Ui, state: &Shared, points: &[(i64, f64)], now: i64) {
     let s = &state.settings;
     let snap = &state.snapshot;
     let width = ui.available_width().max(300.0);
@@ -1820,15 +1968,7 @@ fn glucose_graph(ui: &mut egui::Ui, state: &Shared) {
     let visuals = ui.visuals().clone();
     painter.rect_filled(rect, CornerRadius::same(6), visuals.extreme_bg_color);
 
-    let now = now_epoch();
     let start = now - 12 * 3600;
-    let mut points: Vec<(i64, f64)> = snap
-        .graph_points
-        .iter()
-        .filter_map(|p| parse_libreview_timestamp(&p.timestamp, false).map(|t| (t, p.value_mg_dl)))
-        .filter(|(t, _)| *t >= start)
-        .collect();
-    points.sort_by_key(|(t, _)| *t);
     if points.is_empty() {
         painter.text(rect.center(), Align2::CENTER_CENTER, "No readings yet", FontId::proportional(14.0), visuals.weak_text_color());
         return;
@@ -2002,11 +2142,29 @@ impl LibreLinkUpApp {
     }
 }
 
+fn overlay_desktop_cache() -> &'static std::sync::Mutex<Option<(u64, bool)>> {
+    static CACHE: std::sync::OnceLock<std::sync::Mutex<Option<(u64, bool)>>> =
+        std::sync::OnceLock::new();
+    CACHE.get_or_init(|| std::sync::Mutex::new(None))
+}
+
+fn reset_overlay_desktop_cache() {
+    if let Ok(mut guard) = overlay_desktop_cache().lock() {
+        *guard = None;
+    }
+}
+
 /// Floating always-on-top overlay. Drag to move; scroll wheel adjusts transparency; right-click or buttons for options.
 fn overlay_ui(ui: &mut egui::Ui, shared: &SharedState, tx: &UnboundedSender<Command>, ui_handle: &Arc<UiHandle>) {
     let state = shared.lock().unwrap_or_else(|p| p.into_inner()).clone();
     let s = &state.settings;
-    crate::platform::set_overlay_all_desktops(s.overlay_on_all_desktops);
+    {
+        let mut cache = overlay_desktop_cache().lock().unwrap_or_else(|e| e.into_inner());
+        if *cache != Some((state.data_rev, s.overlay_on_all_desktops)) {
+            crate::platform::set_overlay_all_desktops(s.overlay_on_all_desktops);
+            *cache = Some((state.data_rev, s.overlay_on_all_desktops));
+        }
+    }
     let snap = &state.snapshot;
     let (label, color_hex, stale, age_text) = reading_status(&state);
 

@@ -18,9 +18,12 @@ use std::fmt;
 use std::fs;
 use std::num::NonZeroU32;
 use std::path::Path;
+#[cfg(unix)]
+use std::sync::Mutex;
 use std::sync::OnceLock;
 
 use ring::aead::{Aad, LessSafeKey, Nonce, UnboundKey, AES_256_GCM};
+use ring::hkdf;
 use ring::pbkdf2;
 use ring::rand::{SecureRandom, SystemRandom};
 use serde::{Deserialize, Serialize};
@@ -30,14 +33,15 @@ use crate::paths::{
     credentials_file_path, legacy_flatpak_leveldb_dir, master_key_file_path, write_file_atomic_0600,
 };
 
-/// Current envelope format: binds the KDF metadata into the AEAD associated data.
-const ENVELOPE_VERSION: u32 = 2;
-/// Legacy envelope format (static AAD, no metadata binding). Accepted for reads only.
+/// Current envelope format: AES-256-GCM with HKDF-SHA256 key derivation and bound metadata.
+const ENVELOPE_VERSION: u32 = 3;
+/// Legacy v2 envelope format (PBKDF2-HMAC-SHA256 + bound metadata). Accepted for reads only.
+const ENVELOPE_VERSION_V2: u32 = 2;
+/// Legacy v1 envelope format (PBKDF2-HMAC-SHA256 + static AAD). Accepted for credential reads only.
 const ENVELOPE_VERSION_V1: u32 = 1;
-/// Iterations written into new envelopes. See the module docs: the input is a random key,
-/// so this is domain separation rather than password hardening.
-const PBKDF2_ITERATIONS: u32 = 210_000;
-/// Envelopes claiming implausible iteration counts are rejected (DoS / downgrade guard).
+const KDF_HKDF_SHA256: &str = "HKDF-SHA256";
+const KDF_PBKDF2_SHA256: &str = "PBKDF2-HMAC-SHA256";
+/// Envelopes claiming implausible PBKDF2 iteration counts are rejected (DoS / downgrade guard).
 const PBKDF2_MIN_ACCEPTED_ITERATIONS: u32 = 1_000;
 const PBKDF2_MAX_ACCEPTED_ITERATIONS: u32 = 10_000_000;
 const SALT_LEN: usize = 16;
@@ -208,11 +212,13 @@ impl fmt::Debug for EncryptedEnvelope {
     }
 }
 
+const HEX_LOWER: &[u8; 16] = b"0123456789abcdef";
+
 pub fn bytes_to_hex(bytes: &[u8]) -> String {
     let mut out = String::with_capacity(bytes.len() * 2);
-    for b in bytes {
-        use std::fmt::Write;
-        let _ = write!(&mut out, "{b:02x}");
+    for &b in bytes {
+        out.push(HEX_LOWER[(b >> 4) as usize] as char);
+        out.push(HEX_LOWER[(b & 0x0f) as usize] as char);
     }
     out
 }
@@ -241,6 +247,30 @@ pub fn generate_random_key() -> Result<[u8; KEY_LEN], String> {
     Ok(key)
 }
 
+struct HkdfAes256KeyType;
+
+impl hkdf::KeyType for HkdfAes256KeyType {
+    fn len(&self) -> usize {
+        KEY_LEN
+    }
+}
+
+fn derive_hkdf_aes_key(
+    master_secret: &[u8],
+    salt: &[u8],
+    label: &str,
+) -> Result<[u8; KEY_LEN], String> {
+    let prk = hkdf::Salt::new(hkdf::HKDF_SHA256, salt).extract(master_secret);
+    let info = [label.as_bytes(), b":v3:aes256gcm"];
+    let okm = prk
+        .expand(&info, HkdfAes256KeyType)
+        .map_err(|_| "HKDF key expansion failed".to_string())?;
+    let mut key = [0u8; KEY_LEN];
+    okm.fill(&mut key)
+        .map_err(|_| "HKDF key material extraction failed".to_string())?;
+    Ok(key)
+}
+
 fn derive_aes_key(
     master_secret: &[u8],
     salt: &[u8],
@@ -264,22 +294,30 @@ fn derive_aes_key(
 }
 
 /// Builds the AEAD associated data for an envelope. Format v1 used a fixed context;
-/// format v2 binds the label plus the KDF parameters so they cannot be tampered with
-/// (or swapped between the credential and health-data vaults) without failing the tag.
+/// formats v2 and v3 bind the label, KDF parameters, and salt so they cannot be tampered
+/// with (or swapped between vaults) without failing the authentication tag.
 fn associated_data(version: u32, label: &str, iterations: u32, salt: &[u8]) -> Vec<u8> {
     if version == ENVELOPE_VERSION_V1 {
         return AAD_CONTEXT_V1.to_vec();
     }
-    let mut aad = Vec::with_capacity(32 + label.len() + salt.len());
+    let mut aad = Vec::with_capacity(48 + label.len() + salt.len());
     aad.extend_from_slice(b"librelinkup-kde-");
     aad.extend_from_slice(label.as_bytes());
-    aad.extend_from_slice(b"-v2\0");
-    aad.extend_from_slice(&iterations.to_le_bytes());
-    aad.extend_from_slice(salt);
+    if version == ENVELOPE_VERSION {
+        aad.extend_from_slice(b"-v3\0");
+        aad.extend_from_slice(KDF_HKDF_SHA256.as_bytes());
+        aad.push(0);
+        aad.extend_from_slice(&iterations.to_le_bytes());
+        aad.extend_from_slice(salt);
+    } else {
+        aad.extend_from_slice(b"-v2\0");
+        aad.extend_from_slice(&iterations.to_le_bytes());
+        aad.extend_from_slice(salt);
+    }
     aad
 }
 
-/// Encrypts arbitrary plaintext bytes into an [`EncryptedEnvelope`].
+/// Encrypts arbitrary plaintext bytes into an [`EncryptedEnvelope`] (format v3, HKDF-SHA256).
 pub fn encrypt_bytes_with_secret(
     plaintext: &[u8],
     master_secret: &[u8],
@@ -296,14 +334,14 @@ pub fn encrypt_bytes_with_secret(
     rng.fill(&mut nonce_bytes)
         .map_err(|_| "CSPRNG failure generating nonce".to_string())?;
 
-    let mut derived_key = derive_aes_key(master_secret, &salt, PBKDF2_ITERATIONS)?;
+    let mut derived_key = derive_hkdf_aes_key(master_secret, &salt, label)?;
     let unbound_key = UnboundKey::new(&AES_256_GCM, &derived_key)
         .map_err(|_| "Failed to initialize AES-256-GCM key".to_string())?;
     derived_key.zeroize();
 
     let key = LessSafeKey::new(unbound_key);
     let nonce = Nonce::assume_unique_for_key(nonce_bytes);
-    let aad = associated_data(ENVELOPE_VERSION, label, PBKDF2_ITERATIONS, &salt);
+    let aad = associated_data(ENVELOPE_VERSION, label, 0, &salt);
 
     let mut in_out = plaintext.to_vec();
     if key
@@ -320,21 +358,24 @@ pub fn encrypt_bytes_with_secret(
     Ok(EncryptedEnvelope {
         version: ENVELOPE_VERSION,
         algorithm: "AES-256-GCM".to_string(),
-        kdf: "PBKDF2-HMAC-SHA256".to_string(),
-        iterations: PBKDF2_ITERATIONS,
+        kdf: KDF_HKDF_SHA256.to_string(),
+        iterations: 0,
         salt_hex: bytes_to_hex(&salt),
         nonce_hex: bytes_to_hex(&nonce_bytes),
         ciphertext_hex,
     })
 }
 
-/// Decrypts an [`EncryptedEnvelope`] back into plaintext bytes.
+/// Decrypts an [`EncryptedEnvelope`] (v1, v2 PBKDF2, or v3 HKDF) back into plaintext bytes.
 pub fn decrypt_bytes_with_secret(
     envelope: &EncryptedEnvelope,
     master_secret: &[u8],
     label: &str,
 ) -> Result<Vec<u8>, String> {
-    if envelope.version != ENVELOPE_VERSION && envelope.version != ENVELOPE_VERSION_V1 {
+    if envelope.version != ENVELOPE_VERSION
+        && envelope.version != ENVELOPE_VERSION_V2
+        && envelope.version != ENVELOPE_VERSION_V1
+    {
         return Err(format!("Unsupported envelope version: {}", envelope.version));
     }
     if envelope.version == ENVELOPE_VERSION_V1 && label != AAD_LABEL_CREDENTIALS {
@@ -345,9 +386,6 @@ pub fn decrypt_bytes_with_secret(
             "Unsupported cipher algorithm: {}",
             envelope.algorithm
         ));
-    }
-    if envelope.kdf != "PBKDF2-HMAC-SHA256" {
-        return Err(format!("Unsupported key derivation: {}", envelope.kdf));
     }
     if master_secret.is_empty() {
         return Err("Master secret must not be empty".to_string());
@@ -367,11 +405,39 @@ pub fn decrypt_bytes_with_secret(
         return Err("Ciphertext is shorter than authentication tag".to_string());
     }
 
-    // Honour the iteration count recorded in the envelope (forward compatibility) rather
-    // than assuming the current default, which would break every older vault.
     let iterations = envelope.iterations;
+    let mut derived_key = if envelope.version == ENVELOPE_VERSION {
+        if envelope.kdf != KDF_HKDF_SHA256 {
+            ciphertext.zeroize();
+            return Err(format!("Unsupported key derivation: {}", envelope.kdf));
+        }
+        if iterations != 0 {
+            ciphertext.zeroize();
+            return Err(format!(
+                "Invalid iteration count {iterations} for {KDF_HKDF_SHA256} envelope"
+            ));
+        }
+        match derive_hkdf_aes_key(master_secret, &salt, label) {
+            Ok(k) => k,
+            Err(e) => {
+                ciphertext.zeroize();
+                return Err(e);
+            }
+        }
+    } else {
+        if envelope.kdf != KDF_PBKDF2_SHA256 {
+            ciphertext.zeroize();
+            return Err(format!("Unsupported key derivation: {}", envelope.kdf));
+        }
+        match derive_aes_key(master_secret, &salt, iterations) {
+            Ok(k) => k,
+            Err(e) => {
+                ciphertext.zeroize();
+                return Err(e);
+            }
+        }
+    };
 
-    let mut derived_key = derive_aes_key(master_secret, &salt, iterations)?;
     let unbound_key = match UnboundKey::new(&AES_256_GCM, &derived_key) {
         Ok(k) => {
             derived_key.zeroize();
@@ -602,6 +668,38 @@ fn try_keyring_store(hex_secret: &str) -> bool {
     try_pipe(kwallet)
 }
 
+#[cfg(unix)]
+fn try_keyring_store_cached(hex_secret: &str) -> bool {
+    static MIRRORED_DIGEST: OnceLock<Mutex<Option<[u8; 32]>>> = OnceLock::new();
+    let d = ring::digest::digest(&ring::digest::SHA256, hex_secret.as_bytes());
+    let mut digest_arr = [0u8; 32];
+    digest_arr.copy_from_slice(d.as_ref());
+
+    let lock = MIRRORED_DIGEST.get_or_init(|| Mutex::new(None));
+    {
+        let guard = lock.lock().unwrap_or_else(|e| e.into_inner());
+        if *guard == Some(digest_arr) {
+            return true;
+        }
+    }
+    let ok = try_keyring_store(hex_secret);
+    if ok {
+        let mut guard = lock.lock().unwrap_or_else(|e| e.into_inner());
+        *guard = Some(digest_arr);
+    }
+    ok
+}
+
+fn cached_machine_id() -> &'static str {
+    static MACHINE_ID: OnceLock<String> = OnceLock::new();
+    MACHINE_ID.get_or_init(|| {
+        fs::read_to_string("/etc/machine-id")
+            .unwrap_or_else(|_| "librelinkup-kde-fallback-machine-id".to_string())
+            .trim()
+            .to_string()
+    })
+}
+
 /// Loads (or creates on first run) the file/keyring master secret used by the vaults.
 ///
 /// **Never silently rotates the key.** If a vault already exists but no key can be
@@ -639,8 +737,7 @@ pub fn load_or_create_master_secret_for_vaults(
     key_path: &Path,
     guarded_vaults: &[&Path],
 ) -> Result<Zeroizing<Vec<u8>>, String> {
-    let machine_id = fs::read_to_string("/etc/machine-id")
-        .unwrap_or_else(|_| "librelinkup-kde-fallback-machine-id".to_string());
+    let machine_id = cached_machine_id();
 
     #[cfg(unix)]
     let use_keyring = should_use_desktop_keyring(key_path);
@@ -667,10 +764,10 @@ pub fn load_or_create_master_secret_for_vaults(
             Ok(bytes) => {
                 // Keep the 0600 master.key file on disk so both host and Flatpak launches (and
                 // early login autostart before keyring unlock) share the exact same key, while
-                // mirroring into Secret Service / KWallet as backup.
+                // mirroring into Secret Service / KWallet once per key digest.
                 #[cfg(unix)]
                 if use_keyring {
-                    let _ = try_keyring_store(&trimmed);
+                    let _ = try_keyring_store_cached(&trimmed);
                 }
                 Zeroizing::new(bytes)
             }
@@ -733,7 +830,7 @@ pub fn load_or_create_master_secret_for_vaults(
                 .map_err(|e| format!("Failed to write master key file: {e}"))?;
             #[cfg(unix)]
             if use_keyring {
-                let _ = try_keyring_store(&hex_str);
+                let _ = try_keyring_store_cached(&hex_str);
             }
             Zeroizing::new(parse_valid_key_hex(&hex_str)?)
         }
@@ -742,7 +839,7 @@ pub fn load_or_create_master_secret_for_vaults(
     let mut combined = Vec::with_capacity(file_secret.len() + machine_id.len() + 32);
     combined.extend_from_slice(&file_secret);
     combined.extend_from_slice(b":librelinkup-kde:");
-    combined.extend_from_slice(machine_id.trim().as_bytes());
+    combined.extend_from_slice(machine_id.as_bytes());
     Ok(Zeroizing::new(combined))
 }
 
@@ -975,26 +1072,68 @@ mod tests {
         let secret = b"envelope-test-secret";
         let env = encrypt_bytes_with_secret(b"hello vault", secret, AAD_LABEL_MEDICATIONS).unwrap();
         assert_eq!(env.version, ENVELOPE_VERSION);
+        assert_eq!(env.kdf, KDF_HKDF_SHA256);
+        assert_eq!(env.iterations, 0);
         assert_eq!(
             decrypt_bytes_with_secret(&env, secret, AAD_LABEL_MEDICATIONS).unwrap(),
             b"hello vault"
         );
 
-        // Wrong label (vault cross-use) must fail the tag check.
+        // Wrong label (vault cross-use) must fail both HKDF info and AAD tag checks.
         assert!(decrypt_bytes_with_secret(&env, secret, AAD_LABEL_GLUCOSE_HISTORY).is_err());
 
-        // Tampering with the recorded iteration count must fail authentication.
-        let mut tampered = env.clone();
-        tampered.iterations = env.iterations + 1;
-        assert!(decrypt_bytes_with_secret(&tampered, secret, AAD_LABEL_MEDICATIONS).is_err());
+        // Tampering with KDF or iterations on v3 envelopes must fail.
+        let mut tampered_iter = env.clone();
+        tampered_iter.iterations = 1;
+        assert!(decrypt_bytes_with_secret(&tampered_iter, secret, AAD_LABEL_MEDICATIONS).is_err());
 
-        // Implausible iteration counts are rejected outright.
-        let mut downgraded = env.clone();
-        downgraded.iterations = 0;
-        assert!(decrypt_bytes_with_secret(&downgraded, secret, AAD_LABEL_MEDICATIONS).is_err());
+        let mut tampered_kdf = env.clone();
+        tampered_kdf.kdf = KDF_PBKDF2_SHA256.to_string();
+        assert!(decrypt_bytes_with_secret(&tampered_kdf, secret, AAD_LABEL_MEDICATIONS).is_err());
 
         // Wrong key must fail.
         assert!(decrypt_bytes_with_secret(&env, b"other-secret", AAD_LABEL_MEDICATIONS).is_err());
+    }
+
+    #[test]
+    fn legacy_v2_envelopes_still_decrypt_and_bind_metadata() {
+        let secret = b"legacy-v2-secret";
+        let salt = [5u8; SALT_LEN];
+        let nonce = [11u8; NONCE_LEN];
+        let iterations = 10_000u32;
+        let mut derived = derive_aes_key(secret, &salt, iterations).unwrap();
+        let key = LessSafeKey::new(UnboundKey::new(&AES_256_GCM, &derived).unwrap());
+        derived.zeroize();
+        let mut ct = b"v2-plaintext".to_vec();
+        let aad = associated_data(ENVELOPE_VERSION_V2, AAD_LABEL_MEDICATIONS, iterations, &salt);
+        key.seal_in_place_append_tag(
+            Nonce::assume_unique_for_key(nonce),
+            Aad::from(aad.as_slice()),
+            &mut ct,
+        )
+        .unwrap();
+        let env = EncryptedEnvelope {
+            version: ENVELOPE_VERSION_V2,
+            algorithm: "AES-256-GCM".into(),
+            kdf: KDF_PBKDF2_SHA256.into(),
+            iterations,
+            salt_hex: bytes_to_hex(&salt),
+            nonce_hex: bytes_to_hex(&nonce),
+            ciphertext_hex: bytes_to_hex(&ct),
+        };
+        assert_eq!(
+            decrypt_bytes_with_secret(&env, secret, AAD_LABEL_MEDICATIONS).unwrap(),
+            b"v2-plaintext"
+        );
+        assert!(decrypt_bytes_with_secret(&env, secret, AAD_LABEL_GLUCOSE_HISTORY).is_err());
+
+        let mut tampered = env.clone();
+        tampered.iterations += 1;
+        assert!(decrypt_bytes_with_secret(&tampered, secret, AAD_LABEL_MEDICATIONS).is_err());
+
+        let mut downgraded = env;
+        downgraded.iterations = 0;
+        assert!(decrypt_bytes_with_secret(&downgraded, secret, AAD_LABEL_MEDICATIONS).is_err());
     }
 
     #[test]

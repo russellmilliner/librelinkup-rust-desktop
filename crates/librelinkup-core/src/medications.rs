@@ -374,35 +374,51 @@ impl MedicationStore {
     /// Removes accidental duplicate dose logs for the same medication recorded within 60 seconds
     /// of each other (or within 10 minutes when logged/skipped from a desktop reminder action).
     pub fn deduplicate_dose_logs(&mut self) -> bool {
+        use std::collections::HashMap;
+
         if self.dose_logs.len() < 2 {
             return false;
         }
         let before_len = self.dose_logs.len();
         self.dose_logs.sort_by_key(|d| d.taken_at_epoch);
         let mut kept: Vec<MedicationDoseLog> = Vec::with_capacity(before_len);
+        let mut last_by_id: HashMap<(String, bool), usize> = HashMap::new();
+        let mut last_by_name: HashMap<(String, bool), usize> = HashMap::new();
+
+        let matches_dup = |prev: &MedicationDoseLog, entry: &MedicationDoseLog| -> bool {
+            let dt = entry.taken_at_epoch.abs_diff(prev.taken_at_epoch);
+            let from_reminder =
+                entry.notes.contains("desktop reminder") || prev.notes.contains("desktop reminder");
+            if from_reminder {
+                dt < 600
+            } else {
+                dt < 60
+            }
+        };
+
         for entry in self.dose_logs.drain(..) {
-            let is_dup = kept.iter().rev().any(|prev| {
-                let same_med = (!entry.medication_id.is_empty()
-                    && entry.medication_id != "adhoc"
-                    && prev.medication_id == entry.medication_id)
-                    || prev.medication_name.eq_ignore_ascii_case(&entry.medication_name);
-                if !same_med || prev.skipped != entry.skipped {
-                    return false;
+            let id_key = (!entry.medication_id.is_empty() && entry.medication_id != "adhoc")
+                .then(|| (entry.medication_id.clone(), entry.skipped));
+            let name_key = (entry.medication_name.to_ascii_lowercase(), entry.skipped);
+
+            let dup_by_id = id_key
+                .as_ref()
+                .and_then(|k| last_by_id.get(k))
+                .is_some_and(|&idx| matches_dup(&kept[idx], &entry));
+            let dup_by_name = last_by_name
+                .get(&name_key)
+                .is_some_and(|&idx| matches_dup(&kept[idx], &entry));
+
+            if !dup_by_id && !dup_by_name {
+                let idx = kept.len();
+                if let Some(k) = id_key {
+                    last_by_id.insert(k, idx);
                 }
-                let dt = entry.taken_at_epoch.abs_diff(prev.taken_at_epoch);
-                let from_reminder = entry.notes.contains("desktop reminder")
-                    || prev.notes.contains("desktop reminder");
-                if from_reminder {
-                    dt < 600
-                } else {
-                    dt < 60
-                }
-            });
-            if !is_dup {
+                last_by_name.insert(name_key, idx);
                 kept.push(entry);
             }
         }
-        kept.sort_by_key(|d| std::cmp::Reverse(d.taken_at_epoch));
+        kept.reverse();
         let changed = kept.len() != before_len;
         self.dose_logs = kept;
         changed

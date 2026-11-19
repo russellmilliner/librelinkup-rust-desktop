@@ -73,13 +73,9 @@ pub fn current_settings(state: &AppState) -> AppSettings {
     s
 }
 
-/// Persists the live state's settings to disk.
+/// Persists the live state's settings to disk without re-reading `settings.json`.
 pub fn persist_settings(state: &AppState) -> Result<(), String> {
-    let disk = crate::models::load_default_settings();
-    let mut s = current_settings(state);
-    if !disk.tray_icon_theme.is_empty() {
-        s.tray_icon_theme = disk.tray_icon_theme;
-    }
+    let s = current_settings(state);
     crate::models::save_default_settings(&s)
 }
 
@@ -235,8 +231,12 @@ pub fn refresh_logs(state: &mut AppState) {
 }
 
 /// Persists the glucose history vault at most once per [`HISTORY_PERSIST_MIN_INTERVAL_SECS`]
-/// (or immediately when `force` is set). Refuses to overwrite if the vault failed to load at startup.
+/// (or immediately when `force` is set). Non-forced saves run on the blocking worker pool so
+/// large multi-month vaults do not stall the Qt GUI thread. Refuses to overwrite if the vault
+/// failed to load at startup.
 pub fn persist_history_if_due(state: &mut AppState, force: bool) {
+    static HISTORY_SAVE_LOCK: std::sync::OnceLock<std::sync::Mutex<()>> = std::sync::OnceLock::new();
+
     if state.history_vault_load_failed {
         if force {
             crate::event_log::log_warn(
@@ -250,6 +250,23 @@ pub fn persist_history_if_due(state: &mut AppState, force: bool) {
     if !force && now - state.last_history_persist_epoch < HISTORY_PERSIST_MIN_INTERVAL_SECS {
         return;
     }
+    if !force && let Some(rt) = crate::bridge::autostart::background_runtime() {
+        let store_clone = state.glucose_history.clone();
+        state.last_history_persist_epoch = now;
+        rt.spawn_blocking(move || {
+            let lock = HISTORY_SAVE_LOCK.get_or_init(|| std::sync::Mutex::new(()));
+            let _guard = lock.lock().unwrap_or_else(|e| e.into_inner());
+            if let Err(e) = save_default_glucose_history(&store_clone) {
+                crate::event_log::log_error(
+                    "CRYPTO",
+                    format!("Failed to persist glucose history vault: {e}"),
+                );
+            }
+        });
+        return;
+    }
+    let lock = HISTORY_SAVE_LOCK.get_or_init(|| std::sync::Mutex::new(()));
+    let _guard = lock.lock().unwrap_or_else(|e| e.into_inner());
     match save_default_glucose_history(&state.glucose_history) {
         Ok(()) => state.last_history_persist_epoch = now,
         Err(e) => crate::event_log::log_error(

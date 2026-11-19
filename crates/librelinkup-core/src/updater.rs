@@ -1,7 +1,6 @@
 //! Update checker against GitHub Releases (`russellmilliner/librelinkup-rust-desktop`).
 
 use std::collections::HashMap;
-use std::fmt::Write as _;
 use std::path::PathBuf;
 use std::process::Command;
 use std::sync::OnceLock;
@@ -97,11 +96,7 @@ pub fn is_trusted_github_release_url(url: &str) -> bool {
 /// Computes the lowercase 64-character hex SHA-256 digest of `bytes`.
 pub fn compute_sha256_hex(bytes: &[u8]) -> String {
     let digest = ring::digest::digest(&ring::digest::SHA256, bytes);
-    let mut hex = String::with_capacity(64);
-    for b in digest.as_ref() {
-        let _ = write!(&mut hex, "{b:02x}");
-    }
-    hex
+    crate::crypto::bytes_to_hex(digest.as_ref())
 }
 
 /// Parses a `.sha256` checksum file (`<64-hex>  <filename>` or `<64-hex>`) and returns

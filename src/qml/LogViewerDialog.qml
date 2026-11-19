@@ -321,6 +321,16 @@ Item {
                 }
             }
 
+            Timer {
+                id: searchDebounceTimer
+                interval: 150
+                repeat: false
+                onTriggered: {
+                    logViewerDialog.searchQuery = searchField.text
+                    logViewerDialog.refreshModel()
+                }
+            }
+
             QQC2.TextField {
                 id: searchField
                 objectName: "logSearchField"
@@ -328,10 +338,7 @@ Item {
                 Layout.minimumWidth: 120
                 placeholderText: qsTr("Search timestamps, categories, or messages...")
                 Accessible.name: qsTr("Search diagnostic log messages")
-                onTextChanged: {
-                    logViewerDialog.searchQuery = text
-                    logViewerDialog.refreshModel()
-                }
+                onTextChanged: searchDebounceTimer.restart()
             }
 
             QQC2.Button {

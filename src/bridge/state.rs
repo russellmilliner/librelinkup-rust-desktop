@@ -25,6 +25,8 @@
 
 use std::cell::RefCell;
 use std::collections::HashMap;
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::{Mutex, OnceLock};
 
 use crate::analytics::GlucoseHistoryStore;
 use crate::crypto::StoredCredentials;
@@ -362,6 +364,45 @@ thread_local! {
     static STATE: RefCell<AppState> = RefCell::new(AppState::default());
 }
 
+type TelemetryQtThread =
+    cxx_qt::CxxQtThread<crate::bridge::qobject_bridge::qobject::TelemetryController>;
+
+static TELEMETRY_QT_THREAD: OnceLock<Mutex<Option<TelemetryQtThread>>> = OnceLock::new();
+static DIRTY_TICK_QUEUED: AtomicBool = AtomicBool::new(false);
+
+/// Registers the active `TelemetryController` Qt thread handle so state mutations across
+/// controllers and async tasks can trigger an event-driven refresh without QML polling.
+pub fn register_telemetry_qt_thread(qt_thread: TelemetryQtThread) {
+    let slot = TELEMETRY_QT_THREAD.get_or_init(|| Mutex::new(None));
+    *slot.lock().unwrap_or_else(|e| e.into_inner()) = Some(qt_thread);
+    DIRTY_TICK_QUEUED.store(false, Ordering::Release);
+}
+
+/// Coalesces cross-controller and background state changes into a single queued
+/// `TelemetryController::tick()` invocation on the Qt GUI thread.
+pub fn mark_state_dirty() {
+    let Some(slot) = TELEMETRY_QT_THREAD.get() else {
+        return;
+    };
+    let qt_thread = {
+        let guard = slot.lock().unwrap_or_else(|e| e.into_inner());
+        guard.as_ref().cloned()
+    };
+    let Some(qt_thread) = qt_thread else {
+        return;
+    };
+    if !DIRTY_TICK_QUEUED.swap(true, Ordering::AcqRel)
+        && qt_thread
+            .queue(|qobject| {
+                DIRTY_TICK_QUEUED.store(false, Ordering::Release);
+                qobject.tick();
+            })
+            .is_err()
+    {
+        DIRTY_TICK_QUEUED.store(false, Ordering::Release);
+    }
+}
+
 /// Runs `f` against the shared state. **Qt GUI thread only** - see the module docs.
 pub fn with_state<R>(f: impl FnOnce(&mut AppState) -> R) -> R {
     STATE.with(|cell| f(&mut cell.borrow_mut()))
@@ -369,6 +410,7 @@ pub fn with_state<R>(f: impl FnOnce(&mut AppState) -> R) -> R {
 
 /// Replaces the shared state (used by tests that need a clean slate).
 pub fn reset_state() {
+    DIRTY_TICK_QUEUED.store(false, Ordering::Release);
     STATE.with(|cell| *cell.borrow_mut() = AppState::default());
 }
 

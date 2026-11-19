@@ -270,29 +270,52 @@ impl GlucoseHistoryStore {
         }
 
         // Merge in place: `self.samples` stays sorted by epoch, so each incoming sample is
-        // either a new bucket (insert) or an update to an existing bucket (replace). This is
-        // O(n log n) per inserted sample instead of re-sorting the whole vector every poll.
+        // either a new bucket (insert) or an update to an existing bucket (replace).
         incoming.sort_by_key(|s| s.epoch);
-        for sample in incoming {
-            match self.samples.binary_search_by_key(&sample.epoch, |s| s.epoch) {
-                Ok(idx) => {
-                    if self.samples[idx].value_mg_dl != sample.value_mg_dl {
-                        self.samples[idx].value_mg_dl = sample.value_mg_dl;
+        let tail_epoch = self.samples.last().map_or(i64::MIN, |s| s.epoch);
+        if let Some(first_inc) = incoming.first()
+            && first_inc.epoch > tail_epoch
+        {
+            // Fast path: all incoming points are strictly newer than existing history.
+            for sample in incoming {
+                if self.samples.last().is_some_and(|s| s.epoch == sample.epoch) {
+                    if let Some(last) = self.samples.last_mut() {
+                        last.value_mg_dl = sample.value_mg_dl;
+                    }
+                } else {
+                    self.samples.push(sample);
+                }
+            }
+            changed = true;
+        } else {
+            for sample in incoming {
+                match self.samples.binary_search_by_key(&sample.epoch, |s| s.epoch) {
+                    Ok(idx) => {
+                        if self.samples[idx].value_mg_dl != sample.value_mg_dl {
+                            self.samples[idx].value_mg_dl = sample.value_mg_dl;
+                            changed = true;
+                        }
+                    }
+                    Err(idx) => {
+                        self.samples.insert(idx, sample);
                         changed = true;
                     }
-                }
-                Err(idx) => {
-                    self.samples.insert(idx, sample);
-                    changed = true;
                 }
             }
         }
 
-        let before_prune = self.samples.len();
-        self.samples
-            .retain(|s| s.epoch >= cutoff && s.value_mg_dl > 0.0);
-        if self.samples.len() != before_prune {
+        let drop_front = self.samples.partition_point(|s| s.epoch < cutoff);
+        if drop_front > 0 {
+            self.samples.drain(0..drop_front);
             changed = true;
+        }
+        if self.samples.iter().any(|s| s.value_mg_dl <= 0.0 || s.epoch < cutoff) {
+            let before_prune = self.samples.len();
+            self.samples
+                .retain(|s| s.epoch >= cutoff && s.value_mg_dl > 0.0);
+            if self.samples.len() != before_prune {
+                changed = true;
+            }
         }
 
         if self.samples.len() > MAX_HISTORY_SAMPLES {
@@ -315,106 +338,147 @@ impl GlucoseHistoryStore {
         fallback_snapshot: Option<&GlucoseSnapshot>,
     ) -> GlycemicStats {
         let cutoff = now_epoch - window.duration_seconds();
-        let mut values: Vec<(i64, f64)> = self
+        let max_epoch_bound = now_epoch + 3600;
+        let start = self.samples.partition_point(|s| s.epoch < cutoff);
+        let end = self
             .samples
-            .iter()
-            .filter(|s| s.epoch >= cutoff && s.epoch <= now_epoch + 3600 && s.value_mg_dl > 0.0)
-            .map(|s| (s.epoch, s.value_mg_dl))
-            .collect();
+            .partition_point(|s| s.epoch <= max_epoch_bound);
+        let slice = if start <= end {
+            &self.samples[start..end]
+        } else {
+            &[]
+        };
 
-        if values.is_empty()
-            && let Some(snap) = fallback_snapshot {
-                for (idx, pt) in snap.graph_points.iter().enumerate() {
-                    if pt.value_mg_dl.is_finite() && pt.value_mg_dl > 0.0 {
-                        let ep = parse_libreview_timestamp(&pt.timestamp, false).unwrap_or_else(
-                            || {
-                                let rem = snap.graph_points.len().saturating_sub(1 + idx) as i64;
-                                now_epoch - rem * 15 * 60
-                            },
-                        );
-                        values.push((ep, pt.value_mg_dl));
-                    }
-                }
-                if values.is_empty() && snap.value_mg_dl.is_finite() && snap.value_mg_dl > 0.0 {
-                    values.push((
-                        snap.measured_at_epoch.unwrap_or(now_epoch),
-                        snap.value_mg_dl,
-                    ));
+        if slice.iter().any(|s| s.value_mg_dl > 0.0) {
+            return compute_stats_over_pairs(
+                window,
+                target_low_mg_dl,
+                target_high_mg_dl,
+                slice
+                    .iter()
+                    .filter(|s| s.value_mg_dl > 0.0)
+                    .map(|s| (s.epoch, s.value_mg_dl)),
+            );
+        }
+
+        let mut fallback_values: Vec<(i64, f64)> = Vec::new();
+        if let Some(snap) = fallback_snapshot {
+            for (idx, pt) in snap.graph_points.iter().enumerate() {
+                if pt.value_mg_dl.is_finite() && pt.value_mg_dl > 0.0 {
+                    let ep = parse_libreview_timestamp(&pt.timestamp, false).unwrap_or_else(|| {
+                        let rem = snap.graph_points.len().saturating_sub(1 + idx) as i64;
+                        now_epoch - rem * 15 * 60
+                    });
+                    fallback_values.push((ep, pt.value_mg_dl));
                 }
             }
+            if fallback_values.is_empty()
+                && snap.value_mg_dl.is_finite()
+                && snap.value_mg_dl > 0.0
+            {
+                fallback_values.push((
+                    snap.measured_at_epoch.unwrap_or(now_epoch),
+                    snap.value_mg_dl,
+                ));
+            }
+        }
 
-        if values.is_empty() {
+        if fallback_values.is_empty() {
             return GlycemicStats {
                 window: Some(window),
                 ..Default::default()
             };
         }
 
-        let n = values.len() as f64;
-        let min_epoch = values.iter().map(|(e, _)| *e).min().unwrap_or(now_epoch);
-        let max_epoch = values.iter().map(|(e, _)| *e).max().unwrap_or(now_epoch);
-        let span_hours = ((max_epoch - min_epoch).max(0) as f64) / 3600.0;
+        compute_stats_over_pairs(
+            window,
+            target_low_mg_dl,
+            target_high_mg_dl,
+            fallback_values.iter().copied(),
+        )
+    }
+}
 
-        let sum: f64 = values.iter().map(|(_, v)| *v).sum();
-        let mean_mg_dl = sum / n;
+fn compute_stats_over_pairs(
+    window: StatsWindow,
+    target_low_mg_dl: f64,
+    target_high_mg_dl: f64,
+    points: impl Iterator<Item = (i64, f64)> + Clone,
+) -> GlycemicStats {
+    let mut count = 0usize;
+    let mut min_epoch = i64::MAX;
+    let mut max_epoch = i64::MIN;
+    let mut sum = 0.0_f64;
 
-        let variance: f64 = values
-            .iter()
-            .map(|(_, v)| {
-                let d = *v - mean_mg_dl;
-                d * d
-            })
-            .sum::<f64>()
-            / n;
-        let std_dev_mg_dl = variance.sqrt();
-        let cv_percent = if mean_mg_dl > 0.0 {
-            (std_dev_mg_dl / mean_mg_dl) * 100.0
-        } else {
-            0.0
-        };
+    for (ep, val) in points.clone() {
+        count += 1;
+        min_epoch = min_epoch.min(ep);
+        max_epoch = max_epoch.max(ep);
+        sum += val;
+    }
 
-        let low = if target_low_mg_dl > 0.0 {
-            target_low_mg_dl
-        } else {
-            70.0
-        };
-        let high = if target_high_mg_dl > low {
-            target_high_mg_dl
-        } else {
-            180.0
-        };
-
-        let mut below_count = 0usize;
-        let mut above_count = 0usize;
-        let mut in_range_count = 0usize;
-        for (_, v) in &values {
-            if *v < low {
-                below_count += 1;
-            } else if *v > high {
-                above_count += 1;
-            } else {
-                in_range_count += 1;
-            }
-        }
-
-        let ea1c_percent = calculate_ea1c_adag(mean_mg_dl);
-        let gmi_percent = calculate_gmi(mean_mg_dl);
-
-        GlycemicStats {
+    if count == 0 {
+        return GlycemicStats {
             window: Some(window),
-            sample_count: values.len(),
-            span_hours,
-            mean_mg_dl,
-            std_dev_mg_dl,
-            cv_percent,
-            ea1c_percent,
-            ea1c_mmol_mol: a1c_percent_to_mmol_mol(ea1c_percent),
-            gmi_percent,
-            gmi_mmol_mol: a1c_percent_to_mmol_mol(gmi_percent),
-            tir_in_range_percent: (in_range_count as f64 / n) * 100.0,
-            tir_below_percent: (below_count as f64 / n) * 100.0,
-            tir_above_percent: (above_count as f64 / n) * 100.0,
+            ..Default::default()
+        };
+    }
+
+    let n = count as f64;
+    let span_hours = ((max_epoch - min_epoch).max(0) as f64) / 3600.0;
+    let mean_mg_dl = sum / n;
+
+    let low = if target_low_mg_dl > 0.0 {
+        target_low_mg_dl
+    } else {
+        70.0
+    };
+    let high = if target_high_mg_dl > low {
+        target_high_mg_dl
+    } else {
+        180.0
+    };
+
+    let mut variance_sum = 0.0_f64;
+    let mut below_count = 0usize;
+    let mut above_count = 0usize;
+    let mut in_range_count = 0usize;
+    for (_, val) in points {
+        let d = val - mean_mg_dl;
+        variance_sum += d * d;
+        if val < low {
+            below_count += 1;
+        } else if val > high {
+            above_count += 1;
+        } else {
+            in_range_count += 1;
         }
+    }
+
+    let std_dev_mg_dl = (variance_sum / n).sqrt();
+    let cv_percent = if mean_mg_dl > 0.0 {
+        (std_dev_mg_dl / mean_mg_dl) * 100.0
+    } else {
+        0.0
+    };
+
+    let ea1c_percent = calculate_ea1c_adag(mean_mg_dl);
+    let gmi_percent = calculate_gmi(mean_mg_dl);
+
+    GlycemicStats {
+        window: Some(window),
+        sample_count: count,
+        span_hours,
+        mean_mg_dl,
+        std_dev_mg_dl,
+        cv_percent,
+        ea1c_percent,
+        ea1c_mmol_mol: a1c_percent_to_mmol_mol(ea1c_percent),
+        gmi_percent,
+        gmi_mmol_mol: a1c_percent_to_mmol_mol(gmi_percent),
+        tir_in_range_percent: (in_range_count as f64 / n) * 100.0,
+        tir_below_percent: (below_count as f64 / n) * 100.0,
+        tir_above_percent: (above_count as f64 / n) * 100.0,
     }
 }
 

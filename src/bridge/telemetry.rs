@@ -26,32 +26,12 @@ use crate::models::{
     DEFAULT_TARGET_HIGH_MG_DL, DEFAULT_TARGET_LOW_MG_DL,
 };
 use crate::session::{
-    build_demo_snapshot, evaluate_alert_decision, fetch_snapshot_for_source_with_sync_async,
-    record_reauth_success, reset_reauth_backoff, RefreshOutcome,
+    apply_ha_sync_from_states, build_demo_snapshot, evaluate_full_alert_cycle,
+    fetch_snapshot_for_source_with_sync_async, record_reauth_success, reset_reauth_backoff,
+    RefreshOutcome,
 };
 use crate::updater::{check_for_updates_async, download_and_install_update_async, UpdateCheckResult};
 use crate::zeroize::Zeroizing;
-
-/// Sets a `QString` property only when the value actually changed, so the QML binding graph
-/// is not re-evaluated on every 250 ms tick.
-macro_rules! sync_str {
-    ($self:ident, $setter:ident, $getter:ident, $value:expr) => {{
-        let new_value: String = $value;
-        if $self.$getter().to_string() != new_value {
-            $self.as_mut().$setter(QString::from(new_value.as_str()));
-        }
-    }};
-}
-
-/// Same for scalar properties.
-macro_rules! sync_val {
-    ($self:ident, $setter:ident, $getter:ident, $value:expr) => {{
-        let new_value = $value;
-        if *$self.$getter() != new_value {
-            $self.as_mut().$setter(new_value);
-        }
-    }};
-}
 
 impl Default for TelemetryControllerRust {
     fn default() -> Self {
@@ -923,58 +903,47 @@ impl qobject::TelemetryController {
 
                 let mut push_initial_ha_meds = false;
                 with_state(|s| {
-                    s.last_successful_fetch_epoch = Some(now_epoch());
+                    let now = now_epoch();
+                    s.last_successful_fetch_epoch = Some(now);
                     ops::ingest_history(s, &snap);
                     s.snapshot = snap;
                     s.status_message = "Live CGM telemetry active".to_string();
                     if let Some(ref states_arr) = ha_states {
-                        let discovered = crate::api::discover_ha_patients(states_arr);
+                        let sync_res = apply_ha_sync_from_states(
+                            states_arr,
+                            &mut s.medication_store,
+                            s.ha_sync_medications,
+                            s.ha_sync_snooze,
+                            s.snooze_until_epoch,
+                            s.snooze_updated_at_epoch,
+                            now,
+                        );
                         s.ha_discovered_patients_json =
-                            serde_json::to_string(&discovered).unwrap_or_else(|_| "[]".to_string());
-                        if s.ha_sync_medications {
-                            let remote_recent_len = states_arr
-                                .iter()
-                                .find(|e| {
-                                    e.get("entity_id")
-                                        .and_then(|v| v.as_str())
-                                        .is_some_and(|id| id == "sensor.librelinkup_medications")
-                                })
-                                .and_then(|e| e.get("attributes"))
-                                .and_then(|a| a.get("recent_doses"))
-                                .and_then(|r| r.as_array())
-                                .map(Vec::len);
-                            if s.medication_store.merge_from_ha_states(states_arr) {
-                                let _ = ops::save_medications_if_safe(s);
-                                ops::refresh_medication_views(s);
-                                log_info(
-                                    "MEDS",
-                                    "Synchronized remote medications/doses from Home Assistant.",
-                                );
-                                push_initial_ha_meds = true;
-                            } else if !s.medication_store.medications.is_empty()
-                                && remote_recent_len != Some(s.medication_store.dose_logs.len().min(25))
-                            {
-                                push_initial_ha_meds = true;
-                            }
+                            serde_json::to_string(&sync_res.discovered_patients)
+                                .unwrap_or_else(|_| "[]".to_string());
+                        if sync_res.meds_merged {
+                            let _ = ops::save_medications_if_safe(s);
+                            ops::refresh_medication_views(s);
+                            log_info(
+                                "MEDS",
+                                "Synchronized remote medications/doses from Home Assistant.",
+                            );
                         }
-                        if s.ha_sync_snooze
-                            && let Some((remote_until, remote_updated)) =
-                                crate::api::parse_ha_remote_snooze(
-                                    states_arr,
-                                    s.snooze_updated_at_epoch,
-                                )
-                                && s.snooze_until_epoch != remote_until {
-                                    s.snooze_until_epoch = remote_until;
-                                    s.snooze_updated_at_epoch = remote_updated;
-                                    if remote_until == 0 {
-                                        s.last_alert = None;
-                                    }
-                                    let _ = ops::persist_settings(s);
-                                    log_info(
-                                        "ALERT",
-                                        "Synchronized cross-device alert snooze state from Home Assistant.",
-                                    );
-                                }
+                        if sync_res.should_push_meds {
+                            push_initial_ha_meds = true;
+                        }
+                        if let Some((effective_until, remote_updated)) = sync_res.updated_snooze {
+                            s.snooze_until_epoch = effective_until;
+                            s.snooze_updated_at_epoch = remote_updated;
+                            if effective_until == 0 {
+                                s.last_alert = None;
+                            }
+                            let _ = ops::persist_settings(s);
+                            log_info(
+                                "ALERT",
+                                "Synchronized cross-device alert snooze state from Home Assistant.",
+                            );
+                        }
                     }
                     ops::refresh_display(s);
                 });
@@ -1183,13 +1152,55 @@ impl qobject::TelemetryController {
                 true
             }
             "ToggleOverlay" => {
-                let next = with_state(|s| !s.overlay_visible);
-                self.update_overlay_visible(next);
+                let (visible, placement) = with_state(|s| {
+                    let visible = !s.overlay_visible;
+                    s.overlay_visible = visible;
+                    if visible && s.window_mode == "windowed" {
+                        s.window_mode = "overlay".to_string();
+                    } else if !visible {
+                        s.window_mode = "windowed".to_string();
+                        s.overlay_only_mode = false;
+                    }
+                    let _ = ops::persist_settings(s);
+                    let placement = visible.then(|| {
+                        (
+                            s.overlay_screen_name.clone(),
+                            s.overlay_x,
+                            s.overlay_y,
+                            s.overlay_width,
+                            s.overlay_height,
+                        )
+                    });
+                    (visible, placement)
+                });
+                if let Some((screen, x, y, w, h)) = placement {
+                    qobject::librelinkup_restore_overlay_placement(
+                        &QString::from(screen.as_str()),
+                        x,
+                        y,
+                        w,
+                        h,
+                    );
+                }
+                log_info(
+                    "SHORTCUT",
+                    format!("Global shortcut toggled desktop overlay visible to {visible}."),
+                );
+                self.as_mut().tick();
                 true
             }
             "ToggleOverlayAllDesktops" => {
-                let next = with_state(|s| !s.overlay_on_all_desktops);
-                self.update_overlay_on_all_desktops(next);
+                let next = with_state(|s| {
+                    s.overlay_on_all_desktops = !s.overlay_on_all_desktops;
+                    let _ = ops::persist_settings(s);
+                    s.overlay_on_all_desktops
+                });
+                qobject::librelinkup_apply_overlay_all_desktops(next);
+                log_info(
+                    "SHORTCUT",
+                    format!("Global shortcut toggled overlay on-all-desktops to {next}."),
+                );
+                self.as_mut().tick();
                 true
             }
             "RefreshGlucoseNow" => {
@@ -1353,102 +1364,6 @@ impl qobject::TelemetryController {
             }
             _ => false,
         }
-    }
-
-    // ---- settings-shaped actions dispatched by the C++ tray / window manager ----
-
-    pub fn update_theme_mode(mut self: Pin<&mut Self>, mode: QString) {
-        let clean = mode.to_string().trim().to_lowercase();
-        let valid = match clean.as_str() {
-            "dark" | "light" | "system" => clean,
-            _ => "system".to_string(),
-        };
-        qobject::librelinkup_apply_app_theme(&QString::from(valid.as_str()));
-        with_state(|s| s.theme_mode = valid.clone());
-        let _ = with_state(|s| ops::persist_settings(s));
-        log_info("SYSTEM", format!("Switched color theme mode to '{valid}'."));
-        self.as_mut().tick();
-    }
-
-    pub fn update_show_glucose_in_tray_icon(mut self: Pin<&mut Self>, enabled: bool) {
-        with_state(|s| s.show_glucose_in_tray_icon = enabled);
-        let _ = with_state(|s| ops::persist_settings(s));
-        self.as_mut().tick();
-    }
-
-    pub fn update_show_glucose_in_tray_tooltip(mut self: Pin<&mut Self>, enabled: bool) {
-        with_state(|s| s.show_glucose_in_tray_tooltip = enabled);
-        let _ = with_state(|s| ops::persist_settings(s));
-        self.as_mut().tick();
-    }
-
-    pub fn update_tray_only_relevant_out_of_range(mut self: Pin<&mut Self>, enabled: bool) {
-        with_state(|s| s.tray_only_relevant_out_of_range = enabled);
-        let _ = with_state(|s| ops::persist_settings(s));
-        log_info(
-            "TRAY",
-            format!("Tray icon only relevant when out of range: {enabled}"),
-        );
-        self.as_mut().tick();
-    }
-
-    pub fn update_overlay_visible(mut self: Pin<&mut Self>, visible: bool) {
-        with_state(|s| {
-            s.overlay_visible = visible;
-            if visible && s.window_mode == "windowed" {
-                s.window_mode = "overlay".to_string();
-            } else if !visible {
-                s.window_mode = "windowed".to_string();
-                s.overlay_only_mode = false;
-            }
-        });
-        if visible {
-            let (screen, x, y, w, h) = with_state(|s| {
-                (
-                    s.overlay_screen_name.clone(),
-                    s.overlay_x,
-                    s.overlay_y,
-                    s.overlay_width,
-                    s.overlay_height,
-                )
-            });
-            qobject::librelinkup_restore_overlay_placement(&QString::from(screen.as_str()), x, y, w, h);
-        }
-        let _ = with_state(|s| ops::persist_settings(s));
-        self.as_mut().tick();
-    }
-
-    pub fn update_overlay_on_all_desktops(mut self: Pin<&mut Self>, enabled: bool) {
-        with_state(|s| s.overlay_on_all_desktops = enabled);
-        qobject::librelinkup_apply_overlay_all_desktops(enabled);
-        let _ = with_state(|s| ops::persist_settings(s));
-        self.as_mut().tick();
-    }
-
-    pub fn update_overlay_only_mode(mut self: Pin<&mut Self>, only_overlay: bool) {
-        let changed = with_state(|s| {
-            let effective = only_overlay && s.overlay_visible;
-            if s.overlay_only_mode != effective {
-                s.overlay_only_mode = effective;
-                let _ = ops::persist_settings(s);
-                true
-            } else {
-                false
-            }
-        });
-        if changed {
-            self.as_mut().tick();
-        }
-    }
-
-    pub fn update_autostart_enabled(mut self: Pin<&mut Self>, enabled: bool) {
-        let minimized = with_state(|s| {
-            s.autostart_enabled = enabled;
-            s.start_minimized
-        });
-        sync_autostart_desktop_file(enabled, minimized);
-        let _ = with_state(|s| ops::persist_settings(s));
-        self.as_mut().tick();
     }
 
     pub fn show_main_window(mut self: Pin<&mut Self>) {
@@ -1657,20 +1572,37 @@ impl qobject::TelemetryController {
     /// Fires alerts (glucose thresholds and medication reminders) when warranted.
     pub(crate) fn evaluate_alerts(self: Pin<&mut Self>) {
         let now = now_epoch();
-
-        // Medication reminders run even when not polling glucose.
-        let due = with_state(|s| {
-            let list = s
-                .medication_store
-                .evaluate_due_reminders(now, &mut s.medication_last_notified);
-            if !list.is_empty() {
-                s.medication_store
-                    .record_notified_slots(now, &s.medication_last_notified);
+        let (settings, cycle) = with_state(|s| {
+            let settings = ops::current_settings(s);
+            let is_demo = s.snapshot.patient_id == "demo-patient-001";
+            let cycle = evaluate_full_alert_cycle(
+                &settings,
+                &s.snapshot,
+                &mut s.medication_store,
+                &mut s.medication_last_notified,
+                s.last_alert,
+                s.last_sensor_expiry_alert_epoch,
+                s.last_successful_fetch_epoch,
+                s.logged_in,
+                is_demo,
+                now,
+            );
+            if cycle.meds_slots_recorded {
                 let _ = ops::save_medications_if_safe(s);
             }
-            list
+            if cycle.clear_last_glucose_alert {
+                s.last_alert = None;
+            }
+            if let Some(ref alert) = cycle.glucose_alert {
+                s.last_alert = Some((alert.kind, now));
+            }
+            if cycle.sensor_expiry_message.is_some() && !is_offscreen() {
+                s.last_sensor_expiry_alert_epoch = now;
+            }
+            (settings, cycle)
         });
-        for reminder in due {
+
+        for reminder in cycle.due_medication_reminders {
             log_info("MEDS", "Triggered due medication reminder.");
             qobject::librelinkup_show_medication_notification(
                 &QString::from(reminder.medication_id.as_str()),
@@ -1679,41 +1611,18 @@ impl qobject::TelemetryController {
             );
         }
 
-        let (settings, snapshot, last, logged_in, last_fetch) = with_state(|s| {
-            (
-                ops::current_settings(s),
-                s.snapshot.clone(),
-                s.last_alert,
-                s.logged_in,
-                s.last_successful_fetch_epoch,
-            )
-        });
-        if !logged_in {
-            return;
-        }
-
-        let (decision, cleared_previous) =
-            evaluate_alert_decision(&settings, &snapshot, last, now, last_fetch);
-        if cleared_previous {
+        if cycle.clear_last_glucose_alert {
             log_info("ALERT", "Glucose back within alert thresholds.");
-            with_state(|s| s.last_alert = None);
         }
 
-        if let Some(alert) = decision {
+        if let Some(alert) = cycle.glucose_alert {
             log_warn("ALERT", format!("{}: {}", alert.title, alert.body));
             fire_alert(&settings, alert.title, &alert.body, alert.critical);
-            with_state(|s| s.last_alert = Some((alert.kind, now)));
         }
 
-        // Sensor Expiry Countdown Notification (once every 6 hours when within threshold)
-        let should_notify_sensor_expiry = with_state(|s| {
-            s.sensor_expiring_soon
-                && !s.alerts_snoozed
-                && (now - s.last_sensor_expiry_alert_epoch >= 6 * 3600)
-        });
-        if should_notify_sensor_expiry && !is_offscreen() {
-            let status_txt = snapshot.format_sensor_status(now);
-            with_state(|s| s.last_sensor_expiry_alert_epoch = now);
+        if let Some(status_txt) = cycle.sensor_expiry_message
+            && !is_offscreen()
+        {
             log_warn("ALERT", format!("CGM Sensor Expiring Soon: {status_txt}"));
             qobject::librelinkup_show_notification(
                 &QString::from("CGM Sensor Expiring Soon"),

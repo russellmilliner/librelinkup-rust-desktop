@@ -1,3 +1,4 @@
+#[cfg(feature = "ui-tests")]
 #[test]
 fn test_overlay_and_minimized_window_task_manager_icon_exclusion() {
     let dir = std::env::temp_dir().join(format!("llu_taskbar_test_cfg_{}", std::process::id()));

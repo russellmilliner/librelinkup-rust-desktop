@@ -1,16 +1,19 @@
 //! Shared CGM session polling, automatic token re-authentication, alert evaluation,
 //! snooze formatting, and demo telemetry generation used by both KDE Plasma and Windows.
 
+use std::collections::HashMap;
 use std::sync::{Mutex, OnceLock};
 
 use chrono::{Duration as ChronoDuration, Local, TimeZone};
 
 use crate::api::{
-    authenticate_async, fetch_cgm_snapshot_with_patient_hint_async,
-    fetch_ha_cgm_snapshot_and_states_async, fetch_ha_sync_states_async, ApiError,
+    authenticate_async, discover_ha_patients, fetch_cgm_snapshot_with_patient_hint_async,
+    fetch_ha_cgm_snapshot_and_states_async, fetch_ha_sync_states_async, parse_ha_remote_snooze,
+    ApiError, HaPatientOption,
 };
 use crate::crypto::StoredCredentials;
 use crate::event_log::{log_info, log_warn};
+use crate::medications::{MedicationReminder, MedicationStore};
 use crate::models::{
     format_glucose_value, format_reading_age, reading_age_minutes, trend_arrow_symbol, AlertKind,
     AppSettings, GlucoseSnapshot, GraphPoint, DEFAULT_TARGET_HIGH_MG_DL, DEFAULT_TARGET_LOW_MG_DL,
@@ -347,6 +350,135 @@ pub fn evaluate_alert_decision(
     )
 }
 
+/// Outcome of applying Home Assistant `/api/states` synchronization data to local
+/// medications and cross-device snooze state.
+#[derive(Debug, Clone, Default)]
+pub struct HaSyncOutcome {
+    pub discovered_patients: Vec<HaPatientOption>,
+    pub meds_merged: bool,
+    pub should_push_meds: bool,
+    /// `(effective_snooze_until_epoch, remote_updated_at_epoch)` when local snooze changed.
+    pub updated_snooze: Option<(i64, i64)>,
+}
+
+/// Applies cross-device Home Assistant synchronization (`sensor.librelinkup_medications` and
+/// `sensor.librelinkup_alert_snooze`) from a polled `/api/states` slice in a single shared path.
+pub fn apply_ha_sync_from_states(
+    states_arr: &[serde_json::Value],
+    medication_store: &mut MedicationStore,
+    sync_meds: bool,
+    sync_snooze: bool,
+    local_snooze_until: i64,
+    local_snooze_updated_at: i64,
+    now_epoch: i64,
+) -> HaSyncOutcome {
+    let mut out = HaSyncOutcome {
+        discovered_patients: discover_ha_patients(states_arr),
+        ..Default::default()
+    };
+
+    if sync_meds {
+        let remote_recent_len = states_arr
+            .iter()
+            .find(|e| {
+                e.get("entity_id")
+                    .and_then(|v| v.as_str())
+                    .is_some_and(|id| id == "sensor.librelinkup_medications")
+            })
+            .and_then(|e| e.get("attributes"))
+            .and_then(|a| a.get("recent_doses"))
+            .and_then(|r| r.as_array())
+            .map(Vec::len);
+
+        if medication_store.merge_from_ha_states(states_arr) {
+            out.meds_merged = true;
+            out.should_push_meds = true;
+        } else if !medication_store.medications.is_empty()
+            && remote_recent_len != Some(medication_store.dose_logs.len().min(25))
+        {
+            out.should_push_meds = true;
+        }
+    }
+
+    if sync_snooze
+        && let Some((remote_until, remote_updated_at)) =
+            parse_ha_remote_snooze(states_arr, local_snooze_updated_at)
+    {
+        let effective_until = if remote_until > now_epoch {
+            remote_until
+        } else {
+            0
+        };
+        if effective_until != local_snooze_until {
+            out.updated_snooze = Some((effective_until, remote_updated_at));
+        }
+    }
+
+    out
+}
+
+/// Combined alert evaluation output covering scheduled medications, glucose threshold alerts,
+/// and sensor expiration warnings.
+#[derive(Debug, Clone, Default)]
+pub struct FullAlertCycleResult {
+    pub due_medication_reminders: Vec<MedicationReminder>,
+    pub meds_slots_recorded: bool,
+    pub glucose_alert: Option<AlertDecision>,
+    pub clear_last_glucose_alert: bool,
+    pub sensor_expiry_message: Option<String>,
+}
+
+/// Evaluates due medication reminders, glucose threshold/staleness alerts, and sensor expiration
+/// countdown warnings in one platform-independent pass.
+#[allow(clippy::too_many_arguments)]
+pub fn evaluate_full_alert_cycle(
+    settings: &AppSettings,
+    snapshot: &GlucoseSnapshot,
+    medication_store: &mut MedicationStore,
+    medication_last_notified: &mut HashMap<String, i64>,
+    last_glucose_alert: Option<(AlertKind, i64)>,
+    last_sensor_expiry_alert_epoch: i64,
+    last_successful_fetch_epoch: Option<i64>,
+    logged_in: bool,
+    demo: bool,
+    now_epoch: i64,
+) -> FullAlertCycleResult {
+    let mut out = FullAlertCycleResult::default();
+
+    if !medication_store.medications.is_empty() {
+        let due = medication_store.evaluate_due_reminders(now_epoch, medication_last_notified);
+        if !due.is_empty() {
+            medication_store.record_notified_slots(now_epoch, medication_last_notified);
+            out.meds_slots_recorded = true;
+            out.due_medication_reminders = due;
+        }
+    }
+
+    if !logged_in {
+        return out;
+    }
+
+    let (decision, clear_last) = evaluate_alert_decision(
+        settings,
+        snapshot,
+        last_glucose_alert,
+        now_epoch,
+        last_successful_fetch_epoch,
+    );
+    out.glucose_alert = decision;
+    out.clear_last_glucose_alert = clear_last;
+
+    if !demo
+        && !settings.is_snoozed(now_epoch)
+        && snapshot.is_sensor_expiring_soon(now_epoch, settings.sensor_expiry_alert_hours)
+        && now_epoch.saturating_sub(last_sensor_expiry_alert_epoch) >= 6 * 3600
+    {
+        out.sensor_expiry_message = Some(snapshot.format_sensor_status(now_epoch));
+    }
+
+    out
+}
+
 /// Formats the active snooze expiration timestamp (`"Snoozed until 3:45 PM"`), or returns
 /// an empty string when alerts are not currently snoozed.
 pub fn format_snooze_until(snooze_until_epoch: i64, now_epoch: i64) -> String {
@@ -515,5 +647,176 @@ mod tests {
         record_reauth_success();
         assert!(reauth_allowed(t));
         reset_reauth_backoff();
+    }
+
+    #[test]
+    fn staleness_boundary_and_none_fetch_clock() {
+        let now = 1_700_000_000i64;
+        let settings = AppSettings {
+            stale_after_minutes: 20,
+            alert_on_stale: true,
+            ..Default::default()
+        };
+        let mut snap = build_demo_snapshot(now);
+        snap.value_mg_dl = 115.0;
+
+        // 19 minutes old with fetch right now -> fresh
+        snap.measured_at_epoch = Some(now - 19 * 60);
+        assert_eq!(effective_reading_age_minutes(&snap, now, Some(now)), Some(19));
+        let (d19, _) = evaluate_alert_decision(&settings, &snap, None, now, Some(now));
+        assert!(d19.is_none());
+
+        // Exactly 20 minutes old -> stale boundary triggers AlertKind::Stale
+        snap.measured_at_epoch = Some(now - 20 * 60);
+        assert_eq!(effective_reading_age_minutes(&snap, now, Some(now)), Some(20));
+        let (d20, _) = evaluate_alert_decision(&settings, &snap, None, now, Some(now));
+        assert_eq!(d20.expect("stale at threshold").kind, AlertKind::Stale);
+
+        // Fresh reading timestamp + last_fetch == None -> relies on reading clock (still 19 min)
+        snap.measured_at_epoch = Some(now - 19 * 60);
+        assert_eq!(effective_reading_age_minutes(&snap, now, None), Some(19));
+
+        // Reading measured 25 min ago + last_fetch == None -> stale
+        snap.measured_at_epoch = Some(now - 25 * 60);
+        let (d_none_fetch, _) = evaluate_alert_decision(&settings, &snap, None, now, None);
+        assert_eq!(d_none_fetch.expect("stale with None fetch").kind, AlertKind::Stale);
+    }
+
+    #[test]
+    fn apply_ha_sync_from_states_merges_meds_and_resolves_snooze_timestamps() {
+        let now = 1_700_000_000i64;
+        let mut meds = MedicationStore::default();
+        let med_id = meds
+            .upsert_medication(
+                "m1",
+                "Metformin",
+                "500 mg",
+                crate::medications::MedicationSchedule::Daily,
+                "08:00",
+                0,
+                true,
+                "",
+            )
+            .unwrap();
+        meds.log_dose(&med_id, None, now - 600, Some(110.0), "").unwrap();
+
+        let states = vec![
+            serde_json::json!({
+                "entity_id": "sensor.patient_measurement",
+                "state": "114",
+                "attributes": {
+                    "unit_of_measurement": "mg/dL",
+                    "device_class": "blood_glucose_concentration",
+                    "friendly_name": "Patient Measurement"
+                }
+            }),
+            serde_json::json!({
+                "entity_id": "sensor.librelinkup_medications",
+                "state": "1",
+                "attributes": { "recent_doses": [] }
+            }),
+            serde_json::json!({
+                "entity_id": "sensor.librelinkup_alert_snooze",
+                "state": "snoozed",
+                "attributes": {
+                    "updated_at_epoch": now - 10,
+                    "snooze_until_epoch": now + 900
+                }
+            }),
+        ];
+
+        // Newer remote snooze wins over older local snooze updated_at
+        let out_newer = apply_ha_sync_from_states(&states, &mut meds, true, true, 0, now - 60, now);
+        assert_eq!(out_newer.discovered_patients.len(), 1);
+        assert!(out_newer.should_push_meds, "mismatch between remote empty recent_doses and local 1 dose");
+        assert_eq!(out_newer.updated_snooze, Some((now + 900, now - 10)));
+
+        // Stale remote snooze is ignored when local snooze updated_at is newer
+        let out_stale = apply_ha_sync_from_states(&states, &mut meds, true, true, 0, now, now);
+        assert!(out_stale.updated_snooze.is_none());
+    }
+
+    #[test]
+    fn evaluate_full_alert_cycle_combines_meds_expiry_snooze_and_clear() {
+        use chrono::{Local, Timelike};
+        let now = Local::now().timestamp();
+        let dt = Local.timestamp_opt(now - 120, 0).single().unwrap();
+        let sched_time = format!("{:02}:{:02}", dt.hour(), dt.minute());
+
+        let mut meds = MedicationStore::default();
+        meds.upsert_medication(
+            "",
+            "Insulin",
+            "10 u",
+            crate::medications::MedicationSchedule::Daily,
+            &sched_time,
+            0,
+            true,
+            "",
+        )
+        .unwrap();
+        let mut notified = HashMap::new();
+
+        let settings = AppSettings {
+            urgent_low_mg_dl: 55.0,
+            snooze_until_epoch: now + 600,
+            sensor_expiry_alert_hours: 24,
+            ..Default::default()
+        };
+        let mut snap = build_demo_snapshot(now);
+        snap.value_mg_dl = 50.0;
+        snap.sensor_expires_at_epoch = Some(now + 2 * 3600);
+
+        let r1 = evaluate_full_alert_cycle(
+            &settings,
+            &snap,
+            &mut meds,
+            &mut notified,
+            Some((AlertKind::High, now - 300)),
+            0,
+            Some(now),
+            true,
+            false,
+            now,
+        );
+        assert_eq!(r1.due_medication_reminders.len(), 1);
+        assert!(r1.meds_slots_recorded);
+        assert_eq!(r1.glucose_alert.as_ref().expect("urgent low").kind, AlertKind::UrgentLow);
+        // Sensor expiry suppressed while snoozed
+        assert!(r1.sensor_expiry_message.is_none());
+
+        // Unsnoozed & in range -> sensor expiry fires and clears previous alert
+        let mut unsnoozed = settings.clone();
+        unsnoozed.snooze_until_epoch = 0;
+        snap.value_mg_dl = 112.0;
+        let r2 = evaluate_full_alert_cycle(
+            &unsnoozed,
+            &snap,
+            &mut meds,
+            &mut notified,
+            Some((AlertKind::UrgentLow, now - 60)),
+            0,
+            Some(now),
+            true,
+            false,
+            now + 60,
+        );
+        assert!(r2.clear_last_glucose_alert);
+        assert!(r2.sensor_expiry_message.is_some());
+
+        // Within 6h cooldown -> sensor expiry does not refire
+        let r3 = evaluate_full_alert_cycle(
+            &unsnoozed,
+            &snap,
+            &mut meds,
+            &mut notified,
+            None,
+            now + 60,
+            Some(now),
+            true,
+            false,
+            now + 120,
+        );
+        assert!(r3.sensor_expiry_message.is_none());
     }
 }

@@ -1270,4 +1270,35 @@ CwkbwGp+4TByUUf5t2zRCWvVkwdiTliNUMi8V5+91AenrDh/4eoeBNYWtKhcb/T3RFgv5+Udsj96Y5C+
         assert_eq!(res.download_url, GITHUB_RELEASES_PAGE_URL);
         assert!(res.sha256_url.is_empty());
     }
+
+    #[test]
+    fn anti_downgrade_rejects_equal_or_older_releases_and_checks_artifact_comment() {
+        let older_release = r####"{
+            "tag_name": "v0.5.0",
+            "html_url": "https://github.com/russellmilliner/librelinkup-rust-desktop/releases/tag/v0.5.0",
+            "assets": []
+        }"####;
+        let downgrade = parse_github_release_json(older_release, "0.6.0").unwrap();
+        assert!(!downgrade.update_available, "older release must not offer downgrade");
+        let same = parse_github_release_json(older_release, "0.5.0").unwrap();
+        assert!(!same.update_available, "equal release must not re-install");
+        let upgrade = parse_github_release_json(older_release, "0.4.9").unwrap();
+        assert!(upgrade.update_available, "strictly newer release must offer update");
+
+        // Crafted signature comment missing exact `artifact:<expected>` token fails even on valid payload
+        const TEST_PUBKEY: &str = "RWRRI0rrvCS5oePZPKf/GuR5nGi7Y9L4V1r026s2IY9Ze0HhrIYHkjy6";
+        const TEST_SIG: &str = "untrusted comment: test:update-fixture\n\
+RURRI0rrvCS5obXzUzG5SAKLqhmV7rJHLvTbBN9qISUB8hfJ/STjnzWraGunPcopQnoZTwIw3PilJs82T9piNArxmF3ZDyWMKgo=\n\
+trusted comment: timestamp:1793326084\n\
+CwkbwGp+4TByUUf5t2zRCWvVkwdiTliNUMi8V5+91AenrDh/4eoeBNYWtKhcb/T3RFgv5+Udsj96Y5C+iCcSAA==";
+        let payload = b"librelinkup-update-fixture-payload-v1";
+        let err = verify_minisign_signature_for_artifact(
+            payload,
+            TEST_SIG,
+            TEST_PUBKEY,
+            Some("LibreLinkUp-Setup-0.5.0-x64.exe"),
+        )
+        .unwrap_err();
+        assert!(err.contains("not bound to artifact"), "{err}");
+    }
 }

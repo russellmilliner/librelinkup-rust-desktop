@@ -19,24 +19,6 @@ use crate::event_log::{
 };
 use crate::models::{MAX_POLL_INTERVAL_SECONDS, MIN_POLL_INTERVAL_SECONDS};
 
-macro_rules! sync_str {
-    ($self:ident, $setter:ident, $getter:ident, $value:expr) => {{
-        let new_value: String = $value;
-        if $self.$getter().to_string() != new_value {
-            $self.as_mut().$setter(QString::from(new_value.as_str()));
-        }
-    }};
-}
-
-macro_rules! sync_val {
-    ($self:ident, $setter:ident, $getter:ident, $value:expr) => {{
-        let new_value = $value;
-        if *$self.$getter() != new_value {
-            $self.as_mut().$setter(new_value);
-        }
-    }};
-}
-
 impl Default for SettingsControllerRust {
     fn default() -> Self {
         // Valid empty values only; `initialize()` -> `sync()` fills them from shared state.

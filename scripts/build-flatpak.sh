@@ -42,7 +42,7 @@ flatpak build \
     REPO_ROOT="$1"
     APP_ID="$2"
     rm -rf "$CARGO_TARGET_DIR"/release/build/librelinkup-kde-* "$CARGO_TARGET_DIR"/release/.fingerprint/librelinkup-kde-*
-    cargo build --release --manifest-path "$REPO_ROOT/Cargo.toml"
+    cargo build --release --no-default-features --manifest-path "$REPO_ROOT/Cargo.toml"
     install -Dm755 "$CARGO_TARGET_DIR/release/librelinkup-kde" -t /app/bin/
     install -Dm644 "$REPO_ROOT/data/${APP_ID}.desktop" -t /app/share/applications/
     install -Dm644 "$REPO_ROOT/data/${APP_ID}.notifyrc" -t /app/share/knotifications6/

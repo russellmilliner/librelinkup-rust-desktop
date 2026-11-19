@@ -18,38 +18,44 @@ There are **two front-ends** over one shared core:
 | Windows 10/11 | egui/eframe + tray-icon + WinRT toasts + DPAPI | `windows/` |
 
 ```
-┌──────────────────────────────────────────────────────────────────────────┐
-│ crates/librelinkup-core  (platform independent, no Qt, no Win32)          │
-│  api          LibreView HTTP client, region allowlist, curl fallback      │
-│  crypto       AES-256-GCM envelope + master-secret provider               │
-│  session      polling, 401 re-auth + backoff, alert decision              │
-│  models       AppSettings, GlucoseSnapshot, alert policy, formatting      │
-│  analytics    eA1C / GMI / TIR, 90-day encrypted history vault            │
-│  medications  schedule, dose log, reminders, encrypted medication vault   │
-│  updater      GitHub release check, SHA-256 + minisign verification       │
-│  paths        XDG / %APPDATA% resolution, atomic 0600 writes              │
-│  event_log    in-memory ring buffer + PII masking                         │
-│  alert_sound  generated alarm WAV                                         │
-└───────────────┬───────────────────────────────────┬──────────────────────┘
-                │                                   │
-   ┌────────────▼─────────────┐        ┌────────────▼─────────────┐
-   │ src/bridge (KDE, Qt)     │        │ windows/src (egui)        │
-   │  state.rs   AppState     │        │  service.rs  worker thread│
-   │  ops.rs     transitions  │        │  app.rs      UI           │
-   │  qobject_bridge.rs       │        │  tray.rs, alerts.rs       │
-   │  telemetry.rs            │        │  platform.rs DPAPI/registry│
-   │  settings.rs             │        └───────────────────────────┘
-   │  medications.rs          │
-   │  autostart.rs            │
-   └────────────┬─────────────┘
-                │ C++ shims (src/cpp/*.h)
-   ┌────────────▼─────────────────────────────────────────────┐
-   │ tray_manager.h  KStatusNotifierItem, knotifications6, KGlobalAccel│
-   │ window_manager.h Wayland KWin D-Bus scripting + X11 WM   │
-   │ audio_portal.h  Wayland platform init + paplay/pw-play   │
-   │ icon_renderer.h live glucose badge + blood drop watermark│
-   │ ui_tests.h      headless QML layout/behaviour assertions  │
-   └──────────────────────────────────────────────────────────┘
+┌──────────────────────────────────────────────────────────────────────────────────┐
+│ crates/librelinkup-core  (platform independent, no Qt, no Win32)                  │
+│  api/{mod,http,libreview,home_assistant}.rs  LibreView & HA HTTP clients          │
+│  crypto.rs        AES-256-GCM Envelope v3 (HKDF-SHA256) + EncryptedVault<T>       │
+│  session.rs       polling, re-auth backoff, shared HA sync & full alert cycle     │
+│  models/{mod,glucose,settings,alerts,a11y}.rs  settings, snapshot, alert policy   │
+│  analytics.rs     eA1C / GMI / TIR (partition_point slicing), 90d history vault   │
+│  medications.rs   schedule, dose log, O(N) dedup, reminders, medication vault     │
+│  updater.rs       GitHub release check, SHA-256 + minisign artifact verification  │
+│  paths.rs         XDG / %APPDATA% resolution, atomic 0600 writes                  │
+│  event_log.rs     in-memory ring buffer + PII masking                             │
+│  alert_sound.rs   generated alarm WAV                                             │
+└───────────────┬───────────────────────────────────────────┬──────────────────────┘
+                │                                           │
+   ┌────────────▼──────────────┐               ┌────────────▼──────────────┐
+   │ src/bridge (KDE, Qt)      │               │ windows/src (egui)        │
+   │  macros.rs  sync_str/val  │               │  service/  async runtime  │
+   │  state.rs   AppState      │               │   {mod,commands,sync,alerts}│
+   │  ops.rs     transitions   │               │  ui/       eframe views   │
+   │  qobject_bridge.rs        │               │   {mod,login,dashboard,   │
+   │  telemetry.rs             │               │    chart,overlay,settings,│
+   │  settings.rs              │               │    medications,alerts,    │
+   │  medications.rs           │               │    dialogs}               │
+   │  autostart.rs             │               │  tray.rs, alerts.rs       │
+   └────────────┬──────────────┘               │  platform.rs DPAPI/Win32  │
+                │                              └───────────────────────────┘
+                │ C++ modules (src/cpp/*.{h,cpp}) + QRC resources
+   ┌────────────▼──────────────────────────────────────────────────────────┐
+   │ app_helper.h           NotificationActionWatcher Q_OBJECT umbrella    │
+   │ tray_manager.{h,cpp}   KStatusNotifierItem, knotifications6, KGlobalAccel│
+   │ window_manager.{h,cpp} Wayland KWin async D-Bus + kwin-resident.js QRC│
+   │ audio_portal.{h,cpp}   Wayland platform init + paplay / pw-play       │
+   │ icon_renderer.{h,cpp}  live glucose badge + blood drop watermark      │
+   │ ui_tests.{h,cpp} / ui_tests_stub.cpp (`ui-tests` feature-gated)       │
+   └───────────────────────────────────────────────────────────────────────┘
+   QML views (src/qml/*.qml): Main, HighContrastScrollBar, GlucoseChart,
+     LoginView, DashboardView, MedicationsView, SettingsView, AlertsView,
+     AccountView, LogViewerDialog, OverlayWidget, AboutDialog
 ```
 
 ---
@@ -70,43 +76,48 @@ split (v0.5.0) into three QML-visible objects that share one state store.
 ```
 QML action ──► controller invokable ──► bridge::state (AppState)
                                           │
-QML Timer(250 ms) ─► telemetry.tick() ────┤ ops::refresh_display / analytics / med views
-                     settings.sync()      │ ops::persist_history_if_due
-                     medications.sync()   ▼
-                                    properties pushed (only when changed)
+Coalesced mark_state_dirty()              │ ops::refresh_display / analytics / med views
+  └─► sharedStateChanged signal ──────────┤ ops::persist_history_if_due (async offload)
+        ├─► telemetry.sync()              ▼
+        ├─► settings.sync()         properties pushed (only when changed via sync_str!/sync_val!)
+        └─► medications.sync()
 ```
 
-* **`bridge/state.rs`** holds `AppState` in a `thread_local RefCell`. This is deliberate: all
-  access happens on the Qt GUI thread, and a `RefCell` turns any accidental re-entrancy into a
-  loud panic instead of a deadlock. **Never touch it from a background thread.**
+* **`bridge/macros.rs`** provides shared `sync_str!` and `sync_val!` property-change macros across
+  `telemetry.rs`, `settings.rs`, and `medications.rs`.
+* **`bridge/state.rs`** holds `AppState` in a `thread_local RefCell` on the Qt GUI thread plus an
+  atomic `mark_state_dirty()` flag that coalesces updates and emits `TelemetryController::shared_state_changed`.
+  A `RefCell` turns any accidental cross-thread re-entrancy into a loud panic instead of a deadlock.
+  **Never touch it from a background thread.**
 * **`bridge/ops.rs`** contains every state transition that is not a property setter:
   display refresh, analytics recompute, medication view models (with `last_graph_markers_key`
-  caching so `GraphPoint` timestamps are not re-parsed on unchanged 250 ms ticks), event-log
+  caching so `GraphPoint` timestamps are not re-parsed on unchanged updates), event-log
   refresh gated by `EVENT_LOG_SEQ`, history persistence throttle, and `current_settings()`
-  (which clones `AppState::base_settings` in memory for zero disk I/O per tick, while
+  (which clones `AppState::base_settings` in memory for zero disk I/O per sync, while
   `persist_settings()` preserves any externally managed fields from `settings.json`).
 * **`bridge/telemetry.rs`** owns all async work (login, refresh, update check/install) and
-  funnels results back with `qt_thread().queue(...)`. It is also the object the C++ tray holds
-  a pointer to (`m_controller`), so tray actions are dispatched there and delegated into shared
-  state via short one-line wrappers, and tray state (including `overlay_only_mode` via
-  `TrayPayload::flags & 0x40`) is pushed via `TrayPayload`.
-* Cross-controller refresh is **pull-based**: the QML timer calls `sync()` on each controller.
-  There is no cross-object signal. If you need a value visible in three places, put it in
-  `AppState` and mirror it in each `sync()`.
-* Headless tests must drive this explicitly (`ui_tests.h` has a `sync_all()` helper); do not
+  funnels results back with `qt_thread().queue(...)`. It also serves as the tray's service host for
+  glucose refresh, snooze, updates, and notifications (`m_controller`), while `TrayManager::settingsController()`
+  routes settings-mutating tray menu actions directly to `SettingsController`, and tray state
+  (including `overlay_only_mode` via `TrayPayload::flags & 0x40`) is pushed via `TrayPayload`.
+* Cross-controller refresh is **event-driven**: state mutations trigger `mark_state_dirty()`, which
+  coalesces into `sharedStateChanged` in `Main.qml` so `settings.sync()` and `medications.sync()`
+  run immediately with zero idle 250 ms timer polling.
+* Headless tests must drive this explicitly (`ui_tests.cpp` has a `sync_all()` helper); do not
   paper over it with longer sleeps.
 
 ### Adding a new setting (checklist)
 
-1. `AppSettings` in `crates/librelinkup-core/src/models.rs`: field + `Default` + serde.
+1. `AppSettings` in `crates/librelinkup-core/src/models/settings.rs`: field + `Default` + serde.
 2. `AppState` in `src/bridge/state.rs`: mirror field, read it in `Default`.
 3. `ops::current_settings()`: copy the field into the persisted struct.
 4. `qobject_bridge.rs`: `#[qproperty]` + the matching field in `*ControllerRust`, plus a
    `#[qinvokable]` setter.
-5. `settings.rs`: setter body (mutate state → `ops::persist_settings` → `self.sync()`) and add
-   it to `sync()`.
-6. `src/qml/Main.qml`: bind the control; **no Save button** (see invariant I-6).
-7. `windows/src/app.rs` + `service.rs` if the Windows front-end should honour it too.
+5. `settings.rs`: setter body (mutate state → `ops::persist_settings` → `self.sync()` → `mark_state_dirty()`)
+   and add it to `sync()`.
+6. `src/qml/SettingsView.qml` / `src/qml/AlertsView.qml`: bind the control with instant-save on
+   interaction; **no Save button** (see invariant I-6).
+7. `windows/src/ui/` + `windows/src/service/` if the Windows front-end should honour it too.
 
 ---
 
@@ -192,16 +203,34 @@ cargo test -p librelinkup-core
 # Whole workspace incl. headless Qt/QML tests
 QT_QPA_PLATFORM=offscreen cargo test --workspace -- --test-threads=1
 
-# Lint gate used by CI
+# Headless UI/overflow suite directly
+QT_QPA_PLATFORM=offscreen cargo run -- --ui-test
+
+# Production release build without UI test harness (Flatpak / Flathub)
+cargo build --release --no-default-features
+
+# Lint gate used by CI (default and --no-default-features)
 cargo clippy --workspace --all-targets -- -D warnings
+cargo clippy --no-default-features --all-targets -- -D warnings
+
+# Flatpak SDK offline compatibility (rustc 1.98.1)
+flatpak run --command=sh --env=CARGO_TARGET_DIR=/tmp/llu-sdk-check --env=QMAKE=/usr/bin/qmake \
+  --env=QT_VERSION_MAJOR=6 --env=LIBCLANG_PATH=/usr/lib/sdk/llvm22/lib org.kde.Sdk//6.11 \
+  -c "cargo check --offline --no-default-features"
+
+# Windows tests & MinGW cross-clippy
+cargo test --manifest-path windows/Cargo.toml
+cargo clippy --manifest-path windows/Cargo.toml --target x86_64-pc-windows-gnu -- -D warnings
 ```
 
 * `tests/integration_tests.rs` spins up loopback mock LibreView servers. Plaintext loopback
   endpoints are refused unless `LIBRELINKUP_ALLOW_INSECURE_TEST_ENDPOINT=1` **or** the build
   has `debug_assertions` (i.e. never in a release binary).
-* `src/cpp/ui_tests.h` loads the real `Main.qml` offscreen and asserts: no layout overflow at
-  780×540 / 980×680 / 1280×800, on all 7 tabs, in both themes; overlay placement/clamping;
-  `Qt::Tool`+`BypassWindowManagerHint` flags; tray always visible; snooze works.
+* `src/cpp/ui_tests.cpp` (enabled by the default `ui-tests` Cargo feature; stubbed by
+  `src/cpp/ui_tests_stub.cpp` when `--no-default-features` is used for release Flatpak builds)
+  loads `Main.qml` and modular views offscreen and asserts: no layout overflow at
+  780×540 / 980×680 / 1280×800, on all 7 tabs, in both themes, across 80%/100%/130% zoom levels;
+  overlay placement/clamping; `Qt::Tool`+`BypassWindowManagerHint` flags; tray always visible; snooze works.
   **Any change to QML or the controller surface must keep this green.**
 * `test_live_libreview_waf_no_403_forbidden` is `#[ignore]`d: it performs real network I/O.
   Run it manually with `cargo test -- --ignored`. It never uses real credentials.

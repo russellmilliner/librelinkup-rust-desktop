@@ -20,54 +20,6 @@ Item {
     function openAboutWindow() {
     }
 
-    component HighContrastScrollBar: QQC2.ScrollBar {
-        id: hcScrollBar
-        objectName: "highContrastScrollBar"
-        policy: size < 1.0 ? QQC2.ScrollBar.AlwaysOn : QQC2.ScrollBar.AsNeeded
-        interactive: true
-        minimumSize: 0.14
-        implicitWidth: orientation === Qt.Vertical ? 12 : (parent ? parent.width : 100)
-        implicitHeight: orientation === Qt.Horizontal ? 12 : (parent ? parent.height : 100)
-        x: orientation === Qt.Vertical ? (parent ? parent.width - width : 0) : 0
-        y: orientation === Qt.Horizontal ? (parent ? parent.height - height : 0) : 0
-        width: orientation === Qt.Vertical ? 12 : (parent ? parent.width : implicitWidth)
-        height: orientation === Qt.Horizontal ? 12 : (parent ? parent.height : implicitHeight)
-        z: 50
-        padding: 2
-
-        background: Rectangle {
-            objectName: "highContrastScrollBarTrack"
-            implicitWidth: hcScrollBar.orientation === Qt.Vertical ? 12 : 100
-            implicitHeight: hcScrollBar.orientation === Qt.Horizontal ? 12 : 100
-            radius: 6
-            color: aboutWindow.isLightTheme
-                ? "#cbd5e1"
-                : Qt.alpha(Kirigami.Theme.textColor, 0.16)
-            border.width: 1
-            border.color: aboutWindow.isLightTheme
-                ? "#475569"
-                : Qt.alpha(Kirigami.Theme.textColor, 0.32)
-            visible: hcScrollBar.size < 1.0 || hcScrollBar.policy === QQC2.ScrollBar.AlwaysOn
-        }
-
-        contentItem: Rectangle {
-            objectName: "highContrastScrollBarThumb"
-            implicitWidth: hcScrollBar.orientation === Qt.Vertical ? 8 : 48
-            implicitHeight: hcScrollBar.orientation === Qt.Horizontal ? 8 : 48
-            radius: 4
-            visible: hcScrollBar.size < 1.0 || hcScrollBar.policy === QQC2.ScrollBar.AlwaysOn
-            color: hcScrollBar.pressed
-                ? Kirigami.Theme.highlightColor
-                : (hcScrollBar.hovered
-                    ? Qt.lighter(Kirigami.Theme.highlightColor, 1.15)
-                    : (aboutWindow.isLightTheme ? "#334155" : Qt.alpha(Kirigami.Theme.textColor, 0.68)))
-            border.width: 1
-            border.color: aboutWindow.isLightTheme
-                ? "#0f172a"
-                : Qt.alpha(Kirigami.Theme.backgroundColor, 0.55)
-        }
-    }
-
     ColumnLayout {
         anchors.fill: parent
         spacing: 10
@@ -88,6 +40,7 @@ Item {
             QQC2.ScrollBar.vertical: HighContrastScrollBar {
                 id: aboutVerticalScrollBar
                 objectName: "aboutVerticalScrollBar"
+                isLightTheme: aboutWindow.isLightTheme
                 parent: aboutScroll
                 anchors.top: aboutScroll.top
                 anchors.right: aboutScroll.right
@@ -205,10 +158,10 @@ Item {
                             spacing: 8
 
                             QQC2.Label {
-                                text: settings ? settings.updateStatusMessage : ""
+                                text: aboutWindow.controller ? aboutWindow.controller.updateStatusMessage : ""
                                 textFormat: Text.PlainText
-                                font.bold: settings ? settings.updateAvailable : false
-                                color: (settings && settings.updateAvailable)
+                                font.bold: aboutWindow.controller ? aboutWindow.controller.updateAvailable : false
+                                color: (aboutWindow.controller && aboutWindow.controller.updateAvailable)
                                     ? (aboutWindow.isLightTheme ? "#0284c7" : "#38bdf8")
                                     : Kirigami.Theme.textColor
                                 opacity: 0.9
@@ -220,8 +173,8 @@ Item {
                             QQC2.Button {
                                 objectName: "aboutCheckUpdatesButton"
                                 icon.name: "system-software-update"
-                                text: (settings && settings.checkingForUpdates) ? qsTr("Checking...") : qsTr("Check Updates")
-                                enabled: settings ? !settings.checkingForUpdates : false
+                                text: (aboutWindow.controller && aboutWindow.controller.checkingForUpdates) ? qsTr("Checking...") : qsTr("Check Updates")
+                                enabled: aboutWindow.controller ? !aboutWindow.controller.checkingForUpdates : false
                                 onClicked: {
                                     if (telemetry) {
                                         telemetry.checkForUpdates()
@@ -230,10 +183,10 @@ Item {
                             }
 
                             QQC2.Button {
-                                visible: settings ? settings.updateAvailable : false
+                                visible: aboutWindow.controller ? aboutWindow.controller.updateAvailable : false
                                 icon.name: "download"
-                                text: settings ? (settings.installingUpdate ? qsTr("Installing...") : qsTr("Install %1").arg(settings.latestVersion)) : ""
-                                enabled: settings ? !settings.installingUpdate : false
+                                text: aboutWindow.controller ? (aboutWindow.controller.installingUpdate ? qsTr("Installing...") : qsTr("Install %1").arg(aboutWindow.controller.latestVersion)) : ""
+                                enabled: aboutWindow.controller ? !aboutWindow.controller.installingUpdate : false
                                 onClicked: {
                                     if (telemetry) {
                                         telemetry.installUpdate()
@@ -242,12 +195,12 @@ Item {
                             }
 
                             QQC2.Button {
-                                visible: settings ? settings.updateAvailable : false
+                                visible: aboutWindow.controller ? aboutWindow.controller.updateAvailable : false
                                 icon.name: "globe"
                                 text: qsTr("View Release")
                                 onClicked: {
-                                    if (settings && settings.updateUrl) {
-                                        Qt.openUrlExternally(settings.updateUrl)
+                                    if (aboutWindow.controller && aboutWindow.controller.updateUrl) {
+                                        Qt.openUrlExternally(aboutWindow.controller.updateUrl)
                                     }
                                 }
                             }

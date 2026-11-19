@@ -42,7 +42,7 @@ modules:
       build-args:
         - --share=network
     build-commands:
-      - cargo build --release
+      - cargo build --release --no-default-features
       - install -Dm755 target/release/librelinkup-kde /app/bin/librelinkup-kde
       - install -Dm644 data/io.github.russellmilliner.LibreLinkUpDesktop.desktop /app/share/applications/io.github.russellmilliner.LibreLinkUpDesktop.desktop
       - install -Dm644 data/io.github.russellmilliner.LibreLinkUpDesktop.notifyrc /app/share/knotifications6/io.github.russellmilliner.LibreLinkUpDesktop.notifyrc

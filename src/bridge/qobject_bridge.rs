@@ -333,33 +333,6 @@ pub mod qobject {
 
         // ---- action delegates invoked by the C++ tray / window manager ----
         #[qinvokable]
-        fn update_theme_mode(self: Pin<&mut TelemetryController>, mode: QString);
-
-        #[qinvokable]
-        fn update_show_glucose_in_tray_icon(self: Pin<&mut TelemetryController>, enabled: bool);
-
-        #[qinvokable]
-        fn update_show_glucose_in_tray_tooltip(self: Pin<&mut TelemetryController>, enabled: bool);
-
-        #[qinvokable]
-        fn update_tray_only_relevant_out_of_range(
-            self: Pin<&mut TelemetryController>,
-            enabled: bool,
-        );
-
-        #[qinvokable]
-        fn update_overlay_visible(self: Pin<&mut TelemetryController>, visible: bool);
-
-        #[qinvokable]
-        fn update_overlay_on_all_desktops(self: Pin<&mut TelemetryController>, enabled: bool);
-
-        #[qinvokable]
-        fn update_overlay_only_mode(self: Pin<&mut TelemetryController>, only_overlay: bool);
-
-        #[qinvokable]
-        fn update_autostart_enabled(self: Pin<&mut TelemetryController>, enabled: bool);
-
-        #[qinvokable]
         fn refresh_glucose_from_tray(self: Pin<&mut TelemetryController>);
 
         #[qinvokable]

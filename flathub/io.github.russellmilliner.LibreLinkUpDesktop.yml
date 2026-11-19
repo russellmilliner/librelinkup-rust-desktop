@@ -32,7 +32,7 @@ modules:
         QT_VERSION_MAJOR: '6'
     build-commands:
       - cargo --offline fetch --manifest-path Cargo.toml --verbose
-      - cargo --offline build --release --verbose
+      - cargo --offline build --release --no-default-features --verbose
       - install -Dm755 ./target/release/librelinkup-kde -t /app/bin/
       - install -Dm644 ./data/io.github.russellmilliner.LibreLinkUpDesktop.desktop -t /app/share/applications/
       - install -Dm644 ./data/io.github.russellmilliner.LibreLinkUpDesktop.notifyrc -t /app/share/knotifications6/

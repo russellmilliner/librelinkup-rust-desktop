@@ -7,6 +7,10 @@ license = "Apache-2.0"
 description = "LibreLinkUp Rust Desktop — KDE Plasma 6 / Kirigami Blood Glucose Monitor for LibreLinkUp"
 repository = "https://github.com/russellmilliner/librelinkup-rust-desktop"
 
+[features]
+default = ["ui-tests"]
+ui-tests = []
+
 [lib]
 name = "librelinkup_kde"
 path = "src/lib.rs"
@@ -42,3 +46,11 @@ cxx-qt-build = { version = "0.7.2", features = ["link_qt_object_files"] }
 lto = "thin"
 codegen-units = 1
 strip = "symbols"
+
+[[test]]
+name = "desktop_overlay_widget_tests"
+required-features = ["ui-tests"]
+
+[[test]]
+name = "task_manager_icon_tests"
+required-features = ["ui-tests"]

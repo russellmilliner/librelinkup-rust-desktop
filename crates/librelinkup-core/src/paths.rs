@@ -435,17 +435,6 @@ pub fn is_system_flatpak_install() -> bool {
         .unwrap_or(false)
 }
 
-pub fn runtime_dir() -> PathBuf {
-    let dir = env::var("XDG_RUNTIME_DIR")
-        .ok()
-        .filter(|s| !s.trim().is_empty())
-        .map(|base| PathBuf::from(base).join(APP_DIR_NAME))
-        .unwrap_or_else(|| private_temp_fallback_dir("runtime"));
-    let _ = fs::create_dir_all(&dir);
-    restrict_dir_permissions(&dir);
-    dir
-}
-
 pub fn settings_file_path() -> PathBuf {
     config_dir().join("settings.json")
 }
@@ -456,10 +445,6 @@ pub fn credentials_file_path() -> PathBuf {
 
 pub fn master_key_file_path() -> PathBuf {
     config_dir().join("master.key")
-}
-
-pub fn default_log_file_path() -> PathBuf {
-    data_dir().join("librelinkup-kde.log")
 }
 
 /// Generated default alarm sound (see `alert_sound`).

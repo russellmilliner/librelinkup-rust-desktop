@@ -9,14 +9,10 @@ use std::path::Path;
 use chrono::{Datelike, Local, NaiveTime, TimeZone};
 use serde::{Deserialize, Serialize};
 
-use crate::crypto::{
-    decrypt_bytes_with_secret, encrypt_bytes_with_secret, phi_secret, AAD_LABEL_MEDICATIONS,
-};
+use crate::crypto::{phi_secret, AAD_LABEL_MEDICATIONS};
 use crate::event_log::{log_error, log_info};
 use crate::models::{parse_libreview_timestamp, GlucoseSnapshot};
-use crate::paths::{
-    legacy_medications_file_path, medications_file_path, write_file_atomic_0600,
-};
+use crate::paths::{legacy_medications_file_path, medications_file_path};
 
 /// Minimum seconds between repeated desktop reminder notifications for the same medication.
 pub const MEDICATION_REMINDER_REPEAT_SECONDS: i64 = 60 * 60;
@@ -1205,20 +1201,12 @@ pub fn try_load_medications_from_path_with_secret(
     path: &Path,
     secret: &[u8],
 ) -> Result<Option<MedicationStore>, String> {
-    use zeroize::Zeroize;
-
-    if !path.exists() {
+    let Some(mut store) =
+        crate::crypto::EncryptedVault::<MedicationStore>::new(AAD_LABEL_MEDICATIONS)
+            .load_with_secret(path, secret)?
+    else {
         return Ok(None);
-    }
-    let raw = fs::read_to_string(path)
-        .map_err(|e| format!("Failed to read medication vault: {e}"))?;
-    let envelope: crate::crypto::EncryptedEnvelope = serde_json::from_str(&raw)
-        .map_err(|e| format!("Corrupted medication envelope: {e}"))?;
-    let mut plaintext = decrypt_bytes_with_secret(&envelope, secret, AAD_LABEL_MEDICATIONS)?;
-    let parsed = serde_json::from_slice::<MedicationStore>(&plaintext)
-        .map_err(|e| format!("Corrupted medication payload: {e}"));
-    plaintext.zeroize();
-    let mut store = parsed?;
+    };
     store
         .dose_logs
         .sort_by_key(|d| std::cmp::Reverse(d.taken_at_epoch));
@@ -1235,18 +1223,8 @@ pub fn save_medications_to_path_with_secret(
     path: &Path,
     secret: &[u8],
 ) -> Result<(), String> {
-    use zeroize::Zeroize;
-
-    let mut json = serde_json::to_vec(store)
-        .map_err(|e| format!("Failed to serialize medications: {e}"))?;
-    let res = encrypt_bytes_with_secret(&json, secret, AAD_LABEL_MEDICATIONS).and_then(|envelope| {
-        let serialized = serde_json::to_string(&envelope)
-            .map_err(|e| format!("Failed to serialize medication envelope: {e}"))?;
-        write_file_atomic_0600(path, serialized.as_bytes())
-            .map_err(|e| format!("Failed to write medication vault: {e}"))
-    });
-    json.zeroize();
-    res
+    crate::crypto::EncryptedVault::<MedicationStore>::new(AAD_LABEL_MEDICATIONS)
+        .save_with_secret(store, path, secret)
 }
 
 /// Loads the medication vault, returning `Err` if an existing vault cannot be opened or
@@ -1511,5 +1489,66 @@ mod tests {
         assert_eq!(evening_reminders[0].medication_id, m1);
         assert!(evening_reminders[0].title.contains("Metformin"));
         assert!(store.evaluate_due_reminders(evening + 3600, &mut notified).is_empty());
+    }
+
+    #[test]
+    fn deduplicate_dose_logs_removes_duplicates_and_preserves_order() {
+        let now = 1_750_000_000i64;
+        let mut store = MedicationStore {
+            dose_logs: vec![
+                MedicationDoseLog {
+                    id: "d1".into(),
+                    medication_id: "m1".into(),
+                    medication_name: "MedA".into(),
+                    dosage: "10mg".into(),
+                    taken_at_epoch: now - 100,
+                    taken_at_display: "t1".into(),
+                    glucose_mg_dl_at_dose: None,
+                    notes: "".into(),
+                    skipped: false,
+                },
+                // Duplicate within bucket / same ID or same med+time
+                MedicationDoseLog {
+                    id: "d1-dup".into(),
+                    medication_id: "m1".into(),
+                    medication_name: "MedA".into(),
+                    dosage: "10mg".into(),
+                    taken_at_epoch: now - 100,
+                    taken_at_display: "t1".into(),
+                    glucose_mg_dl_at_dose: None,
+                    notes: "dup".into(),
+                    skipped: false,
+                },
+                MedicationDoseLog {
+                    id: "d2".into(),
+                    medication_id: "m2".into(),
+                    medication_name: "MedB".into(),
+                    dosage: "5mg".into(),
+                    taken_at_epoch: now - 4000,
+                    taken_at_display: "t2".into(),
+                    glucose_mg_dl_at_dose: Some(115.0),
+                    notes: "".into(),
+                    skipped: true,
+                },
+                MedicationDoseLog {
+                    id: "d2".into(),
+                    medication_id: "m2".into(),
+                    medication_name: "MedB".into(),
+                    dosage: "5mg".into(),
+                    taken_at_epoch: now - 4000,
+                    taken_at_display: "t2".into(),
+                    glucose_mg_dl_at_dose: Some(115.0),
+                    notes: "".into(),
+                    skipped: true,
+                },
+            ],
+            ..Default::default()
+        };
+
+        assert!(store.deduplicate_dose_logs());
+        assert_eq!(store.dose_logs.len(), 2);
+        assert_eq!(store.dose_logs[0].medication_id, "m1");
+        assert_eq!(store.dose_logs[1].medication_id, "m2");
+        assert!(!store.deduplicate_dose_logs(), "second call must be idempotent");
     }
 }

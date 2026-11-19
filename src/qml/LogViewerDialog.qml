@@ -75,54 +75,6 @@ Item {
         return "#94a3b8"
     }
 
-    component HighContrastScrollBar: QQC2.ScrollBar {
-        id: hcScrollBar
-        objectName: "highContrastScrollBar"
-        policy: size < 1.0 ? QQC2.ScrollBar.AlwaysOn : QQC2.ScrollBar.AsNeeded
-        interactive: true
-        minimumSize: 0.14
-        implicitWidth: orientation === Qt.Vertical ? 12 : (parent ? parent.width : 100)
-        implicitHeight: orientation === Qt.Horizontal ? 12 : (parent ? parent.height : 100)
-        x: orientation === Qt.Vertical ? (parent ? parent.width - width : 0) : 0
-        y: orientation === Qt.Horizontal ? (parent ? parent.height - height : 0) : 0
-        width: orientation === Qt.Vertical ? 12 : (parent ? parent.width : implicitWidth)
-        height: orientation === Qt.Horizontal ? 12 : (parent ? parent.height : implicitHeight)
-        z: 50
-        padding: 2
-
-        background: Rectangle {
-            objectName: "highContrastScrollBarTrack"
-            implicitWidth: hcScrollBar.orientation === Qt.Vertical ? 12 : 100
-            implicitHeight: hcScrollBar.orientation === Qt.Horizontal ? 12 : 100
-            radius: 6
-            color: logViewerDialog.isLightTheme
-                ? "#cbd5e1"
-                : Qt.alpha(Kirigami.Theme.textColor, 0.16)
-            border.width: 1
-            border.color: logViewerDialog.isLightTheme
-                ? "#475569"
-                : Qt.alpha(Kirigami.Theme.textColor, 0.32)
-            visible: hcScrollBar.size < 1.0 || hcScrollBar.policy === QQC2.ScrollBar.AlwaysOn
-        }
-
-        contentItem: Rectangle {
-            objectName: "highContrastScrollBarThumb"
-            implicitWidth: hcScrollBar.orientation === Qt.Vertical ? 8 : 48
-            implicitHeight: hcScrollBar.orientation === Qt.Horizontal ? 8 : 48
-            radius: 4
-            visible: hcScrollBar.size < 1.0 || hcScrollBar.policy === QQC2.ScrollBar.AlwaysOn
-            color: hcScrollBar.pressed
-                ? Kirigami.Theme.highlightColor
-                : (hcScrollBar.hovered
-                    ? Qt.lighter(Kirigami.Theme.highlightColor, 1.15)
-                    : (logViewerDialog.isLightTheme ? "#334155" : Qt.alpha(Kirigami.Theme.textColor, 0.68)))
-            border.width: 1
-            border.color: logViewerDialog.isLightTheme
-                ? "#0f172a"
-                : Qt.alpha(Kirigami.Theme.backgroundColor, 0.55)
-        }
-    }
-
     function refreshModel(forceScrollToEnd) {
         const prevCount = logListView.count
         const prevContentY = logListView.contentY
@@ -381,6 +333,7 @@ Item {
                 QQC2.ScrollBar.vertical: HighContrastScrollBar {
                     id: logVerticalScrollBar
                     objectName: "logVerticalScrollBar"
+                    isLightTheme: logViewerDialog.isLightTheme
                     parent: logListView
                     anchors.top: logListView.top
                     anchors.right: logListView.right

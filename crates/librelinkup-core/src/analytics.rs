@@ -8,14 +8,10 @@ use std::path::Path;
 
 use serde::{Deserialize, Serialize};
 
-use crate::crypto::{
-    decrypt_bytes_with_secret, encrypt_bytes_with_secret, phi_secret, AAD_LABEL_GLUCOSE_HISTORY,
-};
+use crate::crypto::{phi_secret, AAD_LABEL_GLUCOSE_HISTORY};
 use crate::event_log::{log_error, log_info};
 use crate::models::{format_glucose_value, parse_libreview_timestamp, GlucoseSnapshot};
-use crate::paths::{
-    glucose_history_file_path, legacy_glucose_history_file_path, write_file_atomic_0600,
-};
+use crate::paths::{glucose_history_file_path, legacy_glucose_history_file_path};
 
 /// Maximum number of days retained in the rolling local glucose history file.
 pub const MAX_HISTORY_DAYS: i64 = 90;
@@ -487,20 +483,13 @@ pub fn try_load_glucose_history_from_path_with_secret(
     path: &Path,
     secret: &[u8],
 ) -> Result<Option<GlucoseHistoryStore>, String> {
-    use zeroize::Zeroize;
-
-    if !path.exists() {
+    let Some(mut store) = crate::crypto::EncryptedVault::<GlucoseHistoryStore>::new(
+        AAD_LABEL_GLUCOSE_HISTORY,
+    )
+    .load_with_secret(path, secret)?
+    else {
         return Ok(None);
-    }
-    let raw = fs::read_to_string(path)
-        .map_err(|e| format!("Failed to read glucose history vault: {e}"))?;
-    let envelope: crate::crypto::EncryptedEnvelope = serde_json::from_str(&raw)
-        .map_err(|e| format!("Corrupted glucose history envelope: {e}"))?;
-    let mut plaintext = decrypt_bytes_with_secret(&envelope, secret, AAD_LABEL_GLUCOSE_HISTORY)?;
-    let parsed = serde_json::from_slice::<GlucoseHistoryStore>(&plaintext)
-        .map_err(|e| format!("Corrupted glucose history payload: {e}"));
-    plaintext.zeroize();
-    let mut store = parsed?;
+    };
     // Guarantee the sorted-by-epoch invariant used by `ingest_snapshot`.
     store.samples.retain(|s| s.value_mg_dl > 0.0);
     store.samples.sort_by_key(|s| s.epoch);
@@ -533,20 +522,8 @@ pub fn save_glucose_history_to_path_with_secret(
     path: &Path,
     secret: &[u8],
 ) -> Result<(), String> {
-    use zeroize::Zeroize;
-
-    let mut json = serde_json::to_vec(store)
-        .map_err(|e| format!("Failed to serialize glucose history: {e}"))?;
-    let res = encrypt_bytes_with_secret(&json, secret, AAD_LABEL_GLUCOSE_HISTORY).and_then(
-        |envelope| {
-            let serialized = serde_json::to_string(&envelope)
-                .map_err(|e| format!("Failed to serialize glucose history envelope: {e}"))?;
-            write_file_atomic_0600(path, serialized.as_bytes())
-                .map_err(|e| format!("Failed to write glucose history vault: {e}"))
-        },
-    );
-    json.zeroize();
-    res
+    crate::crypto::EncryptedVault::<GlucoseHistoryStore>::new(AAD_LABEL_GLUCOSE_HISTORY)
+        .save_with_secret(store, path, secret)
 }
 
 /// Loads the 90-day history vault, returning `Err` if an existing vault cannot be opened
@@ -725,5 +702,38 @@ mod tests {
         assert!(try_load_glucose_history_from_path_with_secret(&path, secret).is_err());
 
         let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn partition_point_window_slicing_and_fast_append_vs_out_of_order() {
+        let now = 1_750_000_000i64;
+        let mut store = GlucoseHistoryStore {
+            samples: vec![
+                HistorySample { epoch: now - 35 * 86_400, value_mg_dl: 200.0 },
+                HistorySample { epoch: now - 10 * 86_400, value_mg_dl: 150.0 },
+                HistorySample { epoch: now - 6 * 86_400, value_mg_dl: 120.0 },
+                HistorySample { epoch: now - 3600, value_mg_dl: 100.0 },
+            ],
+        };
+
+        assert_eq!(store.compute_stats(StatsWindow::Hours12, now, 70.0, 180.0, None).sample_count, 1);
+        assert_eq!(store.compute_stats(StatsWindow::Days7, now, 70.0, 180.0, None).sample_count, 2);
+        assert_eq!(store.compute_stats(StatsWindow::Days14, now, 70.0, 180.0, None).sample_count, 3);
+        assert_eq!(store.compute_stats(StatsWindow::Days90, now, 70.0, 180.0, None).sample_count, 4);
+
+        // Newer-sample append fast path
+        let mut s_append = GlucoseSnapshot {
+            value_mg_dl: 110.0,
+            measured_at_epoch: Some(now),
+            ..Default::default()
+        };
+        assert!(store.ingest_snapshot(&s_append, now));
+        assert_eq!(store.samples.last().unwrap().value_mg_dl, 110.0);
+
+        // Out-of-order historical point inserted into sorted order cleanly
+        s_append.value_mg_dl = 135.0;
+        s_append.measured_at_epoch = Some(now - 3 * 86_400);
+        assert!(store.ingest_snapshot(&s_append, now));
+        assert!(store.samples.windows(2).all(|w| w[0].epoch < w[1].epoch));
     }
 }

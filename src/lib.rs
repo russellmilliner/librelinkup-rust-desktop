@@ -7,6 +7,8 @@ pub use librelinkup_core::{
 };
 
 pub mod bridge {
+    #[macro_use]
+    pub mod macros;
     pub mod autostart;
     pub mod medications;
     pub mod ops;

@@ -1,3 +1,4 @@
+#[cfg(feature = "ui-tests")]
 #[test]
 fn test_desktop_overlay_widget_lifecycle_and_hide_restore_placement() {
     let dir = std::env::temp_dir().join(format!("llu_widget_test_cfg_{}", std::process::id()));

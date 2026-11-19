@@ -4,7 +4,9 @@
 //! up to date even while the main window is hidden.
 
 use std::sync::mpsc::{channel, Receiver, Sender, TryRecvError};
-use std::sync::{Arc, OnceLock};
+#[cfg(windows)]
+use std::sync::Arc;
+use std::sync::OnceLock;
 use std::time::Duration;
 
 use ab_glyph::{Font, FontArc, PxScale, ScaleFont};

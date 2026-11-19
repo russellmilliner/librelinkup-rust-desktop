@@ -2,7 +2,7 @@
 //! LibreLinkUp Rust Desktop for Windows.
 
 mod alerts;
-mod app;
+mod ui;
 mod platform;
 mod service;
 mod tray;
@@ -13,7 +13,7 @@ use std::sync::{Arc, Mutex, OnceLock};
 use eframe::egui;
 use librelinkup_core::event_log::{log_error, log_info};
 
-use crate::app::{build_tray_view, LibreLinkUpApp, UiHandle};
+use crate::ui::{build_tray_view, LibreLinkUpApp, UiHandle};
 use crate::service::{Command, SharedState, UiNotifier};
 use crate::tray::{TrayAction, TraySender};
 
@@ -124,6 +124,7 @@ fn main() {
     if let Some(e) = last_error {
         show_fatal_error(&format!("LibreLinkUp could not start a graphics renderer:\n\n{e}"));
     }
+    #[allow(clippy::drop_non_drop)]
     drop(_instance);
 }
 

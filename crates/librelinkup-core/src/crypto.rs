@@ -26,7 +26,7 @@ use ring::aead::{Aad, LessSafeKey, Nonce, UnboundKey, AES_256_GCM};
 use ring::hkdf;
 use ring::pbkdf2;
 use ring::rand::{SecureRandom, SystemRandom};
-use serde::{Deserialize, Serialize};
+use serde::{de::DeserializeOwned, Deserialize, Serialize};
 use zeroize::{Zeroize, Zeroizing};
 
 use crate::paths::{
@@ -843,19 +843,85 @@ pub fn load_or_create_master_secret_for_vaults(
     Ok(Zeroizing::new(combined))
 }
 
+/// Generic encrypted JSON vault bound to an AAD context label (`credentials`, `glucose-history`,
+/// or `medications`) using [`encrypt_bytes_with_secret`] / [`decrypt_bytes_with_secret`].
+pub struct EncryptedVault<T> {
+    label: &'static str,
+    pretty: bool,
+    _marker: std::marker::PhantomData<fn() -> T>,
+}
+
+impl<T> EncryptedVault<T> {
+    pub const fn new(label: &'static str) -> Self {
+        Self {
+            label,
+            pretty: false,
+            _marker: std::marker::PhantomData,
+        }
+    }
+
+    pub const fn with_pretty(mut self, pretty: bool) -> Self {
+        self.pretty = pretty;
+        self
+    }
+}
+
+impl<T: Serialize> EncryptedVault<T> {
+    pub fn save_with_secret(
+        &self,
+        value: &T,
+        path: &Path,
+        master_secret: &[u8],
+    ) -> Result<(), String> {
+        let mut json = serde_json::to_vec(value)
+            .map_err(|e| format!("Failed to serialize {} vault: {e}", self.label))?;
+        let res = encrypt_bytes_with_secret(&json, master_secret, self.label).and_then(|envelope| {
+            let serialized = if self.pretty {
+                serde_json::to_string_pretty(&envelope)
+            } else {
+                serde_json::to_string(&envelope)
+            }
+            .map_err(|e| format!("Failed to serialize {} envelope: {e}", self.label))?;
+            write_file_atomic_0600(path, serialized.as_bytes())
+                .map_err(|e| format!("Failed to write {} vault: {e}", self.label))
+        });
+        json.zeroize();
+        res
+    }
+}
+
+impl<T: DeserializeOwned> EncryptedVault<T> {
+    pub fn load_with_secret(
+        &self,
+        path: &Path,
+        master_secret: &[u8],
+    ) -> Result<Option<T>, String> {
+        if !path.exists() {
+            return Ok(None);
+        }
+        let raw = fs::read_to_string(path)
+            .map_err(|e| format!("Failed to read {} vault: {e}", self.label))?;
+        let envelope: EncryptedEnvelope = serde_json::from_str(&raw)
+            .map_err(|e| format!("Corrupted {} envelope: {e}", self.label))?;
+        let mut plaintext = decrypt_bytes_with_secret(&envelope, master_secret, self.label)?;
+        let parsed = serde_json::from_slice::<T>(&plaintext)
+            .map_err(|e| format!("Corrupted {} payload: {e}", self.label));
+        plaintext.zeroize();
+        parsed.map(Some)
+    }
+}
+
+fn credentials_vault() -> EncryptedVault<StoredCredentials> {
+    EncryptedVault::new(AAD_LABEL_CREDENTIALS).with_pretty(true)
+}
+
 pub fn save_credentials_to_path(
     creds: &StoredCredentials,
     creds_path: &Path,
     key_path: &Path,
 ) -> Result<(), String> {
     let mut secret = load_or_create_master_secret_guarded(key_path, Some(creds_path))?;
-    let res = (|| {
-        let envelope = encrypt_credentials_with_secret(creds, &secret)?;
-        let serialized = serde_json::to_string_pretty(&envelope)
-            .map_err(|e| format!("Failed to serialize encrypted envelope: {e}"))?;
-        write_file_atomic_0600(creds_path, serialized.as_bytes())
-            .map_err(|e| format!("Failed to write encrypted credentials file: {e}"))
-    })();
+    let res = credentials_vault().save_with_secret(creds, creds_path, &secret);
     secret.zeroize();
     res
 }
@@ -867,11 +933,7 @@ pub fn save_credentials_with_secret(
     creds_path: &Path,
     master_secret: &[u8],
 ) -> Result<(), String> {
-    let envelope = encrypt_credentials_with_secret(creds, master_secret)?;
-    let serialized = serde_json::to_string_pretty(&envelope)
-        .map_err(|e| format!("Failed to serialize encrypted envelope: {e}"))?;
-    write_file_atomic_0600(creds_path, serialized.as_bytes())
-        .map_err(|e| format!("Failed to write encrypted credentials file: {e}"))
+    credentials_vault().save_with_secret(creds, creds_path, master_secret)
 }
 
 /// Loads and decrypts credentials using a caller-supplied master secret.
@@ -879,14 +941,7 @@ pub fn load_credentials_with_secret(
     creds_path: &Path,
     master_secret: &[u8],
 ) -> Result<Option<StoredCredentials>, String> {
-    if !creds_path.exists() {
-        return Ok(None);
-    }
-    let raw = fs::read_to_string(creds_path)
-        .map_err(|e| format!("Failed to read encrypted credentials file: {e}"))?;
-    let envelope: EncryptedEnvelope = serde_json::from_str(&raw)
-        .map_err(|e| format!("Corrupted encrypted credentials envelope: {e}"))?;
-    decrypt_credentials_with_secret(&envelope, master_secret).map(Some)
+    credentials_vault().load_with_secret(creds_path, master_secret)
 }
 
 pub fn load_credentials_from_path(
@@ -896,14 +951,10 @@ pub fn load_credentials_from_path(
     if !creds_path.exists() {
         return Ok(None);
     }
-    let raw = fs::read_to_string(creds_path)
-        .map_err(|e| format!("Failed to read encrypted credentials file: {e}"))?;
-    let envelope: EncryptedEnvelope = serde_json::from_str(&raw)
-        .map_err(|e| format!("Corrupted encrypted credentials envelope: {e}"))?;
     let mut secret = load_or_create_master_secret_guarded(key_path, Some(creds_path))?;
-    let res = decrypt_credentials_with_secret(&envelope, &secret);
+    let res = credentials_vault().load_with_secret(creds_path, &secret);
     secret.zeroize();
-    res.map(Some)
+    res
 }
 
 pub fn clear_credentials_at_path(creds_path: &Path) -> Result<(), String> {
@@ -1290,5 +1341,57 @@ mod tests {
         env.version = ENVELOPE_VERSION_V1;
         let err = decrypt_bytes_with_secret(&env, &secret, AAD_LABEL_MEDICATIONS).unwrap_err();
         assert!(err.contains("Legacy v1 envelopes"), "{err}");
+    }
+
+    #[test]
+    fn v3_hkdf_envelope_round_trip_tamper_resistance_and_encrypted_vault() {
+        #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+        struct TestPayload {
+            note: String,
+            count: u32,
+        }
+
+        let secret = vec![0x7Au8; 32];
+        let env = encrypt_bytes_with_secret(b"hello-hkdf-v3", &secret, AAD_LABEL_MEDICATIONS).unwrap();
+        assert_eq!(env.version, 3);
+        assert_eq!(env.kdf, KDF_HKDF_SHA256);
+        assert_eq!(env.iterations, 0);
+
+        let dec = decrypt_bytes_with_secret(&env, &secret, AAD_LABEL_MEDICATIONS).unwrap();
+        assert_eq!(dec, b"hello-hkdf-v3");
+
+        // Label / AAD mismatch must fail
+        assert!(decrypt_bytes_with_secret(&env, &secret, AAD_LABEL_CREDENTIALS).is_err());
+        // Tampered salt / nonce / ciphertext must fail
+        let mut bad_salt = env.clone();
+        bad_salt.salt_hex = bytes_to_hex(&[0xFFu8; SALT_LEN]);
+        assert!(decrypt_bytes_with_secret(&bad_salt, &secret, AAD_LABEL_MEDICATIONS).is_err());
+
+        let mut bad_nonce = env.clone();
+        bad_nonce.nonce_hex = bytes_to_hex(&[0x00u8; NONCE_LEN]);
+        assert!(decrypt_bytes_with_secret(&bad_nonce, &secret, AAD_LABEL_MEDICATIONS).is_err());
+
+        let mut bad_ct = env;
+        let mut ct_bytes = hex_to_bytes(&bad_ct.ciphertext_hex).unwrap();
+        ct_bytes[0] ^= 0x01;
+        bad_ct.ciphertext_hex = bytes_to_hex(&ct_bytes);
+        assert!(decrypt_bytes_with_secret(&bad_ct, &secret, AAD_LABEL_MEDICATIONS).is_err());
+
+        // EncryptedVault<T> file round-trip
+        let dir = std::env::temp_dir().join(format!("llu-vault-gen-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&dir);
+        fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("test_vault.enc.json");
+        let vault = EncryptedVault::<TestPayload>::new("test-vault");
+        assert!(vault.load_with_secret(&path, &secret).unwrap().is_none());
+
+        let item = TestPayload {
+            note: "encrypted-item".into(),
+            count: 9,
+        };
+        vault.save_with_secret(&item, &path, &secret).unwrap();
+        let loaded = vault.load_with_secret(&path, &secret).unwrap().unwrap();
+        assert_eq!(loaded, item);
+        let _ = fs::remove_dir_all(&dir);
     }
 }

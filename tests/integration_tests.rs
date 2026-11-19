@@ -512,6 +512,7 @@ fn test_live_libreview_waf_no_403_forbidden() {
     });
 }
 
+#[cfg(feature = "ui-tests")]
 #[test]
 fn test_qml_ui_layout_no_box_or_window_overflow() {
     let dir = std::env::temp_dir().join(format!("llu_uitest_cfg_{}", std::process::id()));

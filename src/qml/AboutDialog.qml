@@ -206,6 +206,7 @@ Item {
 
                             QQC2.Label {
                                 text: settings ? settings.updateStatusMessage : ""
+                                textFormat: Text.PlainText
                                 font.bold: settings ? settings.updateAvailable : false
                                 color: (settings && settings.updateAvailable)
                                     ? (aboutWindow.isLightTheme ? "#0284c7" : "#38bdf8")

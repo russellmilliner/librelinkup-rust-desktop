@@ -694,6 +694,7 @@ Kirigami.ApplicationWindow {
                 id: footerStatusLabel
                 objectName: "footerStatusLabel"
                 text: root.footerStatusSummaryText
+                textFormat: Text.PlainText
                 font.pointSize: Math.max(8.0, root.baseFontPt * 0.85)
                 color: Kirigami.Theme.textColor
                 elide: Text.ElideRight
@@ -808,6 +809,7 @@ Kirigami.ApplicationWindow {
 
                 QQC2.Label {
                     text: telemetry.errorMessage
+                    textFormat: Text.PlainText
                     wrapMode: Text.WordWrap
                     color: Kirigami.Theme.textColor
                     Layout.fillWidth: true
@@ -843,6 +845,7 @@ Kirigami.ApplicationWindow {
 
                 QQC2.Label {
                     text: qsTr("New version available: %1 (current: v%2)").arg(settings.latestVersion).arg(telemetry.appVersion)
+                    textFormat: Text.PlainText
                     font.bold: true
                     wrapMode: Text.WordWrap
                     color: Kirigami.Theme.textColor
@@ -1177,6 +1180,7 @@ Kirigami.ApplicationWindow {
                                             selectedRegion,
                                             settings.language
                                         )
+                                        loginPasswordField.text = ""
                                     }
                                 }
 
@@ -1437,6 +1441,7 @@ Kirigami.ApplicationWindow {
                                     text: telemetry.patientName.length > 0
                                         ? qsTr("Patient: %1").arg(telemetry.patientName)
                                         : qsTr("CGM Sensor Overview")
+                                    textFormat: Text.PlainText
                                     color: Kirigami.Theme.textColor
                                     Layout.fillWidth: true
                                     Layout.preferredWidth: 0
@@ -1526,6 +1531,7 @@ Kirigami.ApplicationWindow {
                                     id: sensorStatusValueLabel
                                     objectName: "sensorStatusValueLabel"
                                     text: qsTr("Sensor: %1").arg(telemetry.sensorStatusDisplay)
+                                    textFormat: Text.PlainText
                                     font.pointSize: root.fontCompactPt
                                     font.bold: telemetry.sensorInWarmup || telemetry.sensorExpiringSoon
                                     color: (telemetry.sensorInWarmup || telemetry.sensorExpiringSoon)
@@ -1565,6 +1571,7 @@ Kirigami.ApplicationWindow {
                                 QQC2.Label {
                                     objectName: "dashboardEa1cHeadlineLabel"
                                     text: telemetry.ea1CHeadline
+                                    textFormat: Text.PlainText
                                     font.bold: true
                                     font.pointSize: root.fontSubbodyPt
                                     color: Kirigami.Theme.textColor
@@ -2555,6 +2562,7 @@ Kirigami.ApplicationWindow {
 
                                         QQC2.Label {
                                             text: String(modelData.name || "") + " — " + String(modelData.dosage || "")
+                                            textFormat: Text.PlainText
                                             font.bold: true
                                             color: Kirigami.Theme.textColor
                                             Layout.fillWidth: true
@@ -2914,6 +2922,7 @@ Kirigami.ApplicationWindow {
                                         + String(modelData.medication_name || "")
                                         + " (" + String(modelData.dosage || "") + ")"
                                         + (modelData.skipped ? (" — " + qsTr("Skipped")) : "")
+                                    textFormat: Text.PlainText
                                     font.bold: true
                                     color: Kirigami.Theme.textColor
                                     Layout.fillWidth: true
@@ -3292,6 +3301,7 @@ Kirigami.ApplicationWindow {
 
                             QQC2.Label {
                                 text: settings.updateStatusMessage
+                                textFormat: Text.PlainText
                                 color: settings.updateAvailable ? "#0284c7" : Kirigami.Theme.textColor
                                 font.bold: settings.updateAvailable
                                 Layout.fillWidth: true
@@ -3886,6 +3896,7 @@ Kirigami.ApplicationWindow {
 
                         QQC2.Label {
                             text: qsTr("Session Status: %1").arg(telemetry.statusMessage)
+                            textFormat: Text.PlainText
                             font.bold: true
                             color: Kirigami.Theme.textColor
                             Layout.fillWidth: true
@@ -3897,6 +3908,7 @@ Kirigami.ApplicationWindow {
                             text: qsTr("Connected Patient: %1").arg(
                                 telemetry.patientName.length > 0 ? telemetry.patientName : qsTr("None")
                             )
+                            textFormat: Text.PlainText
                             color: Kirigami.Theme.textColor
                             Layout.fillWidth: true
                             Layout.preferredWidth: 0
@@ -3947,6 +3959,7 @@ Kirigami.ApplicationWindow {
 
                         QQC2.Label {
                             text: qsTr("Encrypted Vault Path: %1").arg(settings.credentialsVaultPath)
+                            textFormat: Text.PlainText
                             font.family: "monospace"
                             wrapMode: Text.WrapAnywhere
                             color: Kirigami.Theme.textColor
@@ -3962,6 +3975,7 @@ Kirigami.ApplicationWindow {
                                 text: qsTr("Sign Out & Wipe Encrypted Vault")
                                 enabled: telemetry.loggedIn || telemetry.credentialsEncrypted
                                 onClicked: {
+                                    loginPasswordField.text = ""
                                     telemetry.logout()
                                     root.activeTab = "dashboard"
                                 }

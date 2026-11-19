@@ -129,14 +129,10 @@ pub fn format_events_as_text(entries: &[EventLogEntry]) -> String {
 }
 
 pub fn export_events_to_path(dest_path: &Path) -> Result<usize, String> {
-    let clean_str = dest_path
-        .to_string_lossy()
-        .trim_start_matches("file://")
-        .to_string();
-    let target = Path::new(&clean_str);
+    let target = crate::paths::decode_file_uri_or_path(&dest_path.to_string_lossy());
     let entries = get_all_events();
     let text = format_events_as_text(&entries);
-    crate::paths::write_file_atomic_0600(target, text.as_bytes())
+    crate::paths::write_file_atomic_0600(&target, text.as_bytes())
         .map_err(|e| format!("Failed to write log file: {e}"))?;
     Ok(entries.len())
 }

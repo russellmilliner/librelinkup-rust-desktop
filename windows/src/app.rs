@@ -14,12 +14,13 @@ use librelinkup_core::medications::{weekday_full_name, MedicationSchedule};
 use librelinkup_core::models::{
     accessible_glucose_announcement, clamp_ui_zoom_percent, convert_mg_dl_to_unit,
     format_glucose_value, format_reading_age, format_target_range, parse_libreview_timestamp,
-    reading_age_minutes, trend_arrow_description, trend_arrow_symbol, AppSettings,
-    GlucoseRangeStatus, MAX_POLL_INTERVAL_SECONDS, MIN_POLL_INTERVAL_SECONDS, STALE_COLOR_HEX,
+    trend_arrow_description, trend_arrow_symbol, AppSettings, GlucoseRangeStatus,
+    MAX_POLL_INTERVAL_SECONDS, MIN_POLL_INTERVAL_SECONDS, STALE_COLOR_HEX,
 };
 use librelinkup_core::paths::credentials_file_path;
-use librelinkup_core::session::format_snooze_until;
+use librelinkup_core::session::{effective_reading_age_minutes, format_snooze_until};
 use tokio::sync::mpsc::UnboundedSender;
+use zeroize::{Zeroize, Zeroizing};
 
 use crate::service::{now_epoch, Command, Shared, SharedState};
 use crate::tray::TrayView;
@@ -118,6 +119,24 @@ pub struct LibreLinkUpApp {
     log_min_level: usize,
 }
 
+const LOGIN_PW_EDIT_SALT: &str = "llu_login_password_edit";
+const LOGIN_HA_TOK_EDIT_SALT: &str = "llu_login_ha_token_edit";
+const SETTINGS_HA_TOK_EDIT_SALT: &str = "llu_settings_ha_token_edit";
+
+impl Drop for LibreLinkUpApp {
+    fn drop(&mut self) {
+        self.login_password.zeroize();
+        self.ha_token_input.zeroize();
+    }
+}
+
+fn clear_text_edit_undoer(ctx: &egui::Context, id: egui::Id) {
+    if let Some(mut st) = egui::TextEdit::load_state(ctx, id) {
+        st.clear_undoer();
+        st.store(ctx, id);
+    }
+}
+
 impl LibreLinkUpApp {
     pub fn new(shared: SharedState, tx: UnboundedSender<Command>, ui_handle: Arc<UiHandle>) -> Self {
         let (region, ha_url, ha_entity) = shared
@@ -184,7 +203,7 @@ pub fn hex_color(hex: &str) -> Color32 {
 pub fn reading_status(state: &Shared) -> (&'static str, &'static str, bool, String) {
     let s = &state.settings;
     let snap = &state.snapshot;
-    let age = reading_age_minutes(snap.measured_at_epoch, now_epoch());
+    let age = effective_reading_age_minutes(snap, now_epoch(), state.last_successful_fetch_epoch);
     let age_text = format_reading_age(age);
     if snap.value_mg_dl <= 0.0 {
         return ("Waiting", "#22c55e", false, age_text);
@@ -257,7 +276,7 @@ impl eframe::App for LibreLinkUpApp {
                 let wy = outer.min.y.round() as i32;
                 let ww = outer.width().round() as i32;
                 let wh = outer.height().round() as i32;
-                if wx >= 0 && wy >= 0 && ww >= 640 && wh >= 480 {
+                if wx > -32_000 && wy > -32_000 && ww >= 640 && wh >= 480 {
                     let updated = self.shared.lock().ok().and_then(|mut s| {
                         if (s.settings.window_x - wx).abs() > 2
                             || (s.settings.window_y - wy).abs() > 2
@@ -685,6 +704,7 @@ impl LibreLinkUpApp {
                         ui.label("Password");
                         let pw = ui.add(
                             egui::TextEdit::singleline(&mut self.login_password)
+                                .id(egui::Id::unique(LOGIN_PW_EDIT_SALT))
                                 .password(true)
                                 .desired_width(260.0),
                         );
@@ -693,7 +713,7 @@ impl LibreLinkUpApp {
                         region_combo(ui, &mut self.login_region);
                         ui.end_row();
                         if pw.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter)) {
-                            self.submit_login();
+                            self.submit_login(ui.ctx());
                         }
                     });
                     ui.add_space(6.0);
@@ -713,7 +733,7 @@ impl LibreLinkUpApp {
                     ui.horizontal(|ui| {
                         let label = if state.busy { "Signing in..." } else { "Sign In" };
                         if ui.add_enabled(!state.busy, egui::Button::new(label)).clicked() {
-                            self.submit_login();
+                            self.submit_login(ui.ctx());
                         }
                         if ui.button("Sample Data").clicked() {
                             self.send(Command::LoadDemo);
@@ -737,6 +757,7 @@ impl LibreLinkUpApp {
                         ui.label("Access Token");
                         ui.add(
                             egui::TextEdit::singleline(&mut self.ha_token_input)
+                                .id(egui::Id::unique(LOGIN_HA_TOK_EDIT_SALT))
                                 .password(true)
                                 .hint_text(if state.ha_token_configured {
                                     "Stored in DPAPI vault (leave blank to keep)"
@@ -795,7 +816,8 @@ impl LibreLinkUpApp {
                             "Connect Home Assistant"
                         };
                         if ui.add_enabled(!state.busy, egui::Button::new(label)).clicked() {
-                            let tok = std::mem::take(&mut self.ha_token_input);
+                            let tok = Zeroizing::new(std::mem::take(&mut self.ha_token_input));
+                            clear_text_edit_undoer(ui.ctx(), egui::Id::unique(LOGIN_HA_TOK_EDIT_SALT));
                             self.send(Command::SaveHomeAssistantConfig {
                                 data_source: "home_assistant".into(),
                                 ha_url: self.ha_url_input.clone(),
@@ -823,8 +845,9 @@ impl LibreLinkUpApp {
         });
     }
 
-    fn submit_login(&mut self) {
-        let password = std::mem::take(&mut self.login_password);
+    fn submit_login(&mut self, ctx: &egui::Context) {
+        let password = Zeroizing::new(std::mem::take(&mut self.login_password));
+        clear_text_edit_undoer(ctx, egui::Id::unique(LOGIN_PW_EDIT_SALT));
         self.send(Command::Login {
             username: self.login_email.clone(),
             password,
@@ -1468,6 +1491,7 @@ impl LibreLinkUpApp {
                     ui.label("Long-Lived Access Token");
                     ui.add(
                         egui::TextEdit::singleline(&mut self.ha_token_input)
+                            .id(egui::Id::unique(SETTINGS_HA_TOK_EDIT_SALT))
                             .password(true)
                             .hint_text(if state.ha_token_configured {
                                 "Stored in DPAPI vault (leave blank to keep)"
@@ -1528,7 +1552,8 @@ impl LibreLinkUpApp {
             );
             ui.horizontal(|ui| {
                 if ui.button("💾 Save & Connect Home Assistant").clicked() {
-                    let tok = std::mem::take(&mut self.ha_token_input);
+                    let tok = Zeroizing::new(std::mem::take(&mut self.ha_token_input));
+                    clear_text_edit_undoer(ui.ctx(), egui::Id::unique(SETTINGS_HA_TOK_EDIT_SALT));
                     self.send(Command::SaveHomeAssistantConfig {
                         data_source: s.data_source.clone(),
                         ha_url: self.ha_url_input.clone(),
@@ -1661,6 +1686,11 @@ impl LibreLinkUpApp {
             }
             ui.add_space(10.0);
             if ui.add_enabled(state.logged_in, egui::Button::new("Sign Out & Wipe Encrypted Vault")).clicked() {
+                self.login_password.zeroize();
+                self.ha_token_input.zeroize();
+                clear_text_edit_undoer(ui.ctx(), egui::Id::unique(LOGIN_PW_EDIT_SALT));
+                clear_text_edit_undoer(ui.ctx(), egui::Id::unique(LOGIN_HA_TOK_EDIT_SALT));
+                clear_text_edit_undoer(ui.ctx(), egui::Id::unique(SETTINGS_HA_TOK_EDIT_SALT));
                 self.send(Command::Logout);
                 self.tab = Tab::Dashboard;
             }
@@ -1730,7 +1760,7 @@ impl LibreLinkUpApp {
             .with_taskbar(false)
             .with_resizable(false)
             .with_inner_size([settings.overlay_width.clamp(200, 600) as f32, settings.overlay_height.clamp(70, 260) as f32]);
-        if settings.overlay_x >= 0 && settings.overlay_y >= 0 {
+        if settings.overlay_x > -32_000 && settings.overlay_y > -32_000 {
             builder = builder.with_position([settings.overlay_x as f32, settings.overlay_y as f32]);
         }
         let shared = self.shared.clone();

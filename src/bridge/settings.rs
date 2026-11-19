@@ -937,11 +937,9 @@ impl qobject::SettingsController {
         custom_low: f64,
         custom_high: f64,
     ) {
-        let clean_path = custom_sound_path
-            .to_string()
-            .trim()
-            .trim_start_matches("file://")
-            .to_string();
+        let clean_path = crate::paths::decode_file_uri_or_path(&custom_sound_path.to_string())
+            .to_string_lossy()
+            .into_owned();
         let low = custom_low.clamp(40.0, 200.0);
         let high = custom_high.clamp(low + 10.0, 400.0);
 

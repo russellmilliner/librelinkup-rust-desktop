@@ -15,15 +15,15 @@ jobs:
     name: Cargo Security Audit (RustSec)
     runs-on: ubuntu-26.04
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
         with:
           persist-credentials: false
 
       - name: Install Rust (stable)
-        uses: dtolnay/rust-toolchain@stable
+        uses: dtolnay/rust-toolchain@39008827e6b4319a349e9a42dfc90579dd25f1ca # stable
 
       - name: Cache cargo-audit binary and advisory DB
-        uses: actions/cache@v5
+        uses: actions/cache@caa296126883cff596d87d8935842f9db880ef25 # v5
         with:
           path: |
             ~/.cargo/bin/cargo-audit
@@ -35,13 +35,15 @@ jobs:
         run: command -v cargo-audit || cargo install cargo-audit --locked --version ^0.22
 
       - name: Audit workspace Cargo.lock
-        run: cargo audit
+        run: |
+          cargo audit --file Cargo.lock --deny unsound --deny yanked
+          cargo audit --file windows/Cargo.lock --deny unsound --deny yanked
 
   linux-test:
     name: Linux KDE Build, Clippy & Headless Tests
     runs-on: ubuntu-26.04
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
         with:
           persist-credentials: false
 
@@ -59,12 +61,12 @@ jobs:
             breeze-icon-theme fonts-noto-core
 
       - name: Install Rust (stable, clippy)
-        uses: dtolnay/rust-toolchain@stable
+        uses: dtolnay/rust-toolchain@39008827e6b4319a349e9a42dfc90579dd25f1ca # stable
         with:
           components: clippy
 
       - name: Cache Cargo
-        uses: Swatinem/rust-cache@v2
+        uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2
 
       - name: Run Clippy (--workspace --all-targets)
         run: cargo clippy --workspace --all-targets -- -D warnings
@@ -78,17 +80,17 @@ jobs:
     name: Windows Build, Test & Package (x64)
     runs-on: windows-latest
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
         with:
           persist-credentials: false
 
       - name: Install Rust (stable, MSVC, clippy)
-        uses: dtolnay/rust-toolchain@stable
+        uses: dtolnay/rust-toolchain@39008827e6b4319a349e9a42dfc90579dd25f1ca # stable
         with:
           components: clippy
 
       - name: Cache Cargo
-        uses: Swatinem/rust-cache@v2
+        uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2
         with:
           workspaces: |
             windows -> target
@@ -156,7 +158,7 @@ jobs:
           }
           Get-ChildItem windows/dist -File
 
-      - uses: actions/upload-artifact@v6
+      - uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6
         with:
           name: LibreLinkUp-windows-x64
           path: |
@@ -170,7 +172,7 @@ jobs:
     needs: [security-audit, linux-test]
     runs-on: ubuntu-26.04
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
         with:
           persist-credentials: false
 
@@ -189,20 +191,20 @@ jobs:
             "org.freedesktop.Sdk.Extension.llvm22//${FDO_EXT_VER}"
 
       - name: Install Rust (stable)
-        uses: dtolnay/rust-toolchain@stable
+        uses: dtolnay/rust-toolchain@39008827e6b4319a349e9a42dfc90579dd25f1ca # stable
 
       - name: Build Flatpak bundle
         run: ./scripts/build-flatpak.sh --no-install
 
       - name: Report bundle
-        run: ls -lh target/release/*.flatpak target/release/*.sha256
+        run: ls -lh target/release/librelinkup-rust-desktop-*.flatpak target/release/librelinkup-rust-desktop-*.flatpak.sha256
 
-      - uses: actions/upload-artifact@v6
+      - uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6
         with:
           name: LibreLinkUp-flatpak
           path: |
-            target/release/*.flatpak
-            target/release/*.sha256
+            target/release/librelinkup-rust-desktop-*.flatpak
+            target/release/librelinkup-rust-desktop-*.flatpak.sha256
 
   release:
     name: Publish Release Assets
@@ -212,12 +214,12 @@ jobs:
     permissions:
       contents: write
     steps:
-      - uses: actions/download-artifact@v7
+      - uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131 # v7
         with:
           name: LibreLinkUp-windows-x64
           path: windows/dist
 
-      - uses: actions/download-artifact@v7
+      - uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131 # v7
         with:
           name: LibreLinkUp-flatpak
           path: target/release
@@ -237,25 +239,26 @@ jobs:
             exit 1
           fi
           KEY="$RUNNER_TEMP/release.key"
-          printf '%s\n' "$RELEASE_MINISIGN_KEY" > "$KEY"
-          chmod 600 "$KEY"
+          trap 'rm -f "$KEY"' EXIT
+          (umask 077; printf '%s\n' "$RELEASE_MINISIGN_KEY" > "$KEY")
           shopt -s nullglob
-          for f in windows/dist/*.exe windows/dist/*.zip target/release/*.flatpak; do
+          for f in windows/dist/*.exe windows/dist/*.zip target/release/librelinkup-rust-desktop-*.flatpak; do
             minisign -S -s "$KEY" -m "$f" \
               -c "LibreLinkUp Rust Desktop release artifact" \
               -t "artifact:$(basename "$f") run:${GITHUB_RUN_ID}"
           done
           rm -f "$KEY"
+          trap - EXIT
           ls -l windows/dist target/release
 
       - name: Attach to GitHub release
-        uses: softprops/action-gh-release@v3
+        uses: softprops/action-gh-release@8a0cd651e5b2365bd640854a3fa5dfc70e4875f3 # v3
         with:
           files: |
             windows/dist/*.exe
             windows/dist/*.zip
             windows/dist/*.sha256
             windows/dist/*.minisig
-            target/release/*.flatpak
-            target/release/*.flatpak.sha256
-            target/release/*.minisig
+            target/release/librelinkup-rust-desktop-*.flatpak
+            target/release/librelinkup-rust-desktop-*.flatpak.sha256
+            target/release/librelinkup-rust-desktop-*.minisig

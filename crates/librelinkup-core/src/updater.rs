@@ -18,6 +18,10 @@ pub const GITHUB_RELEASES_PAGE_URL: &str =
 pub const GITHUB_RELEASE_DOWNLOAD_PREFIX: &str =
     "/russellmilliner/librelinkup-rust-desktop/releases/download/";
 
+const GITHUB_JSON_MAX_BYTES: usize = 1024 * 1024;
+const SMALL_TEXT_MAX_BYTES: usize = 64 * 1024;
+const UPDATE_BUNDLE_MAX_BYTES: usize = 256 * 1024 * 1024;
+
 /// Embedded minisign public key for release artifacts (base64 blob, key id `a1274a...
 ///
 /// If this line changes, already-installed copies can no longer verify new releases, so it is
@@ -161,6 +165,42 @@ pub fn verify_sha256_bytes(bytes: &[u8], expected_hex: &str) -> Result<(), Strin
 
 /// Verifies a minisign signature over `bytes` against `public_key_b64`.
 ///
+/// When `expected_artifact` is `Some(file_name)`, also verifies that the signed
+/// `trusted comment:` contains `artifact:<file_name>` so a signature cannot be replayed
+/// across different release artifacts.
+pub fn verify_minisign_signature_for_artifact(
+    bytes: &[u8],
+    signature_text: &str,
+    public_key_b64: &str,
+    expected_artifact: Option<&str>,
+) -> Result<(), String> {
+    let trimmed = signature_text.trim();
+    if trimmed.is_empty() {
+        return Err("Refusing update: release signature is missing.".into());
+    }
+    let public_key = minisign_verify::PublicKey::from_base64(public_key_b64.trim())
+        .map_err(|e| format!("Invalid embedded update public key: {e}"))?;
+    let signature = minisign_verify::Signature::decode(trimmed)
+        .map_err(|e| format!("Malformed update signature: {e}"))?;
+    public_key
+        .verify(bytes, &signature, false)
+        .map_err(|e| format!("Update signature verification failed: {e}"))?;
+    if let Some(artifact_name) = expected_artifact {
+        let bound = signature
+            .trusted_comment()
+            .split_whitespace()
+            .any(|tok| tok.strip_prefix("artifact:") == Some(artifact_name));
+        if !bound {
+            return Err(format!(
+                "Update signature is not bound to artifact '{artifact_name}'."
+            ));
+        }
+    }
+    Ok(())
+}
+
+/// Verifies a minisign signature over `bytes` against `public_key_b64`.
+///
 /// This is the actual authenticity check for auto-updates: the SHA-256 sidecar comes from the
 /// same origin as the artifact and therefore only proves the download was not corrupted,
 /// whereas the signature proves the artifact was produced by the holder of the release key.
@@ -169,28 +209,27 @@ pub fn verify_minisign_signature(
     signature_text: &str,
     public_key_b64: &str,
 ) -> Result<(), String> {
-    if signature_text.trim().is_empty() {
-        return Err("Refusing update: release signature is missing.".into());
-    }
-    let public_key = minisign_verify::PublicKey::from_base64(public_key_b64.trim())
-        .map_err(|e| format!("Invalid embedded update public key: {e}"))?;
-    // Skip any leading comment lines the caller may have included.
-    let cleaned: String = signature_text
-        .lines()
-        .filter(|l| !l.trim_start().starts_with("untrusted comment:") || l.contains("signature"))
-        .collect::<Vec<_>>()
-        .join("\n");
-    let signature = minisign_verify::Signature::decode(&cleaned)
-        .or_else(|_| minisign_verify::Signature::decode(signature_text))
-        .map_err(|e| format!("Malformed update signature: {e}"))?;
-    public_key
-        .verify(bytes, &signature, false)
-        .map_err(|e| format!("Update signature verification failed: {e}"))
+    verify_minisign_signature_for_artifact(bytes, signature_text, public_key_b64, None)
 }
 
 /// Verifies `bytes` against the compiled-in release public key.
 pub fn verify_update_signature(bytes: &[u8], signature_text: &str) -> Result<(), String> {
-    verify_minisign_signature(bytes, signature_text, UPDATE_SIGNING_PUBLIC_KEY)
+    verify_minisign_signature_for_artifact(bytes, signature_text, UPDATE_SIGNING_PUBLIC_KEY, None)
+}
+
+/// Verifies `bytes` against the compiled-in release public key and ensures the signed
+/// trusted comment binds the signature to `expected_artifact`.
+pub fn verify_update_signature_for_artifact(
+    bytes: &[u8],
+    signature_text: &str,
+    expected_artifact: &str,
+) -> Result<(), String> {
+    verify_minisign_signature_for_artifact(
+        bytes,
+        signature_text,
+        UPDATE_SIGNING_PUBLIC_KEY,
+        Some(expected_artifact),
+    )
 }
 
 /// Parses a version string such as `"v0.4.1"` or `"0.4.1-rc1"` into `(major, minor, patch)`.
@@ -287,9 +326,15 @@ pub fn parse_github_release_json(
                 sha256_assets.insert(name.to_string(), url.to_string());
             } else if name.ends_with(".minisig") {
                 signature_assets.insert(name.to_string(), url.to_string());
-            } else if name.ends_with(".flatpak") && flatpak_asset.is_none() {
+            } else if name.ends_with(".flatpak")
+                && asset_matches_host_arch(name)
+                && flatpak_asset.is_none()
+            {
                 flatpak_asset = Some((name.to_string(), url.to_string()));
-            } else if name.ends_with(".exe") && windows_installer_asset.is_none() {
+            } else if name.ends_with(".exe")
+                && asset_matches_host_arch(name)
+                && windows_installer_asset.is_none()
+            {
                 windows_installer_asset = Some((name.to_string(), url.to_string()));
             }
         }
@@ -362,6 +407,55 @@ fn github_headers(current_version: &str) -> HeaderMap {
     headers
 }
 
+/// Returns whether a release asset filename matches the current CPU architecture
+/// when the filename includes an explicit architecture marker.
+fn asset_matches_host_arch(asset_name: &str) -> bool {
+    let lower = asset_name.to_ascii_lowercase();
+    let has_x64 = lower.contains("x86_64") || lower.contains("-x64") || lower.contains("_x64");
+    let has_arm64 = lower.contains("aarch64") || lower.contains("arm64");
+    match (has_x64, has_arm64) {
+        (true, false) => std::env::consts::ARCH == "x86_64",
+        (false, true) => std::env::consts::ARCH == "aarch64",
+        _ => true,
+    }
+}
+
+/// Resolves the system `curl` executable path without relying on untrusted `PATH` entries
+/// on Windows (via Win32 `GetSystemDirectoryW`).
+#[cfg(windows)]
+pub(crate) fn system_curl_program() -> Option<PathBuf> {
+    #[link(name = "kernel32")]
+    unsafe extern "system" {
+        fn GetSystemDirectoryW(lp_buffer: *mut u16, u_size: u32) -> u32;
+    }
+    let mut buf = vec![0u16; 260];
+    // SAFETY: `buf` points to writable `u16` storage of length `buf.len()`.
+    let len = unsafe { GetSystemDirectoryW(buf.as_mut_ptr(), buf.len() as u32) };
+    if len == 0 {
+        return None;
+    }
+    let len = if (len as usize) >= buf.len() {
+        buf.resize((len as usize) + 1, 0);
+        // SAFETY: `buf` resized to the required UTF-16 length reported by Windows.
+        let retry = unsafe { GetSystemDirectoryW(buf.as_mut_ptr(), buf.len() as u32) };
+        if retry == 0 || (retry as usize) >= buf.len() {
+            return None;
+        }
+        retry as usize
+    } else {
+        len as usize
+    };
+    use std::os::windows::ffi::OsStringExt;
+    let dir = PathBuf::from(std::ffi::OsString::from_wide(&buf[..len]));
+    let candidate = dir.join("curl.exe");
+    candidate.is_file().then_some(candidate)
+}
+
+#[cfg(not(windows))]
+pub(crate) fn system_curl_program() -> Option<PathBuf> {
+    Some(PathBuf::from("curl"))
+}
+
 /// Whether a usable system `curl` exists.
 ///
 /// The curl fallback exists because Cloudflare can block the rustls TLS fingerprint; when the
@@ -370,13 +464,20 @@ fn github_headers(current_version: &str) -> HeaderMap {
 pub fn system_curl_available() -> bool {
     static AVAILABLE: OnceLock<bool> = OnceLock::new();
     *AVAILABLE.get_or_init(|| {
-        let ok = std::process::Command::new("curl")
-            .arg("--version")
-            .stdout(std::process::Stdio::null())
-            .stderr(std::process::Stdio::null())
-            .status()
-            .map(|s| s.success())
-            .unwrap_or(false);
+        let ok = system_curl_program()
+            .and_then(|prog| {
+                let mut cmd = Command::new(prog);
+                cmd.arg("--version")
+                    .stdout(std::process::Stdio::null())
+                    .stderr(std::process::Stdio::null());
+                #[cfg(windows)]
+                {
+                    use std::os::windows::process::CommandExt;
+                    cmd.creation_flags(0x0800_0000);
+                }
+                cmd.status().ok()
+            })
+            .is_some_and(|s| s.success());
         if !ok {
             crate::event_log::log_warn(
                 "SYSTEM",
@@ -387,15 +488,66 @@ pub fn system_curl_available() -> bool {
     })
 }
 
+async fn read_response_bytes_bounded(
+    mut resp: reqwest::Response,
+    max_bytes: usize,
+) -> Result<Vec<u8>, String> {
+    if let Some(len) = resp.content_length()
+        && len > max_bytes as u64
+    {
+        return Err(format!(
+            "Response body too large ({len} bytes > {max_bytes} byte limit)"
+        ));
+    }
+    let cap = resp
+        .content_length()
+        .and_then(|l| usize::try_from(l).ok())
+        .map_or(0, |l| l.min(max_bytes));
+    let mut buf = Vec::with_capacity(cap);
+    while let Some(chunk) = resp
+        .chunk()
+        .await
+        .map_err(|e| format!("Failed reading response stream: {e}"))?
+    {
+        if buf.len().saturating_add(chunk.len()) > max_bytes {
+            return Err(format!("Response stream exceeded {max_bytes} byte limit"));
+        }
+        buf.extend_from_slice(&chunk);
+    }
+    Ok(buf)
+}
+
+async fn read_response_text_bounded(
+    resp: reqwest::Response,
+    max_bytes: usize,
+) -> Result<String, String> {
+    let bytes = read_response_bytes_bounded(resp, max_bytes).await?;
+    Ok(String::from_utf8(bytes)
+        .unwrap_or_else(|e| String::from_utf8_lossy(e.as_bytes()).into_owned()))
+}
+
 #[cfg(unix)]
-fn curl_get_github_release(url: &str, current_version: &str) -> Result<String, String> {
+fn curl_get_github_release(
+    url: &str,
+    current_version: &str,
+    max_bytes: usize,
+) -> Result<String, String> {
+    let curl_prog =
+        system_curl_program().ok_or_else(|| "System curl is unavailable.".to_string())?;
     let ua = format!(
         "User-Agent: librelinkup-rust-desktop/{}",
         current_version.trim().trim_start_matches(['v', 'V'])
     );
-    let out = Command::new("curl")
+    let max_size_str = max_bytes.to_string();
+    let out = Command::new(curl_prog)
         .args([
             "-fsSL",
+            "--proto",
+            "=https",
+            "--proto-redir",
+            "=https",
+            "--max-filesize",
+            &max_size_str,
             "--max-time",
             "10",
             "-H",
@@ -412,6 +564,9 @@ fn curl_get_github_release(url: &str, current_version: &str) -> Result<String, S
             out.status.code().unwrap_or(-1)
         ));
     }
+    if out.stdout.len() > max_bytes {
+        return Err(format!("curl response exceeded {max_bytes} byte limit"));
+    }
     Ok(String::from_utf8_lossy(&out.stdout).to_string())
 }
 
@@ -420,7 +575,7 @@ fn curl_get_github_release(url: &str, current_version: &str) -> Result<String, S
 async fn fetch_release_text(client: &reqwest::Client, url: &str) -> Option<String> {
     if let Ok(resp) = client.get(url).send().await
         && resp.status().is_success()
-            && let Ok(text) = resp.text().await
+            && let Ok(text) = read_response_text_bounded(resp, SMALL_TEXT_MAX_BYTES).await
                 && !text.trim().is_empty() {
                     return Some(text);
                 }
@@ -428,7 +583,7 @@ async fn fetch_release_text(client: &reqwest::Client, url: &str) -> Option<Strin
     if system_curl_available() {
         let owned = url.to_string();
         if let Ok(Ok(raw)) = tokio::task::spawn_blocking(move || {
-            curl_get_github_release(&owned, env!("CARGO_PKG_VERSION"))
+            curl_get_github_release(&owned, env!("CARGO_PKG_VERSION"), SMALL_TEXT_MAX_BYTES)
         })
         .await
             && !raw.trim().is_empty() {
@@ -446,6 +601,7 @@ fn shared_update_client() -> Result<&'static reqwest::Client, String> {
         return Ok(c);
     }
     let built = reqwest::Client::builder()
+        .https_only(true)
         .timeout(Duration::from_secs(10))
         .default_headers(github_headers(env!("CARGO_PKG_VERSION")))
         .build()
@@ -461,6 +617,7 @@ fn shared_download_client() -> Result<&'static reqwest::Client, String> {
         return Ok(c);
     }
     let built = reqwest::Client::builder()
+        .https_only(true)
         .timeout(Duration::from_secs(180))
         .default_headers(github_headers(env!("CARGO_PKG_VERSION")))
         .build()
@@ -483,8 +640,7 @@ pub async fn check_for_updates_async(current_version: &str) -> Result<UpdateChec
     {
         Ok(resp) => {
             let status = resp.status();
-            let text = resp
-                .text()
+            let text = read_response_text_bounded(resp, GITHUB_JSON_MAX_BYTES)
                 .await
                 .map_err(|e| format!("Failed reading update response: {e}"))?;
             if !status.is_success() {
@@ -497,7 +653,11 @@ pub async fn check_for_updates_async(current_version: &str) -> Result<UpdateChec
             if system_curl_available() {
                 let cur = current_version.to_string();
                 if let Ok(Ok(raw)) = tokio::task::spawn_blocking(move || {
-                    curl_get_github_release(GITHUB_RELEASES_LATEST_URL, &cur)
+                    curl_get_github_release(
+                        GITHUB_RELEASES_LATEST_URL,
+                        &cur,
+                        GITHUB_JSON_MAX_BYTES,
+                    )
                 })
                 .await
                 {
@@ -511,7 +671,10 @@ pub async fn check_for_updates_async(current_version: &str) -> Result<UpdateChec
 
 /// Checks GitHub Releases synchronously for a newer version.
 pub fn check_for_updates_blocking(current_version: &str) -> Result<UpdateCheckResult, String> {
+    use std::io::Read as _;
+
     let client = reqwest::blocking::Client::builder()
+        .https_only(true)
         .timeout(Duration::from_secs(10))
         .default_headers(github_headers(current_version))
         .build()
@@ -520,9 +683,17 @@ pub fn check_for_updates_blocking(current_version: &str) -> Result<UpdateCheckRe
     match client.get(GITHUB_RELEASES_LATEST_URL).send() {
         Ok(resp) => {
             let status = resp.status();
-            let text = resp
-                .text()
+            let mut limited = resp.take((GITHUB_JSON_MAX_BYTES + 1) as u64);
+            let mut buf = Vec::new();
+            limited
+                .read_to_end(&mut buf)
                 .map_err(|e| format!("Failed reading update response: {e}"))?;
+            if buf.len() > GITHUB_JSON_MAX_BYTES {
+                return Err(format!(
+                    "Update response exceeded {GITHUB_JSON_MAX_BYTES} byte limit"
+                ));
+            }
+            let text = String::from_utf8_lossy(&buf);
             if !status.is_success() {
                 return Err(format!("GitHub API returned HTTP {}", status.as_u16()));
             }
@@ -531,11 +702,14 @@ pub fn check_for_updates_blocking(current_version: &str) -> Result<UpdateCheckRe
         Err(err) => {
             #[cfg(unix)]
             if system_curl_available()
-                && let Ok(raw) =
-                    curl_get_github_release(GITHUB_RELEASES_LATEST_URL, current_version)
-                {
-                    return parse_github_release_json(&raw, current_version);
-                }
+                && let Ok(raw) = curl_get_github_release(
+                    GITHUB_RELEASES_LATEST_URL,
+                    current_version,
+                    GITHUB_JSON_MAX_BYTES,
+                )
+            {
+                return parse_github_release_json(&raw, current_version);
+            }
             Err(format!("Update check failed: {err}"))
         }
     }
@@ -573,12 +747,24 @@ pub async fn download_and_install_update_async(
         format!("Refusing update with invalid version tag: '{latest_version}'")
     })?;
     let clean_ver = format!("{major}.{minor}.{patch}");
+    if !is_newer_version(env!("CARGO_PKG_VERSION"), &clean_ver) {
+        return Err(format!(
+            "Refusing update: target version v{clean_ver} is not newer than installed v{}.",
+            env!("CARGO_PKG_VERSION")
+        ));
+    }
 
     let asset_file_name = download_url
         .rsplit('/')
         .next()
         .filter(|s| !s.is_empty())
         .ok_or_else(|| "Invalid asset filename in download URL.".to_string())?;
+    if !asset_matches_host_arch(asset_file_name) {
+        return Err(format!(
+            "Refusing update: asset '{asset_file_name}' does not match host architecture '{}'.",
+            std::env::consts::ARCH
+        ));
+    }
     let sha256_url = format!("{download_url}.sha256");
     let signature_url = format!("{download_url}.minisig");
     if !is_trusted_github_asset_url(&sha256_url) {
@@ -591,10 +777,61 @@ pub async fn download_and_install_update_async(
     let file_name = if cfg!(target_os = "windows") {
         format!("LibreLinkUp-Setup-{clean_ver}-x64.exe")
     } else {
-        format!("librelinkup-rust-desktop-v{clean_ver}-x86_64.flatpak")
+        format!(
+            "librelinkup-rust-desktop-v{clean_ver}-{}.flatpak",
+            std::env::consts::ARCH
+        )
     };
 
     let dest_dir = crate::paths::update_staging_dir();
+    if dest_dir == std::env::temp_dir() {
+        return Err(
+            "Refusing update: no private user data directory available for staging.".into(),
+        );
+    }
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::MetadataExt;
+        let has_user_base = std::env::var("HOME")
+            .ok()
+            .is_some_and(|s| !s.trim().is_empty())
+            || std::env::var("XDG_DATA_HOME")
+                .ok()
+                .is_some_and(|s| !s.trim().is_empty())
+            || std::env::var("LIBRELINKUP_DATA_DIR")
+                .ok()
+                .is_some_and(|s| !s.trim().is_empty());
+        if !has_user_base {
+            return Err(
+                "Refusing update: update staging fell back to temporary directory.".into(),
+            );
+        }
+        let meta = std::fs::symlink_metadata(&dest_dir)
+            .map_err(|e| format!("Failed inspecting update staging directory: {e}"))?;
+        if meta.file_type().is_symlink() || !meta.is_dir() || (meta.mode() & 0o077) != 0 {
+            return Err(
+                "Refusing update: unsafe permissions on update staging directory.".into(),
+            );
+        }
+    }
+    #[cfg(windows)]
+    {
+        let has_user_base = std::env::var("LOCALAPPDATA")
+            .ok()
+            .is_some_and(|s| !s.trim().is_empty())
+            || std::env::var("USERPROFILE")
+                .ok()
+                .is_some_and(|s| !s.trim().is_empty())
+            || std::env::var("LIBRELINKUP_DATA_DIR")
+                .ok()
+                .is_some_and(|s| !s.trim().is_empty());
+        if !has_user_base {
+            return Err(
+                "Refusing update: update staging fell back to temporary directory.".into(),
+            );
+        }
+    }
+    crate::paths::prune_update_staging_dir(&dest_dir);
     let dest_path = dest_dir.join(&file_name);
 
     let client = shared_download_client()?;
@@ -619,25 +856,41 @@ pub async fn download_and_install_update_async(
         })?;
     let expected_sha256 = parse_sha256_checksum(&sha256_raw, Some(asset_file_name))?;
 
-    // 2. Download the installer/bundle and verify its SHA-256 digest before execution.
-    let mut verified_bytes: Option<Vec<u8>> = None;
+    // 3. Stream download with bounded maximum size (single buffered copy).
+    let mut downloaded: Option<Vec<u8>> = None;
     if let Ok(resp) = client.get(download_url).send().await
         && resp.status().is_success()
-            && let Ok(bytes) = resp.bytes().await
-                && bytes.len() > 1024 {
-                    verified_bytes = Some(bytes.to_vec());
-                }
+            && let Ok(buf) = read_response_bytes_bounded(resp, UPDATE_BUNDLE_MAX_BYTES).await
+                && buf.len() > 1024
+            {
+                downloaded = Some(buf);
+            }
 
     #[cfg(unix)]
-    if verified_bytes.is_none() && system_curl_available() {
+    if downloaded.is_none()
+        && system_curl_available()
+        && let Some(curl_prog) = system_curl_program()
+    {
         let url_owned = download_url.to_string();
         let (tmp_dl_path, tmp_dl_file) =
             crate::paths::create_private_temp_file(&dest_dir, ".llu-update-", ".part")?;
         drop(tmp_dl_file);
         let tmp_clone = tmp_dl_path.clone();
         let dl_res = tokio::task::spawn_blocking(move || {
-            let status = Command::new("curl")
-                .args(["-fsSL", "--max-time", "180", "-o"])
+            let max_size_str = UPDATE_BUNDLE_MAX_BYTES.to_string();
+            let status = Command::new(curl_prog)
+                .args([
+                    "-fsSL",
+                    "--proto",
+                    "=https",
+                    "--proto-redir",
+                    "=https",
+                    "--max-filesize",
+                    &max_size_str,
+                    "--max-time",
+                    "180",
+                    "-o",
+                ])
                 .arg(&tmp_clone)
                 .arg(&url_owned)
                 .status()
@@ -653,18 +906,24 @@ pub async fn download_and_install_update_async(
             let _ = std::fs::remove_file(&tmp_dl_path);
             return Err(e);
         }
+        let file_len = std::fs::metadata(&tmp_dl_path)
+            .map(|m| m.len())
+            .unwrap_or(u64::MAX);
+        if file_len > UPDATE_BUNDLE_MAX_BYTES as u64 {
+            let _ = std::fs::remove_file(&tmp_dl_path);
+            return Err(format!(
+                "Downloaded update exceeded {UPDATE_BUNDLE_MAX_BYTES} byte limit"
+            ));
+        }
         let bytes = std::fs::read(&tmp_dl_path).map_err(|e| {
             let _ = std::fs::remove_file(&tmp_dl_path);
             format!("Failed reading downloaded update package: {e}")
         })?;
         let _ = std::fs::remove_file(&tmp_dl_path);
-        if let Err(err) = verify_sha256_bytes(&bytes, &expected_sha256) {
-            return Err(format!("Refusing to install update: {err}"));
-        }
-        verified_bytes = Some(bytes);
+        downloaded = Some(bytes);
     }
 
-    let Some(bytes) = verified_bytes else {
+    let Some(bytes) = downloaded else {
         return Err(format!("Failed to download update from {download_url}"));
     };
 
@@ -673,8 +932,9 @@ pub async fn download_and_install_update_async(
         return Err(format!("Refusing to install update: {err}"));
     }
 
-    // 3. Authenticity: the artifact must be signed by the release key before it is executed.
-    if let Err(err) = verify_update_signature(&bytes, &signature_text) {
+    // 4. Authenticity: the artifact must be signed by the release key and bound to this filename.
+    if let Err(err) = verify_update_signature_for_artifact(&bytes, &signature_text, asset_file_name)
+    {
         let _ = std::fs::remove_file(&dest_path);
         return Err(format!("Refusing to install update: {err}"));
     }
@@ -895,6 +1155,16 @@ CwkbwGp+4TByUUf5t2zRCWvVkwdiTliNUMi8V5+91AenrDh/4eoeBNYWtKhcb/T3RFgv5+Udsj96Y5C+
         assert!(verify_minisign_signature(b"tampered", TEST_SIG, TEST_PUBKEY).is_err());
         // Wrong key must fail.
         assert!(verify_minisign_signature(payload, TEST_SIG, UPDATE_SIGNING_PUBLIC_KEY).is_err());
+        // Missing artifact binding in trusted comment must fail when artifact verification is requested.
+        assert!(
+            verify_minisign_signature_for_artifact(
+                payload,
+                TEST_SIG,
+                TEST_PUBKEY,
+                Some("librelinkup-rust-desktop-v0.6.0-x86_64.flatpak"),
+            )
+            .is_err()
+        );
         // Missing / empty signature must fail closed.
         assert!(verify_minisign_signature(payload, "", TEST_PUBKEY).is_err());
         assert!(verify_minisign_signature(payload, "   \n", TEST_PUBKEY).is_err());
@@ -932,14 +1202,28 @@ CwkbwGp+4TByUUf5t2zRCWvVkwdiTliNUMi8V5+91AenrDh/4eoeBNYWtKhcb/T3RFgv5+Udsj96Y5C+
             ]
         }"#;
         let res = parse_github_release_json(sample, "0.5.0").expect("valid release json");
-        assert!(res.download_url.ends_with(".flatpak"));
-        assert!(res.sha256_url.ends_with(".flatpak.sha256"));
-        assert!(
-            res.signature_url.ends_with(".flatpak.minisig"),
-            "signature_url must be discovered from release assets: {}",
-            res.signature_url
-        );
-        assert!(is_trusted_github_asset_url(&res.signature_url));
+        if std::env::consts::ARCH == "x86_64" {
+            assert!(res.download_url.ends_with(".flatpak"));
+            assert!(res.sha256_url.ends_with(".flatpak.sha256"));
+            assert!(
+                res.signature_url.ends_with(".flatpak.minisig"),
+                "signature_url must be discovered from release assets: {}",
+                res.signature_url
+            );
+            assert!(is_trusted_github_asset_url(&res.signature_url));
+        }
+        assert!(asset_matches_host_arch(&format!(
+            "librelinkup-rust-desktop-v0.6.0-{}.flatpak",
+            std::env::consts::ARCH
+        )));
+        let foreign_arch = if std::env::consts::ARCH == "x86_64" {
+            "aarch64"
+        } else {
+            "x86_64"
+        };
+        assert!(!asset_matches_host_arch(&format!(
+            "librelinkup-rust-desktop-v0.6.0-{foreign_arch}.flatpak"
+        )));
     }
 
     #[test]

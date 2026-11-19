@@ -9,6 +9,7 @@ use reqwest::header::{
 use ring::digest::{digest, SHA256};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
+use zeroize::{Zeroize, Zeroizing};
 
 use crate::crypto::bytes_to_hex;
 use crate::models::{
@@ -44,6 +45,15 @@ impl fmt::Debug for AuthSuccess {
             .field("first_name", &"[REDACTED]")
             .field("last_name", &"[REDACTED]")
             .finish()
+    }
+}
+
+impl Drop for AuthSuccess {
+    fn drop(&mut self) {
+        self.token.zeroize();
+        self.account_id.zeroize();
+        self.first_name.zeroize();
+        self.last_name.zeroize();
     }
 }
 
@@ -196,22 +206,60 @@ pub fn is_valid_patient_id(patient_id: &str) -> bool {
             .all(|b| b.is_ascii_alphanumeric() || b == b'-' || b == b'_')
 }
 
-static SHARED_API_CLIENT: OnceLock<reqwest::Client> = OnceLock::new();
+const API_RESPONSE_MAX_BYTES: usize = 4 * 1024 * 1024;
+const HA_RESPONSE_MAX_BYTES: usize = 8 * 1024 * 1024;
 
-/// Returns the process-wide reusable `reqwest::Client` for LibreView API calls.
-pub fn shared_api_client() -> Result<&'static reqwest::Client, ApiError> {
-    if let Some(client) = SHARED_API_CLIENT.get() {
+static SHARED_LIBREVIEW_HTTPS_CLIENT: OnceLock<reqwest::Client> = OnceLock::new();
+static SHARED_LIBREVIEW_HTTP_CLIENT: OnceLock<reqwest::Client> = OnceLock::new();
+static SHARED_HA_CLIENT: OnceLock<reqwest::Client> = OnceLock::new();
+
+/// Returns a reusable `reqwest::Client` configured for LibreView API calls.
+/// Enforces HTTPS-only and disables HTTP redirects so bearer tokens are never forwarded.
+pub fn shared_libreview_client(allow_http: bool) -> Result<&'static reqwest::Client, ApiError> {
+    let slot = if allow_http {
+        &SHARED_LIBREVIEW_HTTP_CLIENT
+    } else {
+        &SHARED_LIBREVIEW_HTTPS_CLIENT
+    };
+    if let Some(client) = slot.get() {
         return Ok(client);
     }
     let built = reqwest::Client::builder()
         .user_agent(LLU_USER_AGENT)
         .timeout(Duration::from_secs(15))
+        .redirect(reqwest::redirect::Policy::none())
+        .https_only(!allow_http)
         .build()
         .map_err(|e| ApiError::NetworkError(e.to_string()))?;
-    let _ = SHARED_API_CLIENT.set(built);
-    SHARED_API_CLIENT
-        .get()
+    let _ = slot.set(built);
+    slot.get()
         .ok_or_else(|| ApiError::NetworkError("Failed to initialize HTTP client".into()))
+}
+
+/// Returns the process-wide reusable `reqwest::Client` for Home Assistant REST calls.
+/// Disables HTTP redirects so the Long-Lived Access Token is never redirected off-origin.
+pub fn shared_ha_client() -> Result<&'static reqwest::Client, ApiError> {
+    if let Some(client) = SHARED_HA_CLIENT.get() {
+        return Ok(client);
+    }
+    let built = reqwest::Client::builder()
+        .user_agent(format!(
+            "librelinkup-rust-desktop/{}",
+            env!("CARGO_PKG_VERSION")
+        ))
+        .timeout(Duration::from_secs(15))
+        .redirect(reqwest::redirect::Policy::none())
+        .build()
+        .map_err(|e| ApiError::NetworkError(e.to_string()))?;
+    let _ = SHARED_HA_CLIENT.set(built);
+    SHARED_HA_CLIENT
+        .get()
+        .ok_or_else(|| ApiError::NetworkError("Failed to initialize HA HTTP client".into()))
+}
+
+/// Returns the process-wide reusable `reqwest::Client` for LibreView API calls.
+pub fn shared_api_client() -> Result<&'static reqwest::Client, ApiError> {
+    shared_libreview_client(insecure_test_endpoint_allowed())
 }
 
 pub fn sha256_account_id(account_id: &str) -> String {
@@ -236,19 +284,35 @@ fn build_common_headers(
     headers.insert(CACHE_CONTROL, HeaderValue::from_static("no-cache"));
 
     if let Some(tok) = token {
-        let auth_val = format!("Bearer {}", tok.trim());
-        let hv = HeaderValue::from_str(&auth_val)
+        let mut auth_val = format!("Bearer {}", tok.trim());
+        let mut hv = HeaderValue::from_str(&auth_val)
             .map_err(|e| ApiError::ParseError(format!("Invalid authorization token header: {e}")))?;
+        auth_val.zeroize();
+        hv.set_sensitive(true);
         headers.insert(AUTHORIZATION, hv);
     }
 
     if let Some(acc) = account_id {
         let hashed = sha256_account_id(acc);
-        let hv = HeaderValue::from_str(&hashed)
+        let mut hv = HeaderValue::from_str(&hashed)
             .map_err(|e| ApiError::ParseError(format!("Invalid Account-Id header: {e}")))?;
+        hv.set_sensitive(true);
         headers.insert("Account-Id", hv);
     }
 
+    Ok(headers)
+}
+
+fn build_ha_headers(ha_token: &str) -> Result<HeaderMap, ApiError> {
+    let mut headers = HeaderMap::new();
+    headers.insert(ACCEPT, HeaderValue::from_static("application/json"));
+    headers.insert(CONTENT_TYPE, HeaderValue::from_static("application/json"));
+    let mut auth_val = format!("Bearer {}", ha_token.trim());
+    let mut hv = HeaderValue::from_str(&auth_val)
+        .map_err(|e| ApiError::ParseError(format!("Invalid HA authorization header: {e}")))?;
+    auth_val.zeroize();
+    hv.set_sensitive(true);
+    headers.insert(AUTHORIZATION, hv);
     Ok(headers)
 }
 
@@ -278,29 +342,74 @@ pub fn build_curl_secret_config(
     account_id: Option<&str>,
     json_payload: Option<&Value>,
 ) -> String {
+    let raw_opt = json_payload.map(|b| b.to_string());
+    (*build_curl_secret_config_raw(token, account_id, raw_opt.as_deref())).clone()
+}
+
+fn build_curl_secret_config_raw(
+    token: Option<&str>,
+    account_id: Option<&str>,
+    raw_json_body: Option<&str>,
+) -> Zeroizing<String> {
     let mut cfg = String::new();
     if let Some(tok) = token {
-        let header = format!("Authorization: Bearer {}", tok.trim());
+        let mut header = format!("Authorization: Bearer {}", tok.trim());
         cfg.push_str(&format!("header = \"{}\"\n", escape_curl_config_value(&header)));
+        header.zeroize();
     }
     if let Some(acc) = account_id {
         let header = format!("Account-Id: {}", sha256_account_id(acc));
         cfg.push_str(&format!("header = \"{}\"\n", escape_curl_config_value(&header)));
     }
-    if let Some(body) = json_payload {
-        cfg.push_str(&format!(
-            "data-raw = \"{}\"\n",
-            escape_curl_config_value(&body.to_string())
-        ));
+    if let Some(body) = raw_json_body {
+        let mut escaped = escape_curl_config_value(body);
+        cfg.push_str("data-raw = \"");
+        cfg.push_str(&escaped);
+        cfg.push_str("\"\n");
+        escaped.zeroize();
     }
-    cfg
+    Zeroizing::new(cfg)
+}
+
+async fn read_json_response_text_bounded(
+    mut resp: reqwest::Response,
+    max_bytes: usize,
+) -> Result<String, ApiError> {
+    if let Some(len) = resp.content_length()
+        && len > max_bytes as u64
+    {
+        return Err(ApiError::ParseError(format!(
+            "API response too large ({len} bytes > {max_bytes} byte limit)"
+        )));
+    }
+    let cap = resp
+        .content_length()
+        .and_then(|l| usize::try_from(l).ok())
+        .map_or(0, |l| l.min(max_bytes));
+    let mut buf = Vec::with_capacity(cap);
+    while let Some(chunk) = resp
+        .chunk()
+        .await
+        .map_err(|e| ApiError::NetworkError(format!("Failed reading API response stream: {e}")))?
+    {
+        if buf.len().saturating_add(chunk.len()) > max_bytes {
+            return Err(ApiError::ParseError(format!(
+                "API response stream exceeded {max_bytes} byte limit"
+            )));
+        }
+        buf.extend_from_slice(&chunk);
+    }
+    Ok(String::from_utf8(buf)
+        .unwrap_or_else(|e| String::from_utf8_lossy(e.as_bytes()).into_owned()))
 }
 
 fn run_curl_blocking(method: &str, url: &str, secret_config: &str) -> Result<String, ApiError> {
     use std::io::Write;
     use std::process::Stdio;
 
-    let mut cmd = Command::new("curl");
+    let curl_prog = crate::updater::system_curl_program()
+        .ok_or_else(|| ApiError::NetworkError("System curl is unavailable".into()))?;
+    let mut cmd = Command::new(curl_prog);
     #[cfg(windows)]
     {
         // GUI app: don't flash a console window for the curl fallback.
@@ -308,11 +417,21 @@ fn run_curl_blocking(method: &str, url: &str, secret_config: &str) -> Result<Str
         const CREATE_NO_WINDOW: u32 = 0x0800_0000;
         cmd.creation_flags(CREATE_NO_WINDOW);
     }
+    let proto_spec = if is_loopback_test_url(url) {
+        "=https,http"
+    } else {
+        "=https"
+    };
+    let max_size_str = API_RESPONSE_MAX_BYTES.to_string();
     let mut child = cmd
         .arg("-s")
         .arg("-S")
         .arg("--proto")
-        .arg("=https,http")
+        .arg(proto_spec)
+        .arg("--proto-redir")
+        .arg("=https")
+        .arg("--max-filesize")
+        .arg(&max_size_str)
         .arg("--max-time")
         .arg("15")
         .arg("-X")
@@ -345,16 +464,24 @@ fn run_curl_blocking(method: &str, url: &str, secret_config: &str) -> Result<Str
         .map_err(|e| ApiError::NetworkError(format!("curl fallback failed to start: {e}")))?;
 
     if let Some(mut stdin) = child.stdin.take()
-        && let Err(e) = stdin.write_all(secret_config.as_bytes()) {
-            let _ = child.kill();
-            let _ = child.wait();
-            return Err(ApiError::NetworkError(format!("curl fallback stdin error: {e}")));
-        }
-        // stdin dropped here -> EOF, curl proceeds with the request.
+        && let Err(e) = stdin.write_all(secret_config.as_bytes())
+    {
+        let _ = child.kill();
+        let _ = child.wait();
+        return Err(ApiError::NetworkError(format!(
+            "curl fallback stdin error: {e}"
+        )));
+    }
+    // stdin dropped here -> EOF, curl proceeds with the request.
 
     let output = child
         .wait_with_output()
         .map_err(|e| ApiError::NetworkError(format!("curl fallback failed: {e}")))?;
+    if output.stdout.len() > API_RESPONSE_MAX_BYTES + 64 {
+        return Err(ApiError::ParseError(format!(
+            "curl API response exceeded {API_RESPONSE_MAX_BYTES} byte limit"
+        )));
+    }
     Ok(String::from_utf8_lossy(&output.stdout).into_owned())
 }
 
@@ -366,15 +493,15 @@ async fn curl_fallback_json(
     url: &str,
     token: Option<&str>,
     account_id: Option<&str>,
-    json_payload: Option<&Value>,
+    raw_json_body: Option<&str>,
 ) -> Result<(u16, Value), ApiError> {
     let method_owned = method.to_string();
     let url_owned = url.to_string();
-    let mut secret_config = build_curl_secret_config(token, account_id, json_payload);
+    let mut secret_config = build_curl_secret_config_raw(token, account_id, raw_json_body);
 
     let stdout = tokio::task::spawn_blocking(move || {
         let res = run_curl_blocking(&method_owned, &url_owned, &secret_config);
-        zeroize::Zeroize::zeroize(&mut secret_config);
+        secret_config.zeroize();
         res
     })
     .await
@@ -388,7 +515,11 @@ async fn curl_fallback_json(
     };
 
     if status_code == 401 {
-        return Err(ApiError::Unauthorized);
+        return Err(if token.is_some() {
+            ApiError::Unauthorized
+        } else {
+            ApiError::InvalidCredentials
+        });
     }
 
     if let Ok(json_val) = serde_json::from_str::<Value>(body_str) {
@@ -407,31 +538,24 @@ async fn curl_fallback_json(
     ))
 }
 
-async fn send_json_request(
+async fn send_json_request_raw(
     client: &reqwest::Client,
     method: reqwest::Method,
     url: &str,
     token: Option<&str>,
     account_id: Option<&str>,
-    json_payload: Option<&Value>,
+    raw_json_body: Option<&str>,
 ) -> Result<Value, ApiError> {
     let headers = build_common_headers(token, account_id)?;
     let mut req = client.request(method.clone(), url).headers(headers);
-    if let Some(payload) = json_payload {
-        req = req.json(payload);
+    if let Some(body) = raw_json_body {
+        req = req.body(body.as_bytes().to_vec());
     }
 
     match req.send().await {
         Ok(resp) => {
             let status = resp.status();
             let status_u16 = status.as_u16();
-            let text = resp.text().await.unwrap_or_default();
-
-            if let Ok(json_val) = serde_json::from_str::<Value>(&text)
-                && (status.is_success() || json_val.get("status").is_some()) {
-                    return Ok(json_val);
-                }
-
             if status == reqwest::StatusCode::UNAUTHORIZED {
                 return Err(if token.is_some() {
                     ApiError::Unauthorized
@@ -440,14 +564,26 @@ async fn send_json_request(
                 });
             }
 
+            let text = read_json_response_text_bounded(resp, API_RESPONSE_MAX_BYTES)
+                .await
+                .unwrap_or_default();
+
+            if let Ok(json_val) = serde_json::from_str::<Value>(&text)
+                && (status.is_success() || json_val.get("status").is_some())
+            {
+                return Ok(json_val);
+            }
+
             // Cloudflare WAF returned 403 Forbidden without a LibreView JSON body
             // (e.g. TLS JA3/JA4 block on rustls): retry once via system curl (OpenSSL + HTTP/2).
             if status_u16 == 403 && crate::updater::system_curl_available()
                 && let Ok((code, val)) =
-                    curl_fallback_json(method.as_str(), url, token, account_id, json_payload).await
-                    && ((200..300).contains(&code) || val.get("status").is_some()) {
-                        return Ok(val);
-                    }
+                    curl_fallback_json(method.as_str(), url, token, account_id, raw_json_body)
+                        .await
+                    && ((200..300).contains(&code) || val.get("status").is_some())
+            {
+                return Ok(val);
+            }
 
             Err(ApiError::ServerError(status_u16, status.to_string()))
         }
@@ -456,13 +592,57 @@ async fn send_json_request(
             // curl and only add another 15 s of waiting, so skip the fallback for them.
             if !e.is_timeout() && !e.is_connect() && crate::updater::system_curl_available()
                 && let Ok((code, val)) =
-                    curl_fallback_json(method.as_str(), url, token, account_id, json_payload).await
-                    && ((200..300).contains(&code) || val.get("status").is_some()) {
-                        return Ok(val);
-                    }
+                    curl_fallback_json(method.as_str(), url, token, account_id, raw_json_body)
+                        .await
+                    && ((200..300).contains(&code) || val.get("status").is_some())
+            {
+                return Ok(val);
+            }
             Err(ApiError::NetworkError(e.to_string()))
         }
     }
+}
+
+async fn send_json_request(
+    client: &reqwest::Client,
+    method: reqwest::Method,
+    url: &str,
+    token: Option<&str>,
+    account_id: Option<&str>,
+    json_payload: Option<&Value>,
+) -> Result<Value, ApiError> {
+    let raw_body = json_payload.map(|p| p.to_string());
+    send_json_request_raw(client, method, url, token, account_id, raw_body.as_deref()).await
+}
+
+async fn send_ha_json_request(
+    client: &reqwest::Client,
+    method: reqwest::Method,
+    url: &str,
+    ha_token: &str,
+    json_payload: Option<&Value>,
+) -> Result<Value, ApiError> {
+    let headers = build_ha_headers(ha_token)?;
+    let mut req = client.request(method, url).headers(headers);
+    if let Some(payload) = json_payload {
+        req = req.json(payload);
+    }
+
+    let resp = req
+        .send()
+        .await
+        .map_err(|e| ApiError::NetworkError(e.to_string()))?;
+    let status = resp.status();
+    let status_u16 = status.as_u16();
+    if status == reqwest::StatusCode::UNAUTHORIZED {
+        return Err(ApiError::Unauthorized);
+    }
+    let text = read_json_response_text_bounded(resp, HA_RESPONSE_MAX_BYTES).await?;
+    if !status.is_success() {
+        return Err(ApiError::ServerError(status_u16, status.to_string()));
+    }
+    serde_json::from_str::<Value>(&text)
+        .map_err(|e| ApiError::ParseError(format!("Invalid Home Assistant JSON response: {e}")))
 }
 
 pub fn parse_login_response(
@@ -714,7 +894,7 @@ pub fn parse_graph_response(
                 .and_then(|v| v.as_str())
                 .unwrap_or("")
                 .to_string();
-            if val > 0.0 {
+            if val.is_finite() && val > 0.0 && val <= 2000.0 {
                 graph_points.push(GraphPoint {
                     timestamp: ts,
                     value_mg_dl: val,
@@ -722,7 +902,7 @@ pub fn parse_graph_response(
             }
         }
     }
-    if value_mg_dl > 0.0 {
+    if value_mg_dl.is_finite() && value_mg_dl > 0.0 && value_mg_dl <= 2000.0 {
         graph_points.push(GraphPoint {
             timestamp: timestamp.clone(),
             value_mg_dl,
@@ -779,23 +959,31 @@ pub async fn authenticate_async(
     username: &str,
     password: &str,
 ) -> Result<AuthSuccess, ApiError> {
-    let client = shared_api_client()?;
+    #[derive(Serialize)]
+    struct LoginPayload<'a> {
+        email: &'a str,
+        password: &'a str,
+    }
 
     let initial_base = resolve_base_url(country);
+    let client = shared_libreview_client(initial_base.starts_with("http://"))?;
     let login_url = format!("{initial_base}/auth/login");
 
-    let payload = serde_json::json!({
-        "email": username.trim(),
-        "password": password,
-    });
+    let login_json = Zeroizing::new(
+        serde_json::to_string(&LoginPayload {
+            email: username.trim(),
+            password,
+        })
+        .map_err(|e| ApiError::ParseError(format!("Failed encoding login request: {e}")))?,
+    );
 
-    let body = send_json_request(
+    let body = send_json_request_raw(
         client,
         reqwest::Method::POST,
         &login_url,
         None,
         None,
-        Some(&payload),
+        Some(&login_json),
     )
     .await?;
 
@@ -806,14 +994,15 @@ pub async fn authenticate_async(
 
     if let Some(region) = redirect_region {
         let region_base = resolve_base_url(&region);
+        let region_client = shared_libreview_client(region_base.starts_with("http://"))?;
         let region_url = format!("{region_base}/auth/login");
-        let body2 = send_json_request(
-            client,
+        let body2 = send_json_request_raw(
+            region_client,
             reqwest::Method::POST,
             &region_url,
             None,
             None,
-            Some(&payload),
+            Some(&login_json),
         )
         .await?;
         let (_, maybe_auth2) = parse_login_response(&body2, &region)?;
@@ -832,9 +1021,8 @@ pub async fn fetch_cgm_snapshot_async(
     token: &str,
     account_id: &str,
 ) -> Result<GlucoseSnapshot, ApiError> {
-    let client = shared_api_client()?;
-
     let base = resolve_base_url(country);
+    let client = shared_libreview_client(base.starts_with("http://"))?;
 
     let conn_url = format!("{base}/connections");
     let conn_body = send_json_request(
@@ -897,11 +1085,17 @@ pub fn validate_ha_entity_id(raw: &str) -> Result<String, ApiError> {
 
 /// Returns `true` when `host_port` targets localhost, a local LAN hostname/address,
 /// RFC1918/ULA private space, or Tailscale (`100.64.0.0/10` / `.ts.net`).
+/// Parses through [`reqwest::Url`] first so integer/hex/octal IPv4 forms are normalized.
 pub fn is_private_or_local_ha_host(host_port: &str) -> bool {
-    let host = if let Some(after_open) = host_port.strip_prefix('[') {
+    let normalized = reqwest::Url::parse(&format!("http://{}", host_port.trim()))
+        .ok()
+        .and_then(|u| u.host_str().map(str::to_string))
+        .unwrap_or_else(|| host_port.trim().to_string());
+
+    let host = if let Some(after_open) = normalized.strip_prefix('[') {
         after_open.split(']').next().unwrap_or(after_open)
     } else {
-        host_port.split(':').next().unwrap_or("")
+        normalized.split(':').next().unwrap_or("")
     }
     .trim()
     .to_ascii_lowercase();
@@ -930,6 +1124,13 @@ pub fn is_private_or_local_ha_host(host_port: &str) -> bool {
                     || (octets[0] == 100 && (64..=127).contains(&octets[1]))
             }
             std::net::IpAddr::V6(v6) => {
+                if let Some(mapped) = v6.to_ipv4_mapped() {
+                    let octets = mapped.octets();
+                    return mapped.is_loopback()
+                        || mapped.is_private()
+                        || mapped.is_link_local()
+                        || (octets[0] == 100 && (64..=127).contains(&octets[1]));
+                }
                 let seg = v6.segments();
                 v6.is_loopback()
                     || v6.is_unicast_link_local()
@@ -937,56 +1138,72 @@ pub fn is_private_or_local_ha_host(host_port: &str) -> bool {
             }
         };
     }
+    if host.bytes().all(|b| b.is_ascii_digit())
+        || host.starts_with("0x")
+        || host.starts_with("0o")
+    {
+        return false;
+    }
     !host.contains('.') && !host.contains(':')
 }
 
 /// Validates and normalizes a Home Assistant base URL (e.g. `"http://homeassistant.local:8123"`
 /// or `"https://homeassistant.example.com"`). Strips any trailing `/` or `/api`.
 pub fn validate_ha_base_url(raw_url: &str) -> Result<String, ApiError> {
-    let trimmed = raw_url.trim().trim_end_matches('/');
-    let trimmed = trimmed.strip_suffix("/api").unwrap_or(trimmed).trim_end_matches('/');
+    if raw_url.chars().any(|c| c.is_control()) {
+        return Err(ApiError::ParseError(
+            "Invalid control characters in Home Assistant URL".to_string(),
+        ));
+    }
+    let mut trimmed = raw_url.trim().trim_end_matches('/');
+    if let Some(stripped) = trimmed.strip_suffix("/api") {
+        trimmed = stripped.trim_end_matches('/');
+    }
     if trimmed.is_empty() {
         return Err(ApiError::ParseError(
             "Home Assistant URL is empty. Enter your Home Assistant URL (e.g. http://homeassistant.local:8123)."
                 .to_string(),
         ));
     }
-    let (is_http, rest) = if let Some(r) = trimmed.strip_prefix("https://") {
-        (false, r)
-    } else if let Some(r) = trimmed.strip_prefix("http://") {
-        (true, r)
-    } else {
+    if !(trimmed.starts_with("https://") || trimmed.starts_with("http://")) {
         return Err(ApiError::ParseError(
             "Home Assistant URL must start with https:// or http://".to_string(),
         ));
+    }
+    let parsed = reqwest::Url::parse(trimmed)
+        .map_err(|e| ApiError::ParseError(format!("Invalid Home Assistant URL: {e}")))?;
+    if !matches!(parsed.scheme(), "http" | "https") {
+        return Err(ApiError::ParseError(
+            "Home Assistant URL must use http:// or https://".to_string(),
+        ));
+    }
+    if !parsed.username().is_empty() || parsed.password().is_some() {
+        return Err(ApiError::ParseError(
+            "Credentials are not allowed in the Home Assistant URL".to_string(),
+        ));
+    }
+    if parsed.query().is_some() || parsed.fragment().is_some() {
+        return Err(ApiError::ParseError(
+            "Query strings and fragments are not allowed in the Home Assistant URL".to_string(),
+        ));
+    }
+    let Some(host_str) = parsed.host_str() else {
+        return Err(ApiError::ParseError(
+            "Home Assistant URL is missing a host".to_string(),
+        ));
     };
-    if rest.is_empty()
-        || rest.contains('@')
-        || rest.contains('?')
-        || rest.contains('#')
-        || rest.chars().any(|c| c.is_whitespace() || c.is_control())
-    {
-        return Err(ApiError::ParseError(
-            "Invalid characters in Home Assistant URL".to_string(),
-        ));
-    }
-    let host_port = rest.split('/').next().unwrap_or("");
-    if host_port.is_empty()
-        || !host_port
-            .chars()
-            .all(|c| c.is_ascii_alphanumeric() || matches!(c, '.' | '-' | ':' | '[' | ']'))
-    {
-        return Err(ApiError::ParseError(
-            "Invalid hostname or port in Home Assistant URL".to_string(),
-        ));
-    }
-    if is_http && !is_private_or_local_ha_host(host_port) {
+    let host_port = match parsed.port() {
+        Some(p) => format!("{host_str}:{p}"),
+        None => host_str.to_string(),
+    };
+
+    if parsed.scheme() == "http" && !is_private_or_local_ha_host(&host_port) {
         static LAST_WARNED_HTTP_HOST: Mutex<String> = Mutex::new(String::new());
         let should_warn = LAST_WARNED_HTTP_HOST
             .lock()
             .map(|mut prev| {
                 if prev.as_str() != host_port {
-                    *prev = host_port.to_string();
+                    *prev = host_port.clone();
                     true
                 } else {
                     false
@@ -1002,7 +1219,7 @@ pub fn validate_ha_base_url(raw_url: &str) -> Result<String, ApiError> {
             );
         }
     }
-    Ok(trimmed.to_string())
+    Ok(parsed.as_str().trim_end_matches('/').to_string())
 }
 
 fn parse_ha_trend_str(raw: &str) -> Option<i32> {
@@ -1287,6 +1504,11 @@ pub fn parse_ha_states_and_history(
         }
     };
     let value_mg_dl = to_mg_dl(raw_val);
+    if !value_mg_dl.is_finite() || value_mg_dl <= 0.0 || value_mg_dl > 2000.0 {
+        return Err(ApiError::ParseError(format!(
+            "Home Assistant glucose sensor '{entity_id}' reported out-of-range reading"
+        )));
+    }
 
     // Derive the LibreLink entity prefix (e.g. "sensor.patient_glucose_measurement" -> "patient_glucose")
     let without_domain = entity_id.strip_prefix("sensor.").unwrap_or(entity_id);
@@ -1504,7 +1726,7 @@ pub fn parse_ha_states_and_history(
                 continue;
             };
             let mg_dl = to_mg_dl(raw_v);
-            if mg_dl <= 0.0 || mg_dl.is_nan() {
+            if !mg_dl.is_finite() || mg_dl <= 0.0 || mg_dl > 2000.0 {
                 continue;
             }
             let ts_iso = item
@@ -1673,14 +1895,13 @@ pub async fn fetch_ha_states_array_async(
     if token.is_empty() {
         return Err(ApiError::InvalidCredentials);
     }
-    let client = shared_api_client()?;
+    let client = shared_ha_client()?;
     let states_url = format!("{base}/api/states");
-    let states_body = send_json_request(
+    let states_body = send_ha_json_request(
         client,
         reqwest::Method::GET,
         &states_url,
-        Some(token),
-        None,
+        token,
         None,
     )
     .await?;
@@ -1705,14 +1926,13 @@ pub async fn publish_ha_snooze_state_async(
     }
     let now = chrono::Utc::now().timestamp();
     let payload = build_ha_snooze_payload(snooze_until_epoch, updated_at_epoch, now);
-    let client = shared_api_client()?;
+    let client = shared_ha_client()?;
     let state_url = format!("{base}/api/states/sensor.librelinkup_alert_snooze");
-    send_json_request(
+    send_ha_json_request(
         client,
         reqwest::Method::POST,
         &state_url,
-        Some(token),
-        None,
+        token,
         Some(&payload),
     )
     .await?;
@@ -1723,12 +1943,11 @@ pub async fn publish_ha_snooze_state_async(
         "snooze_until_epoch": snooze_until_epoch.max(0),
         "updated_at_epoch": updated_at_epoch,
     });
-    let _ = send_json_request(
+    let _ = send_ha_json_request(
         client,
         reqwest::Method::POST,
         &event_url,
-        Some(token),
-        None,
+        token,
         Some(&event_payload),
     )
     .await;
@@ -1751,14 +1970,13 @@ pub async fn publish_ha_medications_state_async(
     }
     let now = chrono::Utc::now().timestamp();
     let payload = store.to_ha_sensor_payload(now);
-    let client = shared_api_client()?;
+    let client = shared_ha_client()?;
     let state_url = format!("{base}/api/states/sensor.librelinkup_medications");
-    send_json_request(
+    send_ha_json_request(
         client,
         reqwest::Method::POST,
         &state_url,
-        Some(token),
-        None,
+        token,
         Some(&payload),
     )
     .await?;
@@ -1776,12 +1994,11 @@ pub async fn publish_ha_medications_state_async(
             "skipped": dose.skipped,
             "notes": dose.notes,
         });
-        let _ = send_json_request(
+        let _ = send_ha_json_request(
             client,
             reqwest::Method::POST,
             &event_url,
-            Some(token),
-            None,
+            token,
             Some(&event_payload),
         )
         .await;
@@ -1802,14 +2019,13 @@ pub async fn fetch_ha_cgm_snapshot_and_states_async(
         return Err(ApiError::InvalidCredentials);
     }
 
-    let client = shared_api_client()?;
+    let client = shared_ha_client()?;
     let states_url = format!("{base}/api/states");
-    let states_body = send_json_request(
+    let states_body = send_ha_json_request(
         client,
         reqwest::Method::GET,
         &states_url,
-        Some(token),
-        None,
+        token,
         None,
     )
     .await?;
@@ -1831,12 +2047,11 @@ pub async fn fetch_ha_cgm_snapshot_and_states_async(
         let hist_url = format!(
             "{base}/api/history/period/{start_iso}?filter_entity_id={safe_entity_id}&minimal_response&no_attributes"
         );
-        send_json_request(
+        send_ha_json_request(
             client,
             reqwest::Method::GET,
             &hist_url,
-            Some(token),
-            None,
+            token,
             None,
         )
         .await
@@ -2207,11 +2422,24 @@ mod tests {
             );
         }
 
-        for remote in ["example.com:8123", "8.8.8.8:8123", "100.128.0.1:8123"] {
+        for remote in [
+            "example.com:8123",
+            "8.8.8.8:8123",
+            "100.128.0.1:8123",
+            "134744072:8123",
+            "0x08080808:8123",
+        ] {
             assert!(
                 !is_private_or_local_ha_host(remote),
                 "expected '{remote}' to be classified as remote"
             );
         }
+
+        assert!(validate_ha_base_url("https://user:pass@example.com").is_err());
+        assert!(validate_ha_base_url("http://example.com?foo=bar").is_err());
+        assert_eq!(
+            validate_ha_base_url("http://homeassistant.local:8123/api/").unwrap(),
+            "http://homeassistant.local:8123"
+        );
     }
 }

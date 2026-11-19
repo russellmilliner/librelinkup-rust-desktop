@@ -10,3 +10,4 @@ pub mod models;
 pub mod paths;
 pub mod session;
 pub mod updater;
+pub use zeroize;

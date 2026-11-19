@@ -304,6 +304,7 @@ Window {
 
                     QQC2.Label {
                         text: telemetry ? telemetry.glucoseDisplay : "--"
+                        textFormat: Text.PlainText
                         font.pointSize: 20
                         font.bold: true
                         color: "#ffffff"
@@ -311,6 +312,7 @@ Window {
 
                     QQC2.Label {
                         text: telemetry ? telemetry.resultUnit : "mg/dL"
+                        textFormat: Text.PlainText
                         font.pointSize: 9.5
                         font.bold: true
                         color: overlayWindow.isDarkOverlay
@@ -326,6 +328,7 @@ Window {
                     text: telemetry
                         ? (telemetry.rangeStatusLabel + " • " + telemetry.trendDescription)
                         : qsTr("Waiting...")
+                    textFormat: Text.PlainText
                     font.pointSize: 8.5
                     color: overlayWindow.isDarkOverlay
                         ? Qt.rgba(0.88, 0.92, 0.98, 0.92)
@@ -356,6 +359,7 @@ Window {
                 QQC2.Label {
                     anchors.centerIn: parent
                     text: telemetry ? telemetry.trendSymbol : "→"
+                    textFormat: Text.PlainText
                     font.pointSize: 14
                     font.bold: true
                     color: "#ffffff"

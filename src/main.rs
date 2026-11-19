@@ -119,14 +119,11 @@ fn main() {
         std::process::exit(1);
     }
 
-    if let Some(action_id) = resolve_cli_action(&args) {
-        if librelinkup_try_dispatch_cli_action(&QString::from(action_id.as_str())) {
-            return;
-        }
-        // SAFETY: single-threaded CLI startup before librelinkup_run_app spawns threads.
-        unsafe {
-            std::env::set_var("LIBRELINKUP_INITIAL_ACTION", &action_id);
-        }
+    let initial_action = resolve_cli_action(&args).unwrap_or_default();
+    if !initial_action.is_empty()
+        && librelinkup_try_dispatch_cli_action(&QString::from(initial_action.as_str()))
+    {
+        return;
     }
 
     let start_minimized = args.iter().any(|a| {
@@ -139,6 +136,6 @@ fn main() {
         .map(|v| v == "1" || v.eq_ignore_ascii_case("true"))
         .unwrap_or(false);
 
-    let exit_code = librelinkup_run_app(start_minimized);
+    let exit_code = librelinkup_run_app(start_minimized, &QString::from(initial_action.as_str()));
     std::process::exit(exit_code);
 }

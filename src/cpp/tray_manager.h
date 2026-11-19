@@ -133,18 +133,32 @@ public:
             : QStringLiteral("glucoseStatusSummary");
     }
 
-    bool isKdeNotificationEventPopupEnabled(const QString& eventId) const {
+    bool isKdeNotificationEventPopupEnabled(
+        const QString& eventId,
+        const QString& configDirOverride = QString()
+    ) const {
         if (eventId.isEmpty()) {
             return true;
         }
         QString cfgPath;
-        const QString xdgConfig = qEnvironmentVariable("XDG_CONFIG_HOME").trimmed();
-        if (!xdgConfig.isEmpty()) {
-            const QString candidate = QDir(xdgConfig).filePath(
+        const QString explicitDir = configDirOverride.trimmed();
+        if (!explicitDir.isEmpty()) {
+            const QString candidate = QDir(explicitDir).filePath(
                 QStringLiteral("io.github.russellmilliner.LibreLinkUpDesktop.notifyrc")
             );
             if (QFile::exists(candidate)) {
                 cfgPath = candidate;
+            }
+        }
+        if (cfgPath.isEmpty()) {
+            const QString xdgConfig = qEnvironmentVariable("XDG_CONFIG_HOME").trimmed();
+            if (!xdgConfig.isEmpty()) {
+                const QString candidate = QDir(xdgConfig).filePath(
+                    QStringLiteral("io.github.russellmilliner.LibreLinkUpDesktop.notifyrc")
+                );
+                if (QFile::exists(candidate)) {
+                    cfgPath = candidate;
+                }
             }
         }
         if (cfgPath.isEmpty()) {
@@ -416,7 +430,7 @@ public:
                 ? lines.mid(1).join(QLatin1Char('\n'))
                 : QString();
             m_sni->setToolTipTitle(title);
-            m_sni->setToolTipSubTitle(subTitle);
+            m_sni->setToolTipSubTitle(subTitle.toHtmlEscaped());
         }
 
         if (m_statusAction && m_lastStatusHeader != statusHeader) {
@@ -730,12 +744,16 @@ private:
             QIcon::fromTheme(QStringLiteral("application-exit")),
             QStringLiteral("Quit LibreLinkUp Rust Desktop")
         );
-        QObject::connect(quitAction, &QAction::triggered, []() {
-            QCoreApplication::quit();
+        QObject::connect(quitAction, &QAction::triggered, [this]() {
+            if (m_controller) {
+                QMetaObject::invokeMethod(m_controller, "quitApplication", Qt::QueuedConnection);
+            } else {
+                QCoreApplication::quit();
+            }
         });
 
         updateWindowActionsVisibility();
-        m_sni->setContextMenu(m_menu);
+        m_sni->setContextMenu(m_menu.data());
 
         QObject::connect(
             m_sni,
@@ -1051,20 +1069,20 @@ private:
     QPointer<KStatusNotifierItem> m_sni;
     QPointer<QSystemTrayIcon> m_tray;
     QIcon m_currentTrayIcon;
-    QMenu* m_menu = nullptr;
-    QAction* m_statusAction = nullptr;
-    QAction* m_rangeAction = nullptr;
-    QAction* m_showInIconAction = nullptr;
-    QAction* m_showInTooltipAction = nullptr;
-    QAction* m_onlyRelevantOutOfRangeAction = nullptr;
-    QAction* m_overlayAction = nullptr;
-    QAction* m_overlayAllDesktopsAction = nullptr;
-    QAction* m_autostartAction = nullptr;
-    QAction* m_themeSystemAction = nullptr;
-    QAction* m_themeDarkAction = nullptr;
-    QAction* m_themeLightAction = nullptr;
-    QAction* m_showAction = nullptr;
-    QAction* m_hideAction = nullptr;
+    QPointer<QMenu> m_menu;
+    QPointer<QAction> m_statusAction;
+    QPointer<QAction> m_rangeAction;
+    QPointer<QAction> m_showInIconAction;
+    QPointer<QAction> m_showInTooltipAction;
+    QPointer<QAction> m_onlyRelevantOutOfRangeAction;
+    QPointer<QAction> m_overlayAction;
+    QPointer<QAction> m_overlayAllDesktopsAction;
+    QPointer<QAction> m_autostartAction;
+    QPointer<QAction> m_themeSystemAction;
+    QPointer<QAction> m_themeDarkAction;
+    QPointer<QAction> m_themeLightAction;
+    QPointer<QAction> m_showAction;
+    QPointer<QAction> m_hideAction;
     QString m_lastIconKey;
     QString m_lastTooltipText;
     QString m_lastStatusHeader;
@@ -1140,7 +1158,7 @@ private:
             << replacesId
             << QStringLiteral("io.github.russellmilliner.LibreLinkUpDesktop")
             << title
-            << body
+            << body.toHtmlEscaped()
             << actions
             << hints
             << static_cast<int>(15000);
@@ -1157,7 +1175,14 @@ private:
                         "librelinkup: org.freedesktop.Notifications.Notify failed (%s); falling back to tray message",
                         qPrintable(reply.error().message())
                     );
-                    if (m_tray && QSystemTrayIcon::supportsMessages()) {
+                    if (m_sni) {
+                        m_sni->showMessage(
+                            title,
+                            body,
+                            critical ? QStringLiteral("dialog-error") : QStringLiteral("dialog-information"),
+                            15000
+                        );
+                    } else if (m_tray && QSystemTrayIcon::supportsMessages()) {
                         m_tray->showMessage(
                             title,
                             body,

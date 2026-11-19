@@ -197,7 +197,7 @@ pub mod qobject {
         );
         fn librelinkup_request_background_autostart(enable: bool, start_minimized: bool) -> bool;
         fn librelinkup_quit_app();
-        fn librelinkup_run_app(start_minimized: bool) -> i32;
+        fn librelinkup_run_app(start_minimized: bool, initial_action: &QString) -> i32;
         fn librelinkup_run_ui_overflow_tests() -> QString;
         fn librelinkup_run_desktop_widget_tests() -> QString;
         fn librelinkup_run_task_manager_icon_tests() -> QString;
@@ -365,6 +365,9 @@ pub mod qobject {
 
         #[qinvokable]
         fn quit_application(self: Pin<&mut TelemetryController>);
+
+        #[qinvokable]
+        fn flush_history_on_shutdown(self: Pin<&mut TelemetryController>);
 
         #[qinvokable]
         fn popup_tray_menu_at_cursor(self: Pin<&mut TelemetryController>);

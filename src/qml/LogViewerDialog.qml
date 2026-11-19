@@ -421,6 +421,7 @@ Item {
                             objectName: "logTimestampLabel"
                             anchors.verticalCenter: parent.verticalCenter
                             text: model.timestamp
+                            textFormat: Text.PlainText
                             font.family: "monospace"
                             font.pointSize: logViewerDialog.fontCompactPt
                             opacity: 0.82
@@ -445,6 +446,7 @@ Item {
                                 id: levelBadgeLabel
                                 anchors.centerIn: parent
                                 text: model.level
+                                textFormat: Text.PlainText
                                 font.bold: true
                                 font.pointSize: logViewerDialog.fontSmallPt
                                 color: logViewerDialog.levelBadgeColor(model.level)
@@ -468,6 +470,7 @@ Item {
                                 id: categoryBadgeLabel
                                 anchors.centerIn: parent
                                 text: model.category
+                                textFormat: Text.PlainText
                                 font.bold: true
                                 font.pointSize: logViewerDialog.fontSmallPt
                                 color: logViewerDialog.categoryBadgeColor(model.category)
@@ -485,6 +488,7 @@ Item {
                         anchors.top: parent.top
                         anchors.topMargin: 6
                         text: model.message
+                        textFormat: Text.PlainText
                         font.pointSize: logViewerDialog.fontBodyPt
                         wrapMode: Text.Wrap
                         color: Kirigami.Theme.textColor

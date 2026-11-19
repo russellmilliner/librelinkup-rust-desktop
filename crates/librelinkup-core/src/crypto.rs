@@ -148,6 +148,7 @@ pub fn parse_ha_env_contents(raw: &str) -> Option<(String, String)> {
             if key == "HA_URL" && !val.is_empty() {
                 url = val.to_string();
             } else if key == "HA_TOKEN" && !val.is_empty() {
+                token.zeroize();
                 token = val.to_string();
             }
         }
@@ -155,6 +156,8 @@ pub fn parse_ha_env_contents(raw: &str) -> Option<(String, String)> {
     if !url.is_empty() && !token.is_empty() {
         Some((url, token))
     } else {
+        url.zeroize();
+        token.zeroize();
         None
     }
 }
@@ -303,8 +306,16 @@ pub fn encrypt_bytes_with_secret(
     let aad = associated_data(ENVELOPE_VERSION, label, PBKDF2_ITERATIONS, &salt);
 
     let mut in_out = plaintext.to_vec();
-    key.seal_in_place_append_tag(nonce, Aad::from(aad.as_slice()), &mut in_out)
-        .map_err(|_| "AES-256-GCM encryption failed".to_string())?;
+    if key
+        .seal_in_place_append_tag(nonce, Aad::from(aad.as_slice()), &mut in_out)
+        .is_err()
+    {
+        in_out.zeroize();
+        return Err("AES-256-GCM encryption failed".to_string());
+    }
+
+    let ciphertext_hex = bytes_to_hex(&in_out);
+    in_out.zeroize();
 
     Ok(EncryptedEnvelope {
         version: ENVELOPE_VERSION,
@@ -313,7 +324,7 @@ pub fn encrypt_bytes_with_secret(
         iterations: PBKDF2_ITERATIONS,
         salt_hex: bytes_to_hex(&salt),
         nonce_hex: bytes_to_hex(&nonce_bytes),
-        ciphertext_hex: bytes_to_hex(&in_out),
+        ciphertext_hex,
     })
 }
 
@@ -325,6 +336,9 @@ pub fn decrypt_bytes_with_secret(
 ) -> Result<Vec<u8>, String> {
     if envelope.version != ENVELOPE_VERSION && envelope.version != ENVELOPE_VERSION_V1 {
         return Err(format!("Unsupported envelope version: {}", envelope.version));
+    }
+    if envelope.version == ENVELOPE_VERSION_V1 && label != AAD_LABEL_CREDENTIALS {
+        return Err("Legacy v1 envelopes are only accepted for credentials".to_string());
     }
     if envelope.algorithm != "AES-256-GCM" {
         return Err(format!(
@@ -349,6 +363,7 @@ pub fn decrypt_bytes_with_secret(
         .map_err(|_| "Invalid nonce length in encrypted envelope".to_string())?;
     let mut ciphertext = hex_to_bytes(&envelope.ciphertext_hex)?;
     if ciphertext.len() < AES_256_GCM.tag_len() {
+        ciphertext.zeroize();
         return Err("Ciphertext is shorter than authentication tag".to_string());
     }
 
@@ -357,21 +372,32 @@ pub fn decrypt_bytes_with_secret(
     let iterations = envelope.iterations;
 
     let mut derived_key = derive_aes_key(master_secret, &salt, iterations)?;
-    let unbound_key = UnboundKey::new(&AES_256_GCM, &derived_key)
-        .map_err(|_| "Failed to initialize AES-256-GCM key".to_string())?;
-    derived_key.zeroize();
+    let unbound_key = match UnboundKey::new(&AES_256_GCM, &derived_key) {
+        Ok(k) => {
+            derived_key.zeroize();
+            k
+        }
+        Err(_) => {
+            derived_key.zeroize();
+            ciphertext.zeroize();
+            return Err("Failed to initialize AES-256-GCM key".to_string());
+        }
+    };
 
     let key = LessSafeKey::new(unbound_key);
     let nonce = Nonce::assume_unique_for_key(nonce_bytes);
     let aad = associated_data(envelope.version, label, iterations, &salt);
 
-    let plaintext = key
-        .open_in_place(nonce, Aad::from(aad.as_slice()), &mut ciphertext)
-        .map_err(|_| {
-            "Vault authentication failed: wrong key, tampered envelope, or wrong vault label"
-                .to_string()
-        })?
-        .to_vec();
+    let plaintext = match key.open_in_place(nonce, Aad::from(aad.as_slice()), &mut ciphertext) {
+        Ok(pt) => pt.to_vec(),
+        Err(_) => {
+            ciphertext.zeroize();
+            return Err(
+                "Vault authentication failed: wrong key, tampered envelope, or wrong vault label"
+                    .to_string(),
+            );
+        }
+    };
     ciphertext.zeroize();
 
     Ok(plaintext)
@@ -453,7 +479,7 @@ fn should_use_desktop_keyring(key_path: &Path) -> bool {
 /// Attempts to retrieve the 256-bit vault master secret hex string from the desktop
 /// keyring on Linux (freedesktop Secret Service via `secret-tool` or KDE KWallet via `kwallet-query`).
 #[cfg(unix)]
-fn try_keyring_lookup() -> Option<String> {
+fn try_keyring_lookup() -> Option<Zeroizing<String>> {
     use std::process::Command;
 
     let candidates: &[(&str, &[&str])] = &[
@@ -491,13 +517,14 @@ fn try_keyring_lookup() -> Option<String> {
         }
         if let Ok(mut out) = Command::new(program).args(*args).output() {
             let valid = if out.status.success() {
-                let mut s = String::from_utf8_lossy(&out.stdout).trim().to_string();
+                let mut raw = String::from_utf8_lossy(&out.stdout).into_owned();
+                let s = Zeroizing::new(raw.trim().to_string());
+                raw.zeroize();
                 out.stdout.zeroize();
                 out.stderr.zeroize();
                 if s.len() == KEY_LEN * 2 && s.bytes().all(|b| b.is_ascii_hexdigit()) {
                     Some(s)
                 } else {
-                    s.zeroize();
                     None
                 }
             } else {
@@ -585,18 +612,22 @@ pub fn load_or_create_master_secret(key_path: &Path) -> Result<Zeroizing<Vec<u8>
 }
 
 /// Same as [`load_or_create_master_secret`] but refuses to mint a new key when
-/// `vault_path` (or any default vault when `vault_path` is `None`) exists.
+/// `vault_path` (or any default vault when using the default master key path) exists.
 pub fn load_or_create_master_secret_guarded(
     key_path: &Path,
     vault_path: Option<&Path>,
 ) -> Result<Zeroizing<Vec<u8>>, String> {
-    if let Some(p) = vault_path {
-        load_or_create_master_secret_for_vaults(key_path, &[p])
-    } else if key_path == master_key_file_path() {
+    if key_path == master_key_file_path() {
         let creds = credentials_file_path();
         let meds = crate::paths::medications_file_path();
         let hist = crate::paths::glucose_history_file_path();
-        load_or_create_master_secret_for_vaults(key_path, &[&creds, &meds, &hist])
+        if let Some(p) = vault_path {
+            load_or_create_master_secret_for_vaults(key_path, &[p, &creds, &meds, &hist])
+        } else {
+            load_or_create_master_secret_for_vaults(key_path, &[&creds, &meds, &hist])
+        }
+    } else if let Some(p) = vault_path {
+        load_or_create_master_secret_for_vaults(key_path, &[p])
     } else {
         load_or_create_master_secret_for_vaults(key_path, &[])
     }
@@ -616,23 +647,57 @@ pub fn load_or_create_master_secret_for_vaults(
 
     let vault_exists = guarded_vaults.iter().any(|p| p.exists());
 
+    let parse_valid_key_hex = |hex: &str| -> Result<Vec<u8>, String> {
+        let bytes = hex_to_bytes(hex)?;
+        if bytes.len() != KEY_LEN {
+            return Err(format!(
+                "Invalid master key length: expected {KEY_LEN} bytes, got {}",
+                bytes.len()
+            ));
+        }
+        Ok(bytes)
+    };
+
     let file_secret: Zeroizing<Vec<u8>> = if key_path.exists() {
-        let mut raw_hex =
-            fs::read_to_string(key_path).map_err(|e| format!("Failed to read master key file: {e}"))?;
-        let mut trimmed = raw_hex.trim().to_string();
+        let mut raw_hex = fs::read_to_string(key_path)
+            .map_err(|e| format!("Failed to read master key file: {e}"))?;
+        let trimmed = Zeroizing::new(raw_hex.trim().to_string());
         raw_hex.zeroize();
-        let bytes_res = hex_to_bytes(&trimmed);
-        // Keep the 0600 master.key file on disk so both host and Flatpak launches (and early
-        // login autostart before keyring unlock) share the exact same key, while mirroring
-        // into Secret Service / KWallet as backup.
-        if bytes_res.is_ok() {
-            #[cfg(unix)]
-            if use_keyring {
-                let _ = try_keyring_store(&trimmed);
+        match parse_valid_key_hex(&trimmed) {
+            Ok(bytes) => {
+                // Keep the 0600 master.key file on disk so both host and Flatpak launches (and
+                // early login autostart before keyring unlock) share the exact same key, while
+                // mirroring into Secret Service / KWallet as backup.
+                #[cfg(unix)]
+                if use_keyring {
+                    let _ = try_keyring_store(&trimmed);
+                }
+                Zeroizing::new(bytes)
+            }
+            Err(file_err) => {
+                // Never overwrite the desktop keyring with a corrupted/truncated key file; try
+                // recovering from keyring if available, otherwise fail closed.
+                #[cfg(unix)]
+                let recovered = if use_keyring {
+                    try_keyring_lookup()
+                } else {
+                    None
+                };
+                #[cfg(not(unix))]
+                let recovered: Option<Zeroizing<String>> = None;
+
+                if let Some(kr_hex) = recovered
+                    && let Ok(secret) = parse_valid_key_hex(&kr_hex)
+                {
+                    let _ = write_file_atomic_0600(key_path, kr_hex.as_bytes());
+                    Zeroizing::new(secret)
+                } else {
+                    return Err(format!(
+                        "Master key file is invalid or corrupted ({file_err}). Refusing to overwrite or mirror an invalid key."
+                    ));
+                }
             }
         }
-        trimmed.zeroize();
-        Zeroizing::new(bytes_res?)
     } else {
         #[cfg(unix)]
         let keyring_hex = if use_keyring {
@@ -641,16 +706,13 @@ pub fn load_or_create_master_secret_for_vaults(
             None
         };
         #[cfg(not(unix))]
-        let keyring_hex: Option<String> = None;
+        let keyring_hex: Option<Zeroizing<String>> = None;
 
-        if let Some(raw_keyring_hex) = keyring_hex {
-            let mut hex_str = Zeroizing::new(raw_keyring_hex);
-            if let Ok(secret) = hex_to_bytes(&hex_str) {
+        if let Some(hex_str) = keyring_hex {
+            if let Ok(secret) = parse_valid_key_hex(&hex_str) {
                 let _ = write_file_atomic_0600(key_path, hex_str.as_bytes());
-                hex_str.zeroize();
                 Zeroizing::new(secret)
             } else {
-                hex_str.zeroize();
                 return Err("Corrupted master key in desktop keyring".to_string());
             }
         } else if vault_exists {
@@ -673,7 +735,7 @@ pub fn load_or_create_master_secret_for_vaults(
             if use_keyring {
                 let _ = try_keyring_store(&hex_str);
             }
-            Zeroizing::new(hex_to_bytes(&hex_str)?)
+            Zeroizing::new(parse_valid_key_hex(&hex_str)?)
         }
     };
 
@@ -800,13 +862,14 @@ pub fn try_migrate_legacy_leveldb_credentials(leveldb_dir: &Path) -> Option<Stor
 
     for path in paths {
         // Skip unreadable files instead of aborting the entire LevelDB scan early.
-        let Ok(bytes) = fs::read(&path) else {
+        let Ok(mut bytes) = fs::read(&path) else {
             continue;
         };
-        let lossy = String::from_utf8_lossy(&bytes);
+        let mut lossy = String::from_utf8_lossy(&bytes).into_owned();
+        bytes.zeroize();
         for chunk in lossy.split("{\"state\":{") {
             if let Some(end_idx) = chunk.find("},\"version\"") {
-                let json_str = format!("{{{}}}", &chunk[..end_idx]);
+                let mut json_str = format!("{{{}}}", &chunk[..end_idx]);
                 if let Ok(val) = serde_json::from_str::<serde_json::Value>(&json_str) {
                     let token = val
                         .get("token")
@@ -852,8 +915,10 @@ pub fn try_migrate_legacy_leveldb_credentials(leveldb_dir: &Path) -> Option<Stor
                         });
                     }
                 }
+                json_str.zeroize();
             }
         }
+        lossy.zeroize();
     }
     best
 }
@@ -1055,5 +1120,36 @@ mod tests {
         assert_eq!(migrated.country, "de");
 
         let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn rejects_corrupted_or_wrong_length_master_key_file() {
+        let dir = std::env::temp_dir().join(format!("llu-badkey-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&dir);
+        fs::create_dir_all(&dir).unwrap();
+        let key_path = dir.join("master.key");
+
+        // Empty key file -> fails closed
+        fs::write(&key_path, b"").unwrap();
+        assert!(load_or_create_master_secret_for_vaults(&key_path, &[]).is_err());
+
+        // Short hex (16 bytes instead of 32 bytes) -> fails closed
+        fs::write(&key_path, "00112233445566778899aabbccddeeff").unwrap();
+        assert!(load_or_create_master_secret_for_vaults(&key_path, &[]).is_err());
+
+        // Non-hex garbage -> fails closed
+        fs::write(&key_path, "not-valid-hex").unwrap();
+        assert!(load_or_create_master_secret_for_vaults(&key_path, &[]).is_err());
+
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn v1_envelope_only_accepted_for_credentials_label() {
+        let secret = vec![0x42u8; 32];
+        let mut env = encrypt_bytes_with_secret(b"{}", &secret, AAD_LABEL_CREDENTIALS).unwrap();
+        env.version = ENVELOPE_VERSION_V1;
+        let err = decrypt_bytes_with_secret(&env, &secret, AAD_LABEL_MEDICATIONS).unwrap_err();
+        assert!(err.contains("Legacy v1 envelopes"), "{err}");
     }
 }

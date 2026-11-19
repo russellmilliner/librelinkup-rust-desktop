@@ -96,12 +96,14 @@ fn main() {
         .iter()
         .any(|a| matches!(a.as_str(), "--minimized" | "-m" | "--start-minimized" | "--autostart" | "--hidden"));
 
+    platform::harden_process_startup();
     install_panic_hook();
     // Health-data vaults (glucose history, medications) are encrypted with the same
     // DPAPI-protected master key as the credential vault.
     librelinkup_core::crypto::set_secret_provider(platform::load_or_create_master_secret);
-    let Some(_instance) = platform::acquire_single_instance() else {
-        return; // existing instance was brought to the front
+    let _instance = match platform::acquire_single_instance() {
+        Some(inst) => inst,
+        None => return, // existing instance was brought to the front
     };
     platform::register_notification_identity(ICON_256);
 
@@ -123,13 +125,13 @@ fn main() {
     if let Some(e) = last_error {
         show_fatal_error(&format!("LibreLinkUp could not start a graphics renderer:\n\n{e}"));
     }
-    // Background threads (service, tray) end with the process.
-    std::process::exit(0);
+    drop(_instance);
 }
 
 fn run(renderer: eframe::Renderer, start_minimized: bool) -> eframe::Result {
     let initial_settings = librelinkup_core::models::load_default_settings();
-    let has_saved_window_pos = initial_settings.window_x >= 0 && initial_settings.window_y >= 0;
+    let has_saved_window_pos =
+        initial_settings.window_x > -32_000 && initial_settings.window_y > -32_000;
     let init_w = initial_settings.window_width.clamp(640, 3840) as f32;
     let init_h = initial_settings.window_height.clamp(480, 2160) as f32;
     let icon = eframe::icon_data::from_png_bytes(ICON_256).ok();
@@ -443,7 +445,16 @@ fn install_panic_hook() {
             chrono::Local::now().format("%Y-%m-%d %H:%M:%S"),
             std::backtrace::Backtrace::force_capture()
         );
-        let path = librelinkup_core::paths::data_dir().join("crash.log");
+        let data_dir = librelinkup_core::paths::data_dir();
+        let path = data_dir.join("crash.log");
+        const MAX_CRASH_LOG_BYTES: u64 = 1_048_576;
+        if std::fs::metadata(&path)
+            .map(|m| m.len() >= MAX_CRASH_LOG_BYTES)
+            .unwrap_or(false)
+        {
+            let backup = data_dir.join("crash.log.1");
+            let _ = std::fs::rename(&path, &backup);
+        }
         if let Ok(mut f) = std::fs::OpenOptions::new().create(true).append(true).open(&path) {
             use std::io::Write;
             let _ = f.write_all(line.as_bytes());

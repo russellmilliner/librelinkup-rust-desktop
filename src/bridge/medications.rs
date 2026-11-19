@@ -11,7 +11,7 @@ use crate::bridge::ops;
 use crate::bridge::qobject_bridge::{qobject, MedicationsControllerRust};
 use crate::bridge::state::{now_epoch, with_state};
 use crate::event_log::{log_info, log_warn};
-use crate::medications::{save_default_medications, MedicationSchedule};
+use crate::medications::MedicationSchedule;
 
 macro_rules! sync_str {
     ($self:ident, $setter:ident, $getter:ident, $value:expr) => {{
@@ -94,7 +94,6 @@ impl qobject::MedicationsController {
         notes: QString,
     ) -> bool {
         let sched = MedicationSchedule::from_code(&schedule.to_string());
-        let clean_name = name.to_string().trim().to_string();
         let outcome = with_state(|s| {
             let res = s.medication_store.upsert_medication(
                 &id.to_string(),
@@ -107,7 +106,7 @@ impl qobject::MedicationsController {
                 &notes.to_string(),
             );
             if res.is_ok() {
-                let _ = save_default_medications(&s.medication_store);
+                let _ = ops::save_medications_if_safe(s);
                 ops::refresh_medication_views(s);
             }
             res
@@ -116,7 +115,7 @@ impl qobject::MedicationsController {
             Ok(_) => {
                 log_info(
                     "MEDS",
-                    format!("Saved medication '{clean_name}' ({})", sched.label()),
+                    format!("Saved scheduled medication ({}).", sched.label()),
                 );
                 ops::spawn_ha_medications_push(None);
                 self.as_mut().sync();
@@ -133,7 +132,7 @@ impl qobject::MedicationsController {
         let removed = with_state(|s| {
             let ok = s.medication_store.remove_medication(&medication_id.to_string());
             if ok {
-                let _ = save_default_medications(&s.medication_store);
+                let _ = ops::save_medications_if_safe(s);
                 ops::refresh_medication_views(s);
             }
             ok
@@ -169,7 +168,7 @@ impl qobject::MedicationsController {
                 &notes.to_string(),
             );
             if logged.is_ok() {
-                let _ = save_default_medications(&s.medication_store);
+                let _ = ops::save_medications_if_safe(s);
                 ops::refresh_medication_views(s);
             }
             logged
@@ -178,10 +177,7 @@ impl qobject::MedicationsController {
             Ok(e) => {
                 log_info(
                     "MEDS",
-                    format!(
-                        "Logged medication dose: {} ({}) at {}",
-                        e.medication_name, e.dosage, e.taken_at_display
-                    ),
+                    format!("Logged medication dose at {}.", e.taken_at_display),
                 );
                 ops::spawn_ha_medications_push(Some(e));
                 self.as_mut().sync();
@@ -205,7 +201,7 @@ impl qobject::MedicationsController {
                 s.medication_store
                     .skip_dose(&medication_id.to_string(), now, &notes.to_string());
             if skipped.is_ok() {
-                let _ = save_default_medications(&s.medication_store);
+                let _ = ops::save_medications_if_safe(s);
                 ops::refresh_medication_views(s);
             }
             skipped
@@ -214,10 +210,7 @@ impl qobject::MedicationsController {
             Ok(e) => {
                 log_info(
                     "MEDS",
-                    format!(
-                        "Skipped medication dose: {} ({}) at {}",
-                        e.medication_name, e.dosage, e.taken_at_display
-                    ),
+                    format!("Skipped medication dose at {}.", e.taken_at_display),
                 );
                 ops::spawn_ha_medications_push(Some(e));
                 self.as_mut().sync();
@@ -234,7 +227,7 @@ impl qobject::MedicationsController {
         let removed = with_state(|s| {
             let ok = s.medication_store.remove_dose_log(&dose_id.to_string());
             if ok {
-                let _ = save_default_medications(&s.medication_store);
+                let _ = ops::save_medications_if_safe(s);
                 ops::refresh_medication_views(s);
             }
             ok

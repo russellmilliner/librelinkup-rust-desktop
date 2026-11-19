@@ -20,6 +20,30 @@ pub const APP_DIR_NAME: &str = "LibreLinkUpDesktop";
 /// directory into the XDG config directory on first run.
 const LEGACY_CONFIG_FILES: &[&str] = &["settings.json", "credentials.enc.json", "master.key"];
 
+fn current_uid_or_pid() -> u32 {
+    #[cfg(target_os = "linux")]
+    {
+        use std::os::unix::fs::MetadataExt;
+        if let Ok(meta) = fs::metadata("/proc/self") {
+            return meta.uid();
+        }
+    }
+    #[cfg(all(unix, not(target_os = "linux")))]
+    {
+        if let Some(uid) = env::var("UID").ok().and_then(|s| s.trim().parse::<u32>().ok()) {
+            return uid;
+        }
+    }
+    std::process::id()
+}
+
+fn private_temp_fallback_dir(kind: &str) -> PathBuf {
+    let dir = env::temp_dir().join(format!("librelinkup-{kind}-{}", current_uid_or_pid()));
+    let _ = fs::create_dir_all(&dir);
+    restrict_dir_permissions(&dir);
+    dir
+}
+
 fn home_dir() -> PathBuf {
     #[cfg(windows)]
     let var = "USERPROFILE";
@@ -29,7 +53,7 @@ fn home_dir() -> PathBuf {
         .ok()
         .filter(|s| !s.trim().is_empty())
         .map(PathBuf::from)
-        .unwrap_or_else(|| PathBuf::from("/tmp"))
+        .unwrap_or_else(|| private_temp_fallback_dir("home"))
 }
 
 /// Resolves an XDG base directory per the XDG Base Directory spec: the env value is
@@ -128,12 +152,12 @@ pub fn write_file_atomic_0600(path: &Path, contents: &[u8]) -> Result<(), String
         let _ = fs::remove_file(&tmp_path);
         return Err(format!("Failed writing {}: {e}", path.display()));
     }
-    drop(tmp_file);
     #[cfg(unix)]
     {
         use std::os::unix::fs::PermissionsExt;
-        let _ = fs::set_permissions(&tmp_path, fs::Permissions::from_mode(0o600));
+        let _ = tmp_file.set_permissions(fs::Permissions::from_mode(0o600));
     }
+    drop(tmp_file);
     if let Err(e) = fs::rename(&tmp_path, path) {
         let _ = fs::remove_file(&tmp_path);
         return Err(format!(
@@ -141,21 +165,18 @@ pub fn write_file_atomic_0600(path: &Path, contents: &[u8]) -> Result<(), String
             path.display()
         ));
     }
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::PermissionsExt;
-        let _ = fs::set_permissions(path, fs::Permissions::from_mode(0o600));
-    }
     Ok(())
 }
 
 /// Quotes and escapes a single command argument for an XDG `.desktop` `Exec=` line
-/// per the Desktop Entry Specification (escapes `\`, `"`, `` ` ``, `$`, and doubles `%`).
+/// per the Desktop Entry Specification (strips `\r`/`\n`/`\0`, escapes `\`, `"`, `` ` ``,
+/// `$`, and doubles `%`).
 pub fn quote_desktop_exec_arg(arg: &str) -> String {
     let mut out = String::with_capacity(arg.len() + 4);
     out.push('"');
     for ch in arg.chars() {
         match ch {
+            '\r' | '\n' | '\0' => {}
             '\\' | '"' | '`' | '$' => {
                 out.push('\\');
                 out.push(ch);
@@ -168,6 +189,54 @@ pub fn quote_desktop_exec_arg(arg: &str) -> String {
     }
     out.push('"');
     out
+}
+
+/// Converts a `file://` URI (with percent-encoding) or native filesystem path into a [`PathBuf`].
+pub fn decode_file_uri_or_path(raw: &str) -> PathBuf {
+    let trimmed = raw.trim();
+    let Some(rest) = trimmed.strip_prefix("file://") else {
+        return PathBuf::from(raw);
+    };
+    let path_part = rest.strip_prefix("localhost").unwrap_or(rest);
+    let mut bytes = Vec::with_capacity(path_part.len());
+    let raw_bytes = path_part.as_bytes();
+    let mut i = 0;
+    while i < raw_bytes.len() {
+        if raw_bytes[i] == b'%'
+            && i + 2 < raw_bytes.len()
+            && let Ok(hex) = std::str::from_utf8(&raw_bytes[i + 1..i + 3])
+                && let Ok(val) = u8::from_str_radix(hex, 16)
+        {
+            bytes.push(val);
+            i += 3;
+            continue;
+        }
+        bytes.push(raw_bytes[i]);
+        i += 1;
+    }
+    #[cfg(unix)]
+    {
+        use std::ffi::OsString;
+        use std::os::unix::ffi::OsStringExt;
+        PathBuf::from(OsString::from_vec(bytes))
+    }
+    #[cfg(not(unix))]
+    {
+        let decoded = String::from_utf8_lossy(&bytes);
+        #[cfg(windows)]
+        {
+            let norm = if decoded.starts_with('/')
+                && decoded.as_bytes().get(2) == Some(&b':')
+            {
+                &decoded[1..]
+            } else {
+                decoded.as_ref()
+            };
+            PathBuf::from(norm.replace('/', "\\"))
+        }
+        #[cfg(not(windows))]
+        PathBuf::from(decoded.into_owned())
+    }
 }
 
 /// Copies legacy files into `dest_dir` when the destination file does not exist yet.
@@ -196,6 +265,7 @@ pub fn migrate_legacy_files(legacy_dir: &Path, dest_dir: &Path, files: &[&str]) 
 pub fn config_dir() -> PathBuf {
     if let Some(p) = custom_dir_override("LIBRELINKUP_CONFIG_DIR") {
         let _ = fs::create_dir_all(&p);
+        restrict_dir_permissions(&p);
         return p;
     }
     #[cfg(windows)]
@@ -265,6 +335,7 @@ fn windows_known_dir(var: &str, fallback_rel: &str) -> PathBuf {
 pub fn data_dir() -> PathBuf {
     if let Some(p) = custom_dir_override("LIBRELINKUP_DATA_DIR") {
         let _ = fs::create_dir_all(&p);
+        restrict_dir_permissions(&p);
         return p;
     }
     #[cfg(windows)]
@@ -293,6 +364,7 @@ pub fn data_dir() -> PathBuf {
 pub fn host_data_dir() -> PathBuf {
     if let Some(p) = custom_dir_override("LIBRELINKUP_DATA_DIR") {
         let _ = fs::create_dir_all(&p);
+        restrict_dir_permissions(&p);
         return p;
     }
     #[cfg(windows)]
@@ -310,28 +382,30 @@ pub fn host_data_dir() -> PathBuf {
     }
 }
 
-/// Returns the host-visible staging directory for downloaded application update packages,
-/// pruning stale update artifacts from prior versions.
+/// Returns the host-visible staging directory for downloaded application update packages.
 pub fn update_staging_dir() -> PathBuf {
-    #[cfg(windows)]
-    {
+    let base = if cfg!(windows) {
         data_dir()
-    }
-    #[cfg(not(windows))]
-    {
-        let updates_dir = host_data_dir().join("updates");
-        let _ = fs::create_dir_all(&updates_dir);
-        if let Ok(entries) = fs::read_dir(&updates_dir) {
-            for entry in entries.flatten() {
-                let p = entry.path();
-                if p.is_file() {
-                    let _ = fs::remove_file(&p);
-                } else if p.is_dir() {
-                    let _ = fs::remove_dir_all(&p);
-                }
+    } else {
+        host_data_dir()
+    };
+    let updates_dir = base.join("updates");
+    let _ = fs::create_dir_all(&updates_dir);
+    restrict_dir_permissions(&updates_dir);
+    updates_dir
+}
+
+/// Removes stale update artifacts from `updates_dir` prior to staging a verified update package.
+pub fn prune_update_staging_dir(updates_dir: &Path) {
+    if let Ok(entries) = fs::read_dir(updates_dir) {
+        for entry in entries.flatten() {
+            let p = entry.path();
+            if p.is_file() {
+                let _ = fs::remove_file(&p);
+            } else if p.is_dir() {
+                let _ = fs::remove_dir_all(&p);
             }
         }
-        updates_dir
     }
 }
 
@@ -362,18 +436,13 @@ pub fn is_system_flatpak_install() -> bool {
 }
 
 pub fn runtime_dir() -> PathBuf {
-    let base = env::var("XDG_RUNTIME_DIR")
+    let dir = env::var("XDG_RUNTIME_DIR")
         .ok()
         .filter(|s| !s.trim().is_empty())
-        .map(PathBuf::from)
-        .unwrap_or_else(env::temp_dir);
-    let dir = base.join(APP_DIR_NAME);
+        .map(|base| PathBuf::from(base).join(APP_DIR_NAME))
+        .unwrap_or_else(|| private_temp_fallback_dir("runtime"));
     let _ = fs::create_dir_all(&dir);
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::PermissionsExt;
-        let _ = fs::set_permissions(&dir, fs::Permissions::from_mode(0o700));
-    }
+    restrict_dir_permissions(&dir);
     dir
 }
 
@@ -505,6 +574,29 @@ mod tests {
         assert_eq!(
             quote_desktop_exec_arg("/opt/My Apps/libre \"link\" $HOME `x` %f\\bin"),
             "\"/opt/My Apps/libre \\\"link\\\" \\$HOME \\`x\\` %%f\\\\bin\""
+        );
+        assert_eq!(
+            quote_desktop_exec_arg("/usr/bin/app\r\n\0--flag"),
+            "\"/usr/bin/app--flag\""
+        );
+    }
+
+    #[test]
+    fn decodes_file_uris_and_plain_paths() {
+        #[cfg(not(windows))]
+        {
+            assert_eq!(
+                decode_file_uri_or_path("file:///tmp/my%20dir/events%25.txt"),
+                PathBuf::from("/tmp/my dir/events%.txt")
+            );
+            assert_eq!(
+                decode_file_uri_or_path("file://localhost/tmp/a.txt"),
+                PathBuf::from("/tmp/a.txt")
+            );
+        }
+        assert_eq!(
+            decode_file_uri_or_path("/tmp/plain path.txt"),
+            PathBuf::from("/tmp/plain path.txt")
         );
     }
 

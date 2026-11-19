@@ -3,6 +3,7 @@
 
 pub use librelinkup_core::{
     alert_sound, analytics, api, crypto, event_log, medications, models, paths, session, updater,
+    zeroize,
 };
 
 pub mod bridge {

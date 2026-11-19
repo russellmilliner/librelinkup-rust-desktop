@@ -93,7 +93,7 @@ impl StatsWindow {
 /// using the Nathan et al. (2008) ADAG linear regression:
 /// `eA1C (%) = (mean_mg_dl + 46.7) / 28.7`.
 pub fn calculate_ea1c_adag(mean_mg_dl: f64) -> f64 {
-    if mean_mg_dl <= 0.0 || mean_mg_dl.is_nan() {
+    if !mean_mg_dl.is_finite() || mean_mg_dl <= 0.0 {
         return 0.0;
     }
     (mean_mg_dl + 46.7) / 28.7
@@ -103,7 +103,7 @@ pub fn calculate_ea1c_adag(mean_mg_dl: f64) -> f64 {
 /// using the Bergenstal et al. (2018) CGM standard formula:
 /// `GMI (%) = 3.31 + 0.02392 * mean_mg_dl`.
 pub fn calculate_gmi(mean_mg_dl: f64) -> f64 {
-    if mean_mg_dl <= 0.0 || mean_mg_dl.is_nan() {
+    if !mean_mg_dl.is_finite() || mean_mg_dl <= 0.0 {
         return 0.0;
     }
     3.31 + 0.02392 * mean_mg_dl
@@ -111,7 +111,7 @@ pub fn calculate_gmi(mean_mg_dl: f64) -> f64 {
 
 /// Converts an NGSP A1C percentage (e.g. `5.7%`) to IFCC `mmol/mol` (`(pct - 2.15) * 10.929`).
 pub fn a1c_percent_to_mmol_mol(a1c_percent: f64) -> f64 {
-    if a1c_percent <= 2.15 || a1c_percent.is_nan() {
+    if !a1c_percent.is_finite() || a1c_percent <= 2.15 {
         return 0.0;
     }
     (a1c_percent - 2.15) * 10.929
@@ -238,7 +238,7 @@ impl GlucoseHistoryStore {
 
         let mut incoming: Vec<HistorySample> = Vec::with_capacity(snapshot.graph_points.len() + 1);
         for (idx, pt) in snapshot.graph_points.iter().enumerate() {
-            if pt.value_mg_dl.is_nan() || pt.value_mg_dl <= 0.0 {
+            if !pt.value_mg_dl.is_finite() || pt.value_mg_dl <= 0.0 || pt.value_mg_dl > 2000.0 {
                 continue;
             }
             let epoch = parse_libreview_timestamp(&pt.timestamp, false).unwrap_or_else(|| {
@@ -253,7 +253,10 @@ impl GlucoseHistoryStore {
             }
         }
 
-        if snapshot.value_mg_dl > 0.0 && !snapshot.value_mg_dl.is_nan() {
+        if snapshot.value_mg_dl.is_finite()
+            && snapshot.value_mg_dl > 0.0
+            && snapshot.value_mg_dl <= 2000.0
+        {
             let cur_epoch = snapshot
                 .measured_at_epoch
                 .or_else(|| parse_libreview_timestamp(&snapshot.timestamp, false))
@@ -322,7 +325,7 @@ impl GlucoseHistoryStore {
         if values.is_empty()
             && let Some(snap) = fallback_snapshot {
                 for (idx, pt) in snap.graph_points.iter().enumerate() {
-                    if pt.value_mg_dl > 0.0 && !pt.value_mg_dl.is_nan() {
+                    if pt.value_mg_dl.is_finite() && pt.value_mg_dl > 0.0 {
                         let ep = parse_libreview_timestamp(&pt.timestamp, false).unwrap_or_else(
                             || {
                                 let rem = snap.graph_points.len().saturating_sub(1 + idx) as i64;
@@ -332,7 +335,7 @@ impl GlucoseHistoryStore {
                         values.push((ep, pt.value_mg_dl));
                     }
                 }
-                if values.is_empty() && snap.value_mg_dl > 0.0 {
+                if values.is_empty() && snap.value_mg_dl.is_finite() && snap.value_mg_dl > 0.0 {
                     values.push((
                         snap.measured_at_epoch.unwrap_or(now_epoch),
                         snap.value_mg_dl,
@@ -482,37 +485,61 @@ pub fn save_glucose_history_to_path_with_secret(
     res
 }
 
-/// Loads the 90-day history vault, transparently migrating a pre-0.5 plaintext
-/// `glucose_history.json` into the encrypted vault and deleting the plaintext copy.
-pub fn load_default_glucose_history() -> GlucoseHistoryStore {
+/// Loads the 90-day history vault, returning `Err` if an existing vault cannot be opened
+/// or decrypted so callers never silently overwrite an unreadable vault on disk.
+/// Transparently migrates a pre-0.5 plaintext `glucose_history.json` when no encrypted vault
+/// exists yet.
+pub fn try_load_default_glucose_history() -> Result<GlucoseHistoryStore, String> {
     let enc_path = glucose_history_file_path();
     if enc_path.exists() {
-        return load_glucose_history_from_path(&enc_path);
+        let secret = phi_secret()?;
+        return Ok(
+            try_load_glucose_history_from_path_with_secret(&enc_path, &secret)?
+                .unwrap_or_default(),
+        );
     }
 
     let legacy_path = legacy_glucose_history_file_path();
     if let Ok(raw) = fs::read_to_string(&legacy_path)
-        && let Ok(mut store) = serde_json::from_str::<GlucoseHistoryStore>(&raw) {
-            store.samples.retain(|s| s.value_mg_dl > 0.0);
-            store.samples.sort_by_key(|s| s.epoch);
-            match save_glucose_history_to_path(&store, &enc_path) {
-                Ok(()) => {
-                    let _ = fs::remove_file(&legacy_path);
-                    log_info(
-                        "CRYPTO",
-                        format!(
-                            "Migrated {} glucose samples from plaintext to the encrypted history vault.",
-                            store.samples.len()
-                        ),
-                    );
-                }
-                Err(e) => {
-                    log_error("CRYPTO", format!("Could not migrate plaintext glucose history: {e}"));
-                }
+        && let Ok(mut store) = serde_json::from_str::<GlucoseHistoryStore>(&raw)
+    {
+        store
+            .samples
+            .retain(|s| s.value_mg_dl.is_finite() && s.value_mg_dl > 0.0 && s.value_mg_dl <= 2000.0);
+        store.samples.sort_by_key(|s| s.epoch);
+        match save_glucose_history_to_path(&store, &enc_path) {
+            Ok(()) => {
+                let _ = fs::remove_file(&legacy_path);
+                log_info(
+                    "CRYPTO",
+                    format!(
+                        "Migrated {} glucose samples from plaintext to the encrypted history vault.",
+                        store.samples.len()
+                    ),
+                );
             }
-            return store;
+            Err(e) => {
+                log_error(
+                    "CRYPTO",
+                    format!("Could not migrate plaintext glucose history: {e}"),
+                );
+            }
         }
-    GlucoseHistoryStore::default()
+        return Ok(store);
+    }
+    Ok(GlucoseHistoryStore::default())
+}
+
+/// Loads the 90-day history vault, transparently migrating a pre-0.5 plaintext
+/// `glucose_history.json` into the encrypted vault and deleting the plaintext copy.
+pub fn load_default_glucose_history() -> GlucoseHistoryStore {
+    match try_load_default_glucose_history() {
+        Ok(store) => store,
+        Err(e) => {
+            log_error("CRYPTO", format!("Could not open glucose history vault: {e}"));
+            GlucoseHistoryStore::default()
+        }
+    }
 }
 
 pub fn save_default_glucose_history(store: &GlucoseHistoryStore) -> Result<(), String> {

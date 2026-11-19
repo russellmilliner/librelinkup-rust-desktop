@@ -1451,12 +1451,10 @@ inline QString librelinkup_run_ui_overflow_tests() {
             }
         }
 
-        // Verify .notifyrc Popup toggle reading via XDG_CONFIG_HOME override
+        // Verify .notifyrc Popup toggle reading via explicit configDirOverride
         {
-            const QByteArray prevXdgCfg = qgetenv("XDG_CONFIG_HOME");
             const QString tmpCfgDir = qEnvironmentVariable("LIBRELINKUP_CONFIG_DIR").trimmed();
             if (!tmpCfgDir.isEmpty()) {
-                qputenv("XDG_CONFIG_HOME", tmpCfgDir.toUtf8());
                 const QString overridePath = QDir(tmpCfgDir).filePath(
                     QStringLiteral("io.github.russellmilliner.LibreLinkUpDesktop.notifyrc")
                 );
@@ -1472,27 +1470,22 @@ inline QString librelinkup_run_ui_overflow_tests() {
                     );
                     f.close();
                     if (librelinkup::TrayManager::instance().isKdeNotificationEventPopupEnabled(
-                            QStringLiteral("glucoseStatusSummary"))) {
+                            QStringLiteral("glucoseStatusSummary"), tmpCfgDir)) {
                         violations.append(QStringLiteral("isKdeNotificationEventPopupEnabled should return false when Action= is empty"));
                     }
                     if (!librelinkup::TrayManager::instance().isKdeNotificationEventPopupEnabled(
-                            QStringLiteral("highGlucose"))) {
+                            QStringLiteral("highGlucose"), tmpCfgDir)) {
                         violations.append(QStringLiteral("isKdeNotificationEventPopupEnabled should return true when Action=Popup|Sound"));
                     }
                     if (librelinkup::TrayManager::instance().isKdeNotificationEventPopupEnabled(
-                            QStringLiteral("medicationDue"))) {
+                            QStringLiteral("medicationDue"), tmpCfgDir)) {
                         violations.append(QStringLiteral("isKdeNotificationEventPopupEnabled should return false when Action=Sound omits Popup"));
                     }
                     if (!librelinkup::TrayManager::instance().isKdeNotificationEventPopupEnabled(
-                            QStringLiteral("lowGlucose"))) {
+                            QStringLiteral("lowGlucose"), tmpCfgDir)) {
                         violations.append(QStringLiteral("isKdeNotificationEventPopupEnabled should default to true when event is absent"));
                     }
                     QFile::remove(overridePath);
-                }
-                if (prevXdgCfg.isEmpty()) {
-                    qunsetenv("XDG_CONFIG_HOME");
-                } else {
-                    qputenv("XDG_CONFIG_HOME", prevXdgCfg);
                 }
             }
         }

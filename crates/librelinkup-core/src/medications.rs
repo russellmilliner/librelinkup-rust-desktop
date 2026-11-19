@@ -20,6 +20,8 @@ use crate::paths::{
 
 /// Minimum seconds between repeated desktop reminder notifications for the same medication.
 pub const MEDICATION_REMINDER_REPEAT_SECONDS: i64 = 60 * 60;
+const MAX_MEDICATIONS: usize = 128;
+const MAX_DOSE_LOGS: usize = 5_000;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
 pub enum MedicationSchedule {
@@ -387,7 +389,7 @@ impl MedicationStore {
                 if !same_med || prev.skipped != entry.skipped {
                     return false;
                 }
-                let dt = (entry.taken_at_epoch - prev.taken_at_epoch).abs();
+                let dt = entry.taken_at_epoch.abs_diff(prev.taken_at_epoch);
                 let from_reminder = entry.notes.contains("desktop reminder")
                     || prev.notes.contains("desktop reminder");
                 if from_reminder {
@@ -440,12 +442,12 @@ impl MedicationStore {
             )
         };
 
-        let dup_window = if notes.contains("desktop reminder") { 600 } else { 60 };
+        let dup_window: u64 = if notes.contains("desktop reminder") { 600 } else { 60 };
         if med_id != "adhoc"
             && let Some(existing) = self.dose_logs.iter().find(|d| {
                 d.medication_id == med_id
                     && !d.skipped
-                    && (d.taken_at_epoch - taken_at_epoch).abs() < dup_window
+                    && d.taken_at_epoch.abs_diff(taken_at_epoch) < dup_window
             }) {
                 return Ok(existing.clone());
             }
@@ -457,7 +459,8 @@ impl MedicationStore {
             dosage: med_dosage,
             taken_at_epoch,
             taken_at_display: format_epoch_short(taken_at_epoch),
-            glucose_mg_dl_at_dose: glucose_mg_dl.filter(|v| *v > 0.0 && !v.is_nan()),
+            glucose_mg_dl_at_dose: glucose_mg_dl
+                .filter(|v| v.is_finite() && *v > 0.0 && *v <= 2000.0),
             notes: notes.trim().to_string(),
             skipped: false,
         };
@@ -467,7 +470,7 @@ impl MedicationStore {
             .sort_by_key(|d| std::cmp::Reverse(d.taken_at_epoch));
 
         // Retain 180 days / up to 2,000 dose entries.
-        let cutoff = taken_at_epoch - 180 * 86_400;
+        let cutoff = taken_at_epoch.saturating_sub(180 * 86_400);
         self.dose_logs.retain(|d| d.taken_at_epoch >= cutoff);
         if self.dose_logs.len() > 2_000 {
             self.dose_logs.truncate(2_000);
@@ -491,11 +494,11 @@ impl MedicationStore {
             .cloned()
             .ok_or_else(|| "Select a scheduled medication to skip.".to_string())?;
 
-        let dup_window = if notes.contains("desktop reminder") { 600 } else { 60 };
+        let dup_window: u64 = if notes.contains("desktop reminder") { 600 } else { 60 };
         if let Some(existing) = self.dose_logs.iter().find(|d| {
             d.medication_id == med.id
                 && d.skipped
-                && (d.taken_at_epoch - skipped_at_epoch).abs() < dup_window
+                && d.taken_at_epoch.abs_diff(skipped_at_epoch) < dup_window
         }) {
             return Ok(existing.clone());
         }
@@ -520,7 +523,7 @@ impl MedicationStore {
         self.dose_logs
             .sort_by_key(|d| std::cmp::Reverse(d.taken_at_epoch));
 
-        let cutoff = skipped_at_epoch - 180 * 86_400;
+        let cutoff = skipped_at_epoch.saturating_sub(180 * 86_400);
         self.dose_logs.retain(|d| d.taken_at_epoch >= cutoff);
         if self.dose_logs.len() > 2_000 {
             self.dose_logs.truncate(2_000);
@@ -567,7 +570,7 @@ impl MedicationStore {
                 .and_then(|d| d.and_hms_opt(0, 0, 0))
                 .and_then(|ndt| Local.from_local_datetime(&ndt).earliest())
                 .map(|dt| dt.timestamp())
-                .unwrap_or(now_epoch - (today_wd as i64) * 86_400);
+                .unwrap_or_else(|| now_epoch.saturating_sub((today_wd as i64) * 86_400));
             if let Some(d) = last_dose.filter(|d| d.taken_at_epoch >= week_start_epoch) {
                 if d.skipped {
                     return (
@@ -666,7 +669,7 @@ impl MedicationStore {
                 .and_then(|d| d.and_hms_opt(0, 0, 0))
                 .and_then(|ndt| Local.from_local_datetime(&ndt).earliest())
                 .map(|dt| dt.timestamp())
-                .unwrap_or(now_epoch - (today_wd as i64) * 86_400);
+                .unwrap_or_else(|| now_epoch.saturating_sub((today_wd as i64) * 86_400));
             let taken_this_week = self
                 .dose_logs
                 .iter()
@@ -751,14 +754,16 @@ impl MedicationStore {
                 continue;
             }
             if let Some(&last_ts) = self.notified_slots.get(&slot_key)
-                && now_epoch - last_ts < 86_400 {
-                    last_notified.insert(slot_key, last_ts);
-                    continue;
-                }
+                && now_epoch.saturating_sub(last_ts) < 86_400
+            {
+                last_notified.insert(slot_key, last_ts);
+                continue;
+            }
             if let Some(&last_ts) = last_notified.get(&med.id)
-                && now_epoch - last_ts < MEDICATION_REMINDER_REPEAT_SECONDS {
-                    continue;
-                }
+                && now_epoch.saturating_sub(last_ts) < MEDICATION_REMINDER_REPEAT_SECONDS
+            {
+                continue;
+            }
 
             last_notified.insert(slot_key, now_epoch);
             last_notified.insert(med.id.clone(), now_epoch);
@@ -819,7 +824,7 @@ impl MedicationStore {
                 self.notified_slots.insert(k.clone(), ts);
             }
         }
-        let cutoff = now_epoch - 7 * 86_400;
+        let cutoff = now_epoch.saturating_sub(7 * 86_400);
         self.notified_slots.retain(|_, &mut ts| ts >= cutoff);
     }
 
@@ -853,7 +858,7 @@ impl MedicationStore {
             .map(|(idx, pt)| {
                 let ep = parse_libreview_timestamp(&pt.timestamp, false).unwrap_or_else(|| {
                     let rem = pts.len().saturating_sub(1 + idx) as i64;
-                    now_epoch - rem * 15 * 60
+                    now_epoch.saturating_sub(rem.saturating_mul(15 * 60))
                 });
                 (ep, pt.value_mg_dl)
             })
@@ -863,14 +868,14 @@ impl MedicationStore {
             .iter()
             .map(|(e, _)| *e)
             .min()
-            .unwrap_or(now_epoch - 12 * 3600)
-            - 900;
+            .unwrap_or_else(|| now_epoch.saturating_sub(12 * 3600))
+            .saturating_sub(900);
         let max_ep = point_epochs
             .iter()
             .map(|(e, _)| *e)
             .max()
             .unwrap_or(now_epoch)
-            + 900;
+            .saturating_add(900);
 
         let mut markers = Vec::new();
         for dose in &self.dose_logs {
@@ -879,9 +884,9 @@ impl MedicationStore {
             }
             // Find nearest graph point by timestamp
             let mut best_idx = 0usize;
-            let mut best_diff = i64::MAX;
+            let mut best_diff = u64::MAX;
             for (idx, (ep, _)) in point_epochs.iter().enumerate() {
-                let diff = (dose.taken_at_epoch - *ep).abs();
+                let diff = dose.taken_at_epoch.abs_diff(*ep);
                 if diff < best_diff {
                     best_diff = diff;
                     best_idx = idx;
@@ -1017,52 +1022,58 @@ impl MedicationStore {
         // 1. Merge remote medication definitions
         if let Some(meds_val) = attrs.get("medications")
             && let Ok(remote_meds) = serde_json::from_value::<Vec<MedicationDef>>(meds_val.clone())
-            {
-                for rm in remote_meds {
-                    if rm.name.trim().is_empty() {
-                        continue;
-                    }
-                    let already_exists = self.medications.iter().any(|m| {
-                        (!rm.id.is_empty() && m.id == rm.id)
-                            || (m.name.eq_ignore_ascii_case(&rm.name)
-                                && m.dosage.eq_ignore_ascii_case(&rm.dosage))
-                    });
-                    if !already_exists {
-                        self.medications.push(rm);
-                        changed = true;
-                    }
+        {
+            for rm in remote_meds {
+                if self.medications.len() >= MAX_MEDICATIONS {
+                    break;
+                }
+                if rm.name.trim().is_empty() {
+                    continue;
+                }
+                let already_exists = self.medications.iter().any(|m| {
+                    (!rm.id.is_empty() && m.id == rm.id)
+                        || (m.name.eq_ignore_ascii_case(&rm.name)
+                            && m.dosage.eq_ignore_ascii_case(&rm.dosage))
+                });
+                if !already_exists {
+                    self.medications.push(rm);
+                    changed = true;
                 }
             }
+        }
 
         // 2. Merge remote dose logs
         if let Some(doses_val) = attrs.get("recent_doses")
             && let Ok(remote_doses) =
                 serde_json::from_value::<Vec<MedicationDoseLog>>(doses_val.clone())
-            {
-                for mut rd in remote_doses {
-                    if rd.medication_name.trim().is_empty() || rd.taken_at_epoch <= 0 {
-                        continue;
-                    }
-                    if rd.taken_at_display.trim().is_empty() {
-                        rd.taken_at_display = format_epoch_short(rd.taken_at_epoch);
-                    }
-                    let dup_window = if rd.notes.contains("desktop reminder") {
-                        600
-                    } else {
-                        60
-                    };
-                    let duplicate = self.dose_logs.iter().any(|d| {
-                        (!rd.id.is_empty() && d.id == rd.id)
-                            || (d.medication_name.eq_ignore_ascii_case(&rd.medication_name)
-                                && (d.taken_at_epoch - rd.taken_at_epoch).abs() < dup_window
-                                && d.skipped == rd.skipped)
-                    });
-                    if !duplicate {
-                        self.dose_logs.push(rd);
-                        changed = true;
-                    }
+        {
+            for mut rd in remote_doses {
+                if self.dose_logs.len() >= MAX_DOSE_LOGS {
+                    break;
+                }
+                if rd.medication_name.trim().is_empty() || rd.taken_at_epoch <= 0 {
+                    continue;
+                }
+                if rd.taken_at_display.trim().is_empty() {
+                    rd.taken_at_display = format_epoch_short(rd.taken_at_epoch);
+                }
+                let dup_window: u64 = if rd.notes.contains("desktop reminder") {
+                    600
+                } else {
+                    60
+                };
+                let duplicate = self.dose_logs.iter().any(|d| {
+                    (!rd.id.is_empty() && d.id == rd.id)
+                        || (d.medication_name.eq_ignore_ascii_case(&rd.medication_name)
+                            && d.taken_at_epoch.abs_diff(rd.taken_at_epoch) < dup_window
+                            && d.skipped == rd.skipped)
+                });
+                if !duplicate {
+                    self.dose_logs.push(rd);
+                    changed = true;
                 }
             }
+        }
 
         // 3. Support simple Home Assistant automation/button triggers via attributes:
         //    `trigger_take_medication`: medication name or ID, `trigger_epoch`: unix epoch seconds
@@ -1088,9 +1099,9 @@ impl MedicationStore {
                     .unwrap_or(trig_med);
                 let already_logged = self.dose_logs.iter().any(|d| {
                     d.medication_name.eq_ignore_ascii_case(med_name)
-                        && (d.taken_at_epoch - trig_epoch).abs() < 120
+                        && d.taken_at_epoch.abs_diff(trig_epoch) < 120
                 });
-                if !already_logged {
+                if !already_logged && self.dose_logs.len() < MAX_DOSE_LOGS {
                     let id_or_name = target_med
                         .as_ref()
                         .map(|m| m.id.as_str())
@@ -1191,7 +1202,11 @@ pub fn try_load_medications_from_path_with_secret(
     let parsed = serde_json::from_slice::<MedicationStore>(&plaintext)
         .map_err(|e| format!("Corrupted medication payload: {e}"));
     plaintext.zeroize();
-    Ok(Some(parsed?))
+    let mut store = parsed?;
+    store
+        .dose_logs
+        .sort_by_key(|d| std::cmp::Reverse(d.taken_at_epoch));
+    Ok(Some(store))
 }
 
 pub fn save_medications_to_path(store: &MedicationStore, path: &Path) -> Result<(), String> {
@@ -1218,36 +1233,62 @@ pub fn save_medications_to_path_with_secret(
     res
 }
 
-/// Loads the medication vault, transparently migrating a pre-0.5 plaintext
-/// `medications.json` into the encrypted vault and deleting the plaintext copy.
-pub fn load_default_medications() -> MedicationStore {
+/// Loads the medication vault, returning `Err` if an existing vault cannot be opened or
+/// decrypted so callers never silently overwrite an unreadable vault on disk.
+/// Transparently migrates a pre-0.5 plaintext `medications.json` when no encrypted vault exists.
+pub fn try_load_default_medications() -> Result<MedicationStore, String> {
     let enc_path = medications_file_path();
     if enc_path.exists() {
-        return load_medications_from_path(&enc_path);
+        let secret = phi_secret()?;
+        let mut store =
+            try_load_medications_from_path_with_secret(&enc_path, &secret)?.unwrap_or_default();
+        if store.deduplicate_dose_logs() {
+            let _ = save_medications_to_path_with_secret(&store, &enc_path, &secret);
+        }
+        return Ok(store);
     }
 
     let legacy_path = legacy_medications_file_path();
     if let Ok(raw) = fs::read_to_string(&legacy_path)
-        && let Ok(store) = serde_json::from_str::<MedicationStore>(&raw) {
-            match save_medications_to_path(&store, &enc_path) {
-                Ok(()) => {
-                    let _ = fs::remove_file(&legacy_path);
-                    log_info(
-                        "CRYPTO",
-                        format!(
-                            "Migrated {} medications and {} dose logs from plaintext to the encrypted medication vault.",
-                            store.medications.len(),
-                            store.dose_logs.len()
-                        ),
-                    );
-                }
-                Err(e) => {
-                    log_error("CRYPTO", format!("Could not migrate plaintext medications: {e}"));
-                }
+        && let Ok(mut store) = serde_json::from_str::<MedicationStore>(&raw)
+    {
+        store
+            .dose_logs
+            .sort_by_key(|d| std::cmp::Reverse(d.taken_at_epoch));
+        match save_medications_to_path(&store, &enc_path) {
+            Ok(()) => {
+                let _ = fs::remove_file(&legacy_path);
+                log_info(
+                    "CRYPTO",
+                    format!(
+                        "Migrated {} medications and {} dose logs from plaintext to the encrypted medication vault.",
+                        store.medications.len(),
+                        store.dose_logs.len()
+                    ),
+                );
             }
-            return store;
+            Err(e) => {
+                log_error(
+                    "CRYPTO",
+                    format!("Could not migrate plaintext medications: {e}"),
+                );
+            }
         }
-    MedicationStore::default()
+        return Ok(store);
+    }
+    Ok(MedicationStore::default())
+}
+
+/// Loads the medication vault, transparently migrating a pre-0.5 plaintext
+/// `medications.json` into the encrypted vault and deleting the plaintext copy.
+pub fn load_default_medications() -> MedicationStore {
+    match try_load_default_medications() {
+        Ok(store) => store,
+        Err(e) => {
+            log_error("CRYPTO", format!("Could not open medication vault: {e}"));
+            MedicationStore::default()
+        }
+    }
 }
 
 pub fn save_default_medications(store: &MedicationStore) -> Result<(), String> {

@@ -114,7 +114,7 @@ pub fn convert_mg_dl_to_unit(value_mg_dl: f64, unit: &str) -> f64 {
 }
 
 pub fn format_glucose_value(value_mg_dl: f64, unit: &str) -> String {
-    if value_mg_dl <= 0.0 || value_mg_dl.is_nan() {
+    if !value_mg_dl.is_finite() || value_mg_dl <= 0.0 {
         return "--".to_string();
     }
     let converted = convert_mg_dl_to_unit(value_mg_dl, unit);
@@ -473,7 +473,7 @@ impl AppSettings {
     }
 
     pub fn should_trigger_alert(&self, value_mg_dl: f64, api_low: f64, api_high: f64) -> bool {
-        if value_mg_dl <= 0.0 || value_mg_dl.is_nan() {
+        if !value_mg_dl.is_finite() || value_mg_dl <= 0.0 {
             return false;
         }
         let low = self.effective_target_low(api_low);
@@ -495,7 +495,7 @@ impl AppSettings {
         if !self.tray_only_relevant_out_of_range {
             return true;
         }
-        if snapshot.value_mg_dl <= 0.0 || snapshot.value_mg_dl.is_nan() {
+        if !snapshot.value_mg_dl.is_finite() || snapshot.value_mg_dl <= 0.0 {
             return false;
         }
         if reading_stale {
@@ -512,8 +512,8 @@ impl AppSettings {
     /// StatusNotifierItem can request `NeedsAttention` status on KDE Plasma.
     pub fn is_tray_urgent_attention(&self, snapshot: &GlucoseSnapshot, reading_stale: bool) -> bool {
         !reading_stale
+            && snapshot.value_mg_dl.is_finite()
             && snapshot.value_mg_dl > 0.0
-            && !snapshot.value_mg_dl.is_nan()
             && snapshot.value_mg_dl < self.effective_urgent_low()
     }
 
@@ -700,7 +700,7 @@ pub fn parse_libreview_timestamp(raw: &str, as_utc: bool) -> Option<i64> {
 
 /// Whole minutes since the reading was measured (clamped at 0 for small clock skew).
 pub fn reading_age_minutes(measured_at_epoch: Option<i64>, now_epoch: i64) -> Option<i64> {
-    measured_at_epoch.map(|t| ((now_epoch - t).max(0)) / 60)
+    measured_at_epoch.map(|t| now_epoch.saturating_sub(t).max(0) / 60)
 }
 
 pub fn format_reading_age(age_minutes: Option<i64>) -> String {
@@ -809,7 +809,7 @@ impl AppSettings {
         if stale {
             return self.alert_on_stale.then_some(AlertKind::Stale);
         }
-        if value_mg_dl <= 0.0 || value_mg_dl.is_nan() {
+        if !value_mg_dl.is_finite() || value_mg_dl <= 0.0 {
             return None;
         }
         if value_mg_dl < self.effective_urgent_low() {

@@ -1,8 +1,8 @@
 ; Inno Setup script for LibreLinkUp Rust Desktop (Windows).
-; Build:  ISCC.exe /DAppVersion=0.4.5 /DSourceExe=..\target\x86_64-pc-windows-gnu\release\LibreLinkUp.exe LibreLinkUp.iss
+; Build:  ISCC.exe /DAppVersion=0.5.15 /DSourceExe=..\target\x86_64-pc-windows-gnu\release\LibreLinkUp.exe LibreLinkUp.iss
 
 #ifndef AppVersion
-  #define AppVersion "0.4.5"
+  #define AppVersion "0.5.15"
 #endif
 #ifndef SourceExe
   #define SourceExe "..\target\x86_64-pc-windows-gnu\release\LibreLinkUp.exe"
@@ -48,7 +48,7 @@ ArchitecturesInstallIn64BitMode=x64compatible
 MinVersion=10.0
 ; Close a running instance (Restart Manager) before replacing files.
 CloseApplications=force
-RestartApplications=no
+RestartApplications=yes
 
 [Languages]
 Name: "english"; MessagesFile: "compiler:Default.isl"
@@ -75,7 +75,8 @@ Root: HKCU; Subkey: "Software\Microsoft\Windows\CurrentVersion\Run"; ValueType: 
 Root: HKCU; Subkey: "Software\Classes\AppUserModelId\{#AppUserModelId}"; ValueType: string; ValueName: "DisplayName"; ValueData: "{#AppName}"; Flags: uninsdeletekey
 
 [Run]
-Filename: "{app}\{#AppExe}"; Description: "{cm:LaunchProgram,{#AppName}}"; Flags: nowait postinstall skipifsilent
+Filename: "{app}\{#AppExe}"; Description: "{cm:LaunchProgram,{#AppName}}"; Flags: nowait postinstall skipifsilent runasoriginaluser
+Filename: "{app}\{#AppExe}"; Parameters: "--minimized"; Flags: nowait postinstall runasoriginaluser; Check: WizardSilent
 
 [UninstallRun]
 Filename: "{sys}\taskkill.exe"; Parameters: "/IM {#AppExe} /F"; Flags: runhidden; RunOnceId: "StopLibreLinkUp"
@@ -90,9 +91,10 @@ begin
   if CurUninstallStep = usPostUninstall then
   begin
     RegDeleteValue(HKEY_CURRENT_USER, 'Software\Microsoft\Windows\CurrentVersion\Run', 'LibreLinkUpDesktop');
-    if MsgBox('Also delete your LibreLinkUp settings and encrypted sign-in vault?' + #13#10 +
-              '(' + ExpandConstant('{userappdata}\LibreLinkUpDesktop') + ')',
-              mbConfirmation, MB_YESNO or MB_DEFBUTTON2) = IDYES then
+    if not UninstallSilent and
+       (MsgBox('Also delete your LibreLinkUp settings and encrypted sign-in vault?' + #13#10 +
+               '(' + ExpandConstant('{userappdata}\LibreLinkUpDesktop') + ')',
+               mbConfirmation, MB_YESNO or MB_DEFBUTTON2) = IDYES) then
     begin
       DelTree(ExpandConstant('{userappdata}\LibreLinkUpDesktop'), True, True, True);
       DelTree(ExpandConstant('{localappdata}\LibreLinkUpDesktop'), True, True, True);

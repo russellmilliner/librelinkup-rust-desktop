@@ -235,8 +235,17 @@ pub fn refresh_logs(state: &mut AppState) {
 }
 
 /// Persists the glucose history vault at most once per [`HISTORY_PERSIST_MIN_INTERVAL_SECS`]
-/// (or immediately when `force` is set).
+/// (or immediately when `force` is set). Refuses to overwrite if the vault failed to load at startup.
 pub fn persist_history_if_due(state: &mut AppState, force: bool) {
+    if state.history_vault_load_failed {
+        if force {
+            crate::event_log::log_warn(
+                "CRYPTO",
+                "Skipping glucose history vault save because the existing vault could not be unlocked on startup.",
+            );
+        }
+        return;
+    }
     let now = crate::bridge::state::now_epoch();
     if !force && now - state.last_history_persist_epoch < HISTORY_PERSIST_MIN_INTERVAL_SECS {
         return;
@@ -248,6 +257,18 @@ pub fn persist_history_if_due(state: &mut AppState, force: bool) {
             format!("Failed to persist glucose history vault: {e}"),
         ),
     }
+}
+
+/// Persists the medication vault unless it failed to unlock on startup (prevents overwriting unreadable PHI).
+pub fn save_medications_if_safe(state: &AppState) -> Result<(), String> {
+    if state.meds_vault_load_failed {
+        crate::event_log::log_warn(
+            "CRYPTO",
+            "Refusing to overwrite medication vault because the existing vault could not be unlocked on startup.",
+        );
+        return Err("Medication vault failed to unlock on startup".to_string());
+    }
+    crate::medications::save_default_medications(&state.medication_store)
 }
 
 /// Ingests a fresh snapshot into the history store, persisting only when the data changed.

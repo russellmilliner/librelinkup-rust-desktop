@@ -26,10 +26,31 @@ fn wide(s: &str) -> Vec<u16> {
     std::ffi::OsStr::new(s).encode_wide().chain(std::iter::once(0)).collect()
 }
 
+/// Hardens DLL search order (`LOAD_LIBRARY_SEARCH_SYSTEM32`) and registers with Windows
+/// Restart Manager so silent installer upgrades can restart the application cleanly.
+#[cfg(windows)]
+pub fn harden_process_startup() {
+    use windows_sys::Win32::System::LibraryLoader::{
+        SetDefaultDllDirectories, LOAD_LIBRARY_SEARCH_SYSTEM32,
+    };
+    use windows_sys::Win32::System::Recovery::RegisterApplicationRestart;
+
+    unsafe {
+        SetDefaultDllDirectories(LOAD_LIBRARY_SEARCH_SYSTEM32);
+        let cmdline = wide("--minimized");
+        RegisterApplicationRestart(cmdline.as_ptr(), 0);
+    }
+}
+
+#[cfg(not(windows))]
+pub fn harden_process_startup() {}
+
 /// File holding the DPAPI-protected random master key used to encrypt credentials.
 pub fn dpapi_master_key_path() -> PathBuf {
     librelinkup_core::paths::config_dir().join("master.dpapi")
 }
+
+const MAX_DPAPI_KEY_FILE_BYTES: u64 = 64 * 1024;
 
 /// Returns the credential/PHI-encryption master secret at `key_path`, creating and
 /// DPAPI-protecting a new random key on first use while refusing to rotate if any path in
@@ -39,8 +60,23 @@ pub fn load_or_create_master_secret_at(
     guarded_vaults: &[&Path],
 ) -> Result<Zeroizing<Vec<u8>>, String> {
     if key_path.exists() {
+        let meta = std::fs::metadata(key_path)
+            .map_err(|e| format!("Failed to inspect DPAPI master key: {e}"))?;
+        if meta.len() > MAX_DPAPI_KEY_FILE_BYTES {
+            return Err(format!(
+                "DPAPI master key file exceeds {} byte safety limit",
+                MAX_DPAPI_KEY_FILE_BYTES
+            ));
+        }
         let mut blob = std::fs::read(key_path)
             .map_err(|e| format!("Failed to read DPAPI master key: {e}"))?;
+        if blob.len() as u64 > MAX_DPAPI_KEY_FILE_BYTES {
+            blob.zeroize();
+            return Err(format!(
+                "DPAPI master key file exceeds {} byte safety limit",
+                MAX_DPAPI_KEY_FILE_BYTES
+            ));
+        }
         let res = dpapi_unprotect(&blob).map(Zeroizing::new);
         blob.zeroize();
         return res;
@@ -82,7 +118,9 @@ pub fn dpapi_protect(data: &[u8]) -> Result<Vec<u8>, String> {
     use windows_sys::Win32::Security::Cryptography::{
         CryptProtectData, CRYPTPROTECT_UI_FORBIDDEN, CRYPT_INTEGER_BLOB,
     };
-    let input = CRYPT_INTEGER_BLOB { cbData: data.len() as u32, pbData: data.as_ptr() as *mut u8 };
+    let cb_data = u32::try_from(data.len())
+        .map_err(|_| "DPAPI input exceeds maximum u32 length".to_string())?;
+    let input = CRYPT_INTEGER_BLOB { cbData: cb_data, pbData: data.as_ptr() as *mut u8 };
     let mut output = CRYPT_INTEGER_BLOB { cbData: 0, pbData: std::ptr::null_mut() };
     let description = wide("LibreLinkUp credential key");
     let ok = unsafe {
@@ -107,7 +145,9 @@ pub fn dpapi_unprotect(data: &[u8]) -> Result<Vec<u8>, String> {
     use windows_sys::Win32::Security::Cryptography::{
         CryptUnprotectData, CRYPTPROTECT_UI_FORBIDDEN, CRYPT_INTEGER_BLOB,
     };
-    let input = CRYPT_INTEGER_BLOB { cbData: data.len() as u32, pbData: data.as_ptr() as *mut u8 };
+    let cb_data = u32::try_from(data.len())
+        .map_err(|_| "DPAPI ciphertext exceeds maximum u32 length".to_string())?;
+    let input = CRYPT_INTEGER_BLOB { cbData: cb_data, pbData: data.as_ptr() as *mut u8 };
     let mut output = CRYPT_INTEGER_BLOB { cbData: 0, pbData: std::ptr::null_mut() };
     let ok = unsafe {
         CryptUnprotectData(
@@ -275,10 +315,22 @@ pub struct SingleInstance {
     _handle: windows_sys::Win32::Foundation::HANDLE,
 }
 
+#[cfg(windows)]
+impl Drop for SingleInstance {
+    fn drop(&mut self) {
+        if !self._handle.is_null() {
+            unsafe {
+                windows_sys::Win32::Foundation::CloseHandle(self._handle);
+            }
+            self._handle = std::ptr::null_mut();
+        }
+    }
+}
+
 /// Returns `None` if another instance is already running (and brings it to the front).
 #[cfg(windows)]
 pub fn acquire_single_instance() -> Option<SingleInstance> {
-    use windows_sys::Win32::Foundation::{GetLastError, ERROR_ALREADY_EXISTS};
+    use windows_sys::Win32::Foundation::{CloseHandle, GetLastError, ERROR_ALREADY_EXISTS};
     use windows_sys::Win32::System::Threading::CreateMutexW;
     let name = wide(SINGLE_INSTANCE_MUTEX);
     let handle = unsafe { CreateMutexW(std::ptr::null(), 0, name.as_ptr()) };
@@ -293,6 +345,7 @@ pub fn acquire_single_instance() -> Option<SingleInstance> {
         return Some(SingleInstance { _handle: handle });
     }
     if unsafe { GetLastError() } == ERROR_ALREADY_EXISTS {
+        unsafe { CloseHandle(handle) };
         activate_existing_instance();
         return None;
     }
@@ -367,15 +420,23 @@ pub fn flash_window(_hwnd: isize) {}
 /// Virtual Desktops (`WS_EX_TOOLWINDOW` set) or only the current Virtual Desktop.
 #[cfg(windows)]
 pub fn set_overlay_all_desktops(on_all_desktops: bool) {
+    use windows_sys::Win32::System::Threading::GetCurrentProcessId;
     use windows_sys::Win32::UI::WindowsAndMessaging::{
-        FindWindowW, GetWindowLongPtrW, SetWindowLongPtrW, SetWindowPos, GWL_EXSTYLE,
-        SWP_FRAMECHANGED, SWP_NOACTIVATE, SWP_NOMOVE, SWP_NOSIZE, SWP_NOZORDER,
-        WS_EX_TOOLWINDOW,
+        FindWindowW, GetWindowLongPtrW, GetWindowThreadProcessId, SetWindowLongPtrW,
+        SetWindowPos, GWL_EXSTYLE, SWP_FRAMECHANGED, SWP_NOACTIVATE, SWP_NOMOVE, SWP_NOSIZE,
+        SWP_NOZORDER, WS_EX_TOOLWINDOW,
     };
     let title = wide("LibreLinkUp Overlay");
     let hwnd = unsafe { FindWindowW(std::ptr::null(), title.as_ptr()) };
     if hwnd.is_null() {
         return;
+    }
+    let mut owner_pid = 0u32;
+    unsafe {
+        GetWindowThreadProcessId(hwnd, &mut owner_pid);
+        if owner_pid != GetCurrentProcessId() {
+            return;
+        }
     }
     unsafe {
         let cur = GetWindowLongPtrW(hwnd, GWL_EXSTYLE);

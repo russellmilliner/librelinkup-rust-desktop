@@ -30,6 +30,7 @@ use crate::session::{
     record_reauth_success, reset_reauth_backoff, RefreshOutcome,
 };
 use crate::updater::{check_for_updates_async, download_and_install_update_async, UpdateCheckResult};
+use crate::zeroize::Zeroizing;
 
 /// Sets a `QString` property only when the value actually changed, so the QML binding graph
 /// is not re-evaluated on every 250 ms tick.
@@ -443,7 +444,7 @@ impl qobject::TelemetryController {
         language: QString,
     ) -> bool {
         let user_str = username.to_string().trim().to_string();
-        let pass_str = password.to_string();
+        let pass_str = Zeroizing::new(password.to_string());
         let country_str = if country.to_string().trim().is_empty() {
             "us".to_string()
         } else {
@@ -516,7 +517,7 @@ impl qobject::TelemetryController {
         mut self: Pin<&mut Self>,
         generation: u64,
         user_str: String,
-        pass_str: String,
+        mut pass_str: Zeroizing<String>,
         lang_str: String,
         auth_res: Result<AuthSuccess, ApiError>,
     ) {
@@ -535,27 +536,29 @@ impl qobject::TelemetryController {
         });
 
         match auth_res {
-            Ok(auth) => {
+            Ok(mut auth) => {
                 let existing_ha_token = with_state(|s| {
                     s.creds
                         .as_ref()
                         .map(|c| c.ha_token.clone())
                         .unwrap_or_default()
                 });
+                let auth_country = std::mem::take(&mut auth.country);
                 let stored = StoredCredentials {
                     username: user_str.clone(),
-                    password: pass_str,
-                    token: auth.token.clone(),
-                    account_id: auth.account_id.clone(),
-                    country: auth.country.clone(),
+                    password: std::mem::take(&mut *pass_str),
+                    token: std::mem::take(&mut auth.token),
+                    account_id: std::mem::take(&mut auth.account_id),
+                    country: auth_country.clone(),
                     language: lang_str.clone(),
                     patient_id: String::new(),
-                    first_name: auth.first_name.clone(),
-                    last_name: auth.last_name.clone(),
+                    first_name: std::mem::take(&mut auth.first_name),
+                    last_name: std::mem::take(&mut auth.last_name),
                     ha_token: existing_ha_token,
                 };
                 let remember_pw = with_state(|s| s.remember_password);
-                match save_default_credentials(&stored.sanitized_for_storage(remember_pw)) {
+                let sanitized = stored.sanitized_for_storage(remember_pw);
+                match save_default_credentials(&sanitized) {
                     Ok(()) => {
                         log_info(
                             "CRYPTO",
@@ -569,16 +572,16 @@ impl qobject::TelemetryController {
                 with_state(|s| {
                     s.data_source = "librelinkup".to_string();
                     s.username = user_str;
-                    s.country = auth.country.clone();
+                    s.country = auth_country.clone();
                     s.language = lang_str;
                     s.logged_in = true;
-                    s.creds = Some(stored);
+                    s.creds = Some(sanitized);
                     s.status_message = "Signed in — fetching glucose data...".to_string();
                 });
                 let _ = with_state(|s| ops::persist_settings(s));
                 log_info(
                     "AUTH",
-                    format!("Login succeeded (resolved region: '{}').", auth.country),
+                    format!("Login succeeded (resolved region: '{auth_country}')."),
                 );
                 self.as_mut().sync();
                 self.as_mut().refresh_glucose_now();
@@ -628,26 +631,38 @@ impl qobject::TelemetryController {
     /// Saves Home Assistant LibreLink integration settings and Long-Lived Access Token into the
     /// AES-256-GCM encrypted vault, switches data source if requested, and triggers an immediate poll.
     pub fn save_home_assistant_config(
-        mut self: Pin<&mut Self>,
+        self: Pin<&mut Self>,
         data_source: QString,
         ha_url: QString,
         ha_token: QString,
         ha_sensor_entity_id: QString,
     ) -> bool {
-        let src_clean = if data_source
-            .to_string()
-            .trim()
-            .eq_ignore_ascii_case("home_assistant")
-        {
+        let tok_zero = Zeroizing::new(ha_token.to_string());
+        self.save_home_assistant_config_internal(
+            &data_source.to_string(),
+            &ha_url.to_string(),
+            &tok_zero,
+            &ha_sensor_entity_id.to_string(),
+        )
+    }
+
+    fn save_home_assistant_config_internal(
+        mut self: Pin<&mut Self>,
+        data_source: &str,
+        ha_url: &str,
+        ha_token: &str,
+        ha_sensor_entity_id: &str,
+    ) -> bool {
+        let src_clean = if data_source.trim().eq_ignore_ascii_case("home_assistant") {
             "home_assistant".to_string()
         } else {
             "librelinkup".to_string()
         };
-        let raw_url = ha_url.to_string().trim().to_string();
+        let raw_url = ha_url.trim();
         let clean_url = if raw_url.is_empty() {
             String::new()
         } else {
-            match crate::api::validate_ha_base_url(&raw_url) {
+            match crate::api::validate_ha_base_url(raw_url) {
                 Ok(u) => u,
                 Err(e) => {
                     let msg = e.to_string();
@@ -658,8 +673,8 @@ impl qobject::TelemetryController {
                 }
             }
         };
-        let clean_entity = ha_sensor_entity_id.to_string().trim().to_string();
-        let new_tok = ha_token.to_string().trim().to_string();
+        let clean_entity = ha_sensor_entity_id.trim().to_string();
+        let new_tok = Zeroizing::new(ha_token.trim().to_string());
 
         let (mut creds, remember_pw) = with_state(|s| {
             (
@@ -673,7 +688,7 @@ impl qobject::TelemetryController {
             )
         });
         if !new_tok.is_empty() {
-            creds.ha_token = new_tok;
+            creds.ha_token = (*new_tok).clone();
         }
 
         if src_clean == "home_assistant" && (clean_url.is_empty() || !creds.has_valid_ha_session())
@@ -685,13 +700,16 @@ impl qobject::TelemetryController {
             return false;
         }
 
-        if creds.has_valid_session()
-            && let Err(e) = save_default_credentials(&creds.sanitized_for_storage(remember_pw)) {
-                log_error("CRYPTO", format!("Failed to save encrypted credentials: {e}"));
-            }
+        let sanitized = creds.sanitized_for_storage(remember_pw);
+        if sanitized.has_valid_session()
+            && let Err(e) = save_default_credentials(&sanitized)
+        {
+            log_error("CRYPTO", format!("Failed to save encrypted credentials: {e}"));
+        }
 
-        let valid_active = creds.has_valid_session_for(&src_clean, &clean_url);
-        let has_ha_tok = creds.has_valid_ha_session();
+        let valid_active = sanitized.has_valid_session_for(&src_clean, &clean_url);
+        let has_ha_tok = sanitized.has_valid_ha_session();
+        let has_any_creds = sanitized.has_valid_session();
         with_state(|s| {
             s.session_generation = s.session_generation.wrapping_add(1);
             s.active_refresh = None;
@@ -699,8 +717,8 @@ impl qobject::TelemetryController {
             s.ha_url = clean_url.clone();
             s.ha_sensor_entity_id = clean_entity.clone();
             s.ha_token_configured = has_ha_tok;
-            s.credentials_encrypted = creds.has_valid_session();
-            s.creds = Some(creds);
+            s.credentials_encrypted = has_any_creds;
+            s.creds = Some(sanitized);
             s.logged_in = valid_active;
             s.error_message.clear();
             if src_clean == "home_assistant" && valid_active {
@@ -730,25 +748,27 @@ impl qobject::TelemetryController {
     }
 
     /// Reads `HA_URL` and `HA_TOKEN` from `~/.config/home-assistant.env` on the local machine
-    /// and connects to the Home Assistant LibreLink integration immediately.
+    /// and connects to the Home Assistant LibreLink integration immediately without round-tripping
+    /// the bearer token through `QString`.
     pub fn auto_fill_home_assistant_from_env(mut self: Pin<&mut Self>) -> bool {
-        let Some((url, token)) = try_load_host_ha_env() else {
+        let Some((url, raw_token)) = try_load_host_ha_env() else {
             let msg = "Could not find HA_URL and HA_TOKEN in ~/.config/home-assistant.env";
             log_warn("API", msg);
             with_state(|s| s.error_message = msg.to_string());
             self.as_mut().sync();
             return false;
         };
+        let token = Zeroizing::new(raw_token);
         let entity = with_state(|s| s.ha_sensor_entity_id.clone());
         log_info(
             "API",
             format!("Loaded Home Assistant URL '{url}' and token from ~/.config/home-assistant.env"),
         );
-        self.as_mut().save_home_assistant_config(
-            QString::from("home_assistant"),
-            QString::from(url.as_str()),
-            QString::from(token.as_str()),
-            QString::from(entity.as_str()),
+        self.as_mut().save_home_assistant_config_internal(
+            "home_assistant",
+            &url,
+            &token,
+            &entity,
         )
     }
 
@@ -865,12 +885,11 @@ impl qobject::TelemetryController {
                 if let Some(renewed) = outcome.updated_credentials {
                     record_reauth_success();
                     let remember_pw = with_state(|s| s.remember_password);
-                    if let Err(e) =
-                        save_default_credentials(&renewed.sanitized_for_storage(remember_pw))
-                    {
+                    let sanitized = renewed.sanitized_for_storage(remember_pw);
+                    if let Err(e) = save_default_credentials(&sanitized) {
                         log_error("CRYPTO", format!("Failed to save renewed credentials: {e}"));
                     }
-                    with_state(|s| s.creds = Some(renewed));
+                    with_state(|s| s.creds = Some(sanitized));
                 }
 
                 let snap = outcome.snapshot;
@@ -910,9 +929,7 @@ impl qobject::TelemetryController {
                                 .and_then(|r| r.as_array())
                                 .map(Vec::len);
                             if s.medication_store.merge_from_ha_states(states_arr) {
-                                let _ = crate::medications::save_default_medications(
-                                    &s.medication_store,
-                                );
+                                let _ = ops::save_medications_if_safe(s);
                                 ops::refresh_medication_views(s);
                                 log_info(
                                     "MEDS",
@@ -1051,8 +1068,8 @@ impl qobject::TelemetryController {
             log_info(
                 "MEDS",
                 format!(
-                    "Desktop reminder action 'Taken' clicked for medication(s) '{}'.",
-                    ids.join(", ")
+                    "Desktop reminder action 'Taken' clicked for {} medication(s).",
+                    ids.len()
                 ),
             );
             let logged = with_state(|s| {
@@ -1071,7 +1088,7 @@ impl qobject::TelemetryController {
                     }
                 }
                 if latest_dose.is_some() {
-                    let _ = crate::medications::save_default_medications(&s.medication_store);
+                    let _ = ops::save_medications_if_safe(s);
                 }
                 latest_dose
             });
@@ -1104,7 +1121,7 @@ impl qobject::TelemetryController {
                     }
                 }
                 if latest_dose.is_some() {
-                    let _ = crate::medications::save_default_medications(&s.medication_store);
+                    let _ = ops::save_medications_if_safe(s);
                 }
                 latest_dose
             });
@@ -1253,14 +1270,17 @@ impl qobject::TelemetryController {
                         }
                     }
                     if last_dose.is_some() {
-                        let _ = crate::medications::save_default_medications(&s.medication_store);
+                        let _ = ops::save_medications_if_safe(s);
                     }
                     (names, last_dose)
                 });
                 if let Some(dose) = latest_dose {
                     ops::spawn_ha_medications_push(Some(dose));
                     let summary = logged_names.join(", ");
-                    log_info("MEDS", format!("Shortcut marked medication(s) taken: {summary}"));
+                    log_info(
+                        "MEDS",
+                        format!("Shortcut marked {} medication(s) taken.", logged_names.len()),
+                    );
                     qobject::librelinkup_show_notification(
                         &QString::from("Medication Logged"),
                         &QString::from(format!("Marked as taken: {summary}").as_str()),
@@ -1446,6 +1466,10 @@ impl qobject::TelemetryController {
         qobject::librelinkup_quit_app();
     }
 
+    pub fn flush_history_on_shutdown(self: Pin<&mut Self>) {
+        with_state(|s| ops::persist_history_if_due(s, true));
+    }
+
     pub fn popup_tray_menu_at_cursor(self: Pin<&mut Self>) {
         qobject::librelinkup_popup_tray_menu();
     }
@@ -1627,12 +1651,12 @@ impl qobject::TelemetryController {
             if !list.is_empty() {
                 s.medication_store
                     .record_notified_slots(now, &s.medication_last_notified);
-                let _ = crate::medications::save_default_medications(&s.medication_store);
+                let _ = ops::save_medications_if_safe(s);
             }
             list
         });
         for reminder in due {
-            log_info("MEDS", format!("{}: {}", reminder.title, reminder.body));
+            log_info("MEDS", "Triggered due medication reminder.");
             qobject::librelinkup_show_medication_notification(
                 &QString::from(reminder.medication_id.as_str()),
                 &QString::from(reminder.title.as_str()),

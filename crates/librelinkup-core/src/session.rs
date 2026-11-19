@@ -115,11 +115,11 @@ pub async fn fetch_snapshot_with_reauth_async(
             )
             .await
             {
-                Ok(reauth) => {
+                Ok(mut reauth) => {
                     record_reauth_success();
-                    active_creds.token = reauth.token;
-                    active_creds.account_id = reauth.account_id;
-                    active_creds.country = reauth.country;
+                    active_creds.token = std::mem::take(&mut reauth.token);
+                    active_creds.account_id = std::mem::take(&mut reauth.account_id);
+                    active_creds.country = std::mem::take(&mut reauth.country);
                     reauthenticated = true;
                     result = fetch_cgm_snapshot_async(
                         &active_creds.country,
@@ -204,20 +204,22 @@ pub async fn fetch_snapshot_for_source_async(
 /// Effective age of the displayed reading in whole minutes.
 ///
 /// A reading can be old in two ways: its own timestamp is old, or we have not managed to
-/// fetch anything recently (no signal, server outage, suspended laptop). Taking the minimum
-/// of the two makes staleness detection fail closed - if we cannot confirm the data is
-/// current, the reading is reported as stale.
+/// fetch anything recently (no signal, server outage, suspended laptop). Taking the maximum
+/// of the two makes staleness detection fail closed: a dead sensor on a fresh fetch keeps
+/// its older reading age, and failed fetches age a once-fresh reading via the fetch clock.
+/// If the reading itself lacks a parseable timestamp (`None`), returns `None` so callers
+/// fail closed as stale even if a fetch just succeeded.
 pub fn effective_reading_age_minutes(
     snapshot: &GlucoseSnapshot,
     now_epoch: i64,
     last_successful_fetch_epoch: Option<i64>,
 ) -> Option<i64> {
     let reading_age = reading_age_minutes(snapshot.measured_at_epoch, now_epoch);
-    let fetch_age = last_successful_fetch_epoch.map(|t| (now_epoch - t).max(0) / 60);
+    let fetch_age = last_successful_fetch_epoch.map(|t| now_epoch.saturating_sub(t).max(0) / 60);
     match (reading_age, fetch_age) {
-        (Some(a), Some(b)) => Some(a.min(b)),
+        (Some(a), Some(b)) => Some(a.max(b)),
         (Some(a), None) => Some(a),
-        (None, age) => age,
+        (None, _) => None,
     }
 }
 
@@ -413,14 +415,15 @@ mod tests {
         let mut snap = build_demo_snapshot(now);
         snap.value_mg_dl = 118.0;
 
-        // 1. No parseable reading timestamp, but the last successful fetch was 45 min ago:
-        //    the fetch clock supplies the age so the value is not shown as live.
+        // 1. No parseable reading timestamp, even if the last fetch just happened or was 45 min ago:
+        //    effective age remains `None` so staleness detection fails closed.
         snap.measured_at_epoch = None;
         snap.timestamp = String::new();
         assert_eq!(
             effective_reading_age_minutes(&snap, now, Some(now - 45 * 60)),
-            Some(45)
+            None
         );
+        assert_eq!(effective_reading_age_minutes(&snap, now, Some(now)), None);
         let (decision, _) =
             evaluate_alert_decision(&settings, &snap, None, now, Some(now - 45 * 60));
         let d = decision.expect("stale alert expected");
@@ -430,14 +433,20 @@ mod tests {
         snap.measured_at_epoch = Some(now - 50 * 60);
         assert_eq!(
             effective_reading_age_minutes(&snap, now, Some(now - 10 * 60)),
-            Some(10)
+            Some(50)
         );
-        // 3. A reading older than the last fetch keeps its own age.
+        // 3. Failed fetches age a reading even when its own timestamp was 5 min ago.
         snap.measured_at_epoch = Some(now - 5 * 60);
         assert_eq!(
             effective_reading_age_minutes(&snap, now, Some(now - 30 * 60)),
-            Some(5)
+            Some(30)
         );
+        // 4. Dead sensor: reading is 60 min old while a fetch succeeded right now -> Stale.
+        snap.measured_at_epoch = Some(now - 60 * 60);
+        assert_eq!(effective_reading_age_minutes(&snap, now, Some(now)), Some(60));
+        let (decision, _) = evaluate_alert_decision(&settings, &snap, None, now, Some(now));
+        let d = decision.expect("dead sensor stale alert expected");
+        assert_eq!(d.kind, AlertKind::Stale);
     }
 
     #[test]

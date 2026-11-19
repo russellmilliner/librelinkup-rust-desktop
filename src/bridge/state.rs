@@ -26,9 +26,9 @@
 use std::cell::RefCell;
 use std::collections::HashMap;
 
-use crate::analytics::{load_default_glucose_history, GlucoseHistoryStore};
+use crate::analytics::GlucoseHistoryStore;
 use crate::crypto::StoredCredentials;
-use crate::medications::{load_default_medications, MedicationStore};
+use crate::medications::MedicationStore;
 use crate::models::{GlucoseSnapshot, AlertKind};
 
 pub struct AppState {
@@ -79,6 +79,8 @@ pub struct AppState {
     pub snapshot: GlucoseSnapshot,
     pub creds: Option<StoredCredentials>,
     pub glucose_history: GlucoseHistoryStore,
+    pub history_vault_load_failed: bool,
+    pub meds_vault_load_failed: bool,
     pub active_refresh: Option<u64>,
     pub refresh_seq: u64,
     pub login_in_flight: bool,
@@ -170,6 +172,32 @@ impl Default for AppState {
         let settings = crate::models::load_default_settings();
         let unit = settings.result_unit.clone();
         let now = chrono::Utc::now().timestamp();
+        let (glucose_history, history_vault_load_failed) =
+            match crate::analytics::try_load_default_glucose_history() {
+                Ok(store) => (store, false),
+                Err(e) => {
+                    crate::event_log::log_error(
+                        "CRYPTO",
+                        format!(
+                            "Could not open glucose history vault (refusing to overwrite vault on disk): {e}"
+                        ),
+                    );
+                    (GlucoseHistoryStore::default(), true)
+                }
+            };
+        let (medication_store, meds_vault_load_failed) =
+            match crate::medications::try_load_default_medications() {
+                Ok(store) => (store, false),
+                Err(e) => {
+                    crate::event_log::log_error(
+                        "CRYPTO",
+                        format!(
+                            "Could not open medication vault (refusing to overwrite vault on disk): {e}"
+                        ),
+                    );
+                    (MedicationStore::default(), true)
+                }
+            };
         Self {
             logged_in: false,
             busy: false,
@@ -228,7 +256,9 @@ impl Default for AppState {
             last_alert: None,
             snapshot: GlucoseSnapshot::default(),
             creds: None,
-            glucose_history: load_default_glucose_history(),
+            glucose_history,
+            history_vault_load_failed,
+            meds_vault_load_failed,
             active_refresh: None,
             refresh_seq: 0,
             login_in_flight: false,
@@ -311,7 +341,7 @@ impl Default for AppState {
             event_log_json: "[]".to_string(),
             event_log_count: 0,
 
-            medication_store: load_default_medications(),
+            medication_store,
             medication_last_notified: HashMap::new(),
             medications_json: "[]".to_string(),
             medication_doses_json: "[]".to_string(),

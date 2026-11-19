@@ -8,11 +8,14 @@
 #include <QDBusPendingCallWatcher>
 #include <QDBusPendingReply>
 #include <QFile>
+#include <QFileInfo>
 #include <QGuiApplication>
 #include <QIcon>
 #include <QList>
 #include <QLoggingCategory>
+#include <QMetaObject>
 #include <QObject>
+#include <QPointer>
 #include <QProcess>
 #include <QQmlApplicationEngine>
 #include <QRandomGenerator>
@@ -33,29 +36,72 @@ namespace librelinkup {
 // Each command is {program, args...}; the sound file path is appended as the last argument.
 using SoundCommand = QStringList;
 
+inline QPointer<QProcess>& active_audio_process_ref() {
+    static QPointer<QProcess> s_proc;
+    return s_proc;
+}
+
 // Tries each player command in order; advances to the next one if the player fails to
 // start or exits with an error (e.g. no PipeWire/PulseAudio socket), finally beeping.
 inline void play_sound_with_fallback(const QString& path, QList<SoundCommand> commands) {
+    if (QCoreApplication::closingDown()) {
+        return;
+    }
     if (commands.isEmpty()) {
         QApplication::beep();
         return;
     }
+    const QFileInfo fi(path);
+    const QString canonicalPath = fi.canonicalFilePath();
+    if (canonicalPath.isEmpty() || !fi.exists() || !fi.isFile()) {
+        QApplication::beep();
+        return;
+    }
+    if (QProcess* prev = active_audio_process_ref().data()) {
+        active_audio_process_ref().clear();
+        prev->disconnect();
+        if (prev->state() != QProcess::NotRunning) {
+            prev->kill();
+        }
+        prev->deleteLater();
+    }
     SoundCommand cmd = commands.takeFirst();
     const QString program = cmd.takeFirst();
-    cmd.append(path);
+    cmd.append(QStringLiteral("--"));
+    cmd.append(canonicalPath);
     auto* proc = new QProcess(QCoreApplication::instance());
+    active_audio_process_ref() = proc;
+    const QPointer<QProcess> procPtr(proc);
+    QTimer::singleShot(15000, proc, [procPtr]() {
+        if (procPtr && procPtr->state() != QProcess::NotRunning) {
+            procPtr->kill();
+        }
+    });
     QObject::connect(proc, &QProcess::errorOccurred, proc,
-        [proc, path, commands](QProcess::ProcessError err) {
+        [procPtr, canonicalPath, commands](QProcess::ProcessError err) {
             if (err == QProcess::FailedToStart) {
-                proc->deleteLater();
-                play_sound_with_fallback(path, commands);
+                if (active_audio_process_ref().data() == procPtr.data()) {
+                    active_audio_process_ref().clear();
+                }
+                if (procPtr) {
+                    procPtr->disconnect();
+                    procPtr->deleteLater();
+                }
+                play_sound_with_fallback(canonicalPath, commands);
             }
         });
     QObject::connect(proc, &QProcess::finished, proc,
-        [proc, path, commands](int exitCode, QProcess::ExitStatus status) {
-            proc->deleteLater();
-            if (status != QProcess::NormalExit || exitCode != 0) {
-                play_sound_with_fallback(path, commands);
+        [procPtr, canonicalPath, commands](int exitCode, QProcess::ExitStatus status) {
+            const bool isCurrent = (active_audio_process_ref().data() == procPtr.data());
+            if (isCurrent) {
+                active_audio_process_ref().clear();
+            }
+            if (procPtr) {
+                procPtr->disconnect();
+                procPtr->deleteLater();
+            }
+            if (isCurrent && (status != QProcess::NormalExit || exitCode != 0)) {
+                play_sound_with_fallback(canonicalPath, commands);
             }
         });
     proc->start(program, cmd);
@@ -86,9 +132,13 @@ inline QList<SoundCommand> alert_sound_commands() {
 
 inline void librelinkup_play_alert_sound(const QString& custom_sound_path) {
     const QString clean = custom_sound_path.trimmed();
-    if (!clean.isEmpty() && QFile::exists(clean)) {
-        librelinkup::play_sound_with_fallback(clean, librelinkup::alert_sound_commands());
-        return;
+    if (!clean.isEmpty()) {
+        const QFileInfo fi(clean);
+        const QString canonical = fi.canonicalFilePath();
+        if (!canonical.isEmpty() && fi.exists() && fi.isFile()) {
+            librelinkup::play_sound_with_fallback(canonical, librelinkup::alert_sound_commands());
+            return;
+        }
     }
     QApplication::beep();
 }
@@ -160,7 +210,7 @@ inline void librelinkup_quit_app() {
     QCoreApplication::quit();
 }
 
-inline std::int32_t librelinkup_run_app(bool start_minimized) {
+inline std::int32_t librelinkup_run_app(bool start_minimized, const QString& initial_action) {
     QLoggingCategory::setFilterRules(QStringLiteral("union.*=false\nqt.core.qobject.connect=false"));
     if (!std::getenv("QT_QUICK_CONTROLS_STYLE")) {
         qputenv("QT_QUICK_CONTROLS_STYLE", "org.kde.breeze");
@@ -174,9 +224,6 @@ inline std::int32_t librelinkup_run_app(bool start_minimized) {
         } else if (std::getenv("DISPLAY")) {
             qputenv("QT_QPA_PLATFORM", "xcb");
         }
-    }
-    if (start_minimized) {
-        qputenv("LIBRELINKUP_START_MINIMIZED", "1");
     }
 
     static int argc = 1;
@@ -194,9 +241,16 @@ inline std::int32_t librelinkup_run_app(bool start_minimized) {
 #ifndef QT_NO_SESSIONMANAGER
     if (app.isSessionRestored()) {
         start_minimized = true;
-        qputenv("LIBRELINKUP_START_MINIMIZED", "1");
     }
 #endif
+
+    QObject::connect(&app, &QCoreApplication::aboutToQuit, &app, []() {
+        if (QWindow* win = librelinkup::main_window_ref().data()) {
+            if (QObject* ctrl = win->findChild<QObject*>(QStringLiteral("librelinkupAppController"))) {
+                QMetaObject::invokeMethod(ctrl, "flushHistoryOnShutdown", Qt::DirectConnection);
+            }
+        }
+    });
 
     QIcon initialIcon = librelinkup::build_multisize_svg_icon(
         QStringLiteral(":/qt/qml/io/github/librelinkup/src/qml/icons/tray-icon-dark.svg")
@@ -266,10 +320,10 @@ inline std::int32_t librelinkup_run_app(bool start_minimized) {
         }
     }
 
-    const QString initialAction = qEnvironmentVariable("LIBRELINKUP_INITIAL_ACTION").trimmed();
-    if (!initialAction.isEmpty()) {
-        QTimer::singleShot(350, &app, [initialAction]() {
-            librelinkup::TrayManager::instance().handleGlobalShortcutAction(initialAction);
+    const QString cleanInitialAction = initial_action.trimmed();
+    if (!cleanInitialAction.isEmpty()) {
+        QTimer::singleShot(350, &app, [cleanInitialAction]() {
+            librelinkup::TrayManager::instance().handleGlobalShortcutAction(cleanInitialAction);
         });
     }
 

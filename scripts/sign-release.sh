@@ -17,12 +17,17 @@
 set -euo pipefail
 export PATH="$HOME/.local/bin:$HOME/.cargo/bin:$PATH"
 
-KEY_FILE="${1:-${MINISIGN_KEY_FILE:-}}"
-if [[ -z "$KEY_FILE" ]]; then
-  echo "usage: $0 <secret-key-file> <artifact> [artifact...]" >&2
-  exit 2
+if [[ -n "${MINISIGN_KEY_FILE:-}" ]]; then
+  KEY_FILE="$MINISIGN_KEY_FILE"
+else
+  KEY_FILE="${1:-}"
+  if [[ -z "$KEY_FILE" ]]; then
+    echo "usage: $0 <secret-key-file> <artifact> [artifact...]" >&2
+    echo "   or: MINISIGN_KEY_FILE=<secret-key-file> $0 <artifact> [artifact...]" >&2
+    exit 2
+  fi
+  shift
 fi
-shift || true
 
 if (( $# == 0 )); then
   echo "error: no artifacts given" >&2
@@ -52,7 +57,7 @@ done
 
 echo
 echo "==> Signatures:"
-ls -1 "$@" | sed 's/$/.minisig/'
+printf '%s.minisig\n' "$@"
 echo
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 echo "Verify with:"

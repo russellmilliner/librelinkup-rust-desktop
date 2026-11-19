@@ -37,46 +37,49 @@ flatpak build \
   --env=QMAKE=/usr/bin/qmake \
   --env=QT_VERSION_MAJOR=6 \
   "$WORK_DIR/build-dir" \
-  sh -c "
+  sh -c '
     set -euo pipefail
-    rm -rf \"\$CARGO_TARGET_DIR\"/release/build/librelinkup-kde-* \"\$CARGO_TARGET_DIR\"/release/.fingerprint/librelinkup-kde-*
-    cargo build --release --manifest-path '$REPO_ROOT/Cargo.toml'
-    install -Dm755 \"\$CARGO_TARGET_DIR/release/librelinkup-kde\" -t /app/bin/
-    install -Dm644 '$REPO_ROOT/data/${APP_ID}.desktop' -t /app/share/applications/
-    install -Dm644 '$REPO_ROOT/data/${APP_ID}.notifyrc' -t /app/share/knotifications6/
-    install -Dm644 '$REPO_ROOT/data/${APP_ID}.metainfo.xml' -t /app/share/metainfo/
-    install -Dm644 '$REPO_ROOT/data/icons/${APP_ID}.svg' -t /app/share/icons/hicolor/scalable/apps/
-    install -Dm644 '$REPO_ROOT/LICENSE' '$REPO_ROOT/NOTICE' -t /app/share/licenses/${APP_ID}/
-  "
+    REPO_ROOT="$1"
+    APP_ID="$2"
+    rm -rf "$CARGO_TARGET_DIR"/release/build/librelinkup-kde-* "$CARGO_TARGET_DIR"/release/.fingerprint/librelinkup-kde-*
+    cargo build --release --manifest-path "$REPO_ROOT/Cargo.toml"
+    install -Dm755 "$CARGO_TARGET_DIR/release/librelinkup-kde" -t /app/bin/
+    install -Dm644 "$REPO_ROOT/data/${APP_ID}.desktop" -t /app/share/applications/
+    install -Dm644 "$REPO_ROOT/data/${APP_ID}.notifyrc" -t /app/share/knotifications6/
+    install -Dm644 "$REPO_ROOT/data/${APP_ID}.metainfo.xml" -t /app/share/metainfo/
+    install -Dm644 "$REPO_ROOT/data/icons/${APP_ID}.svg" -t /app/share/icons/hicolor/scalable/apps/
+    install -Dm644 "$REPO_ROOT/LICENSE" "$REPO_ROOT/NOTICE" -t "/app/share/licenses/${APP_ID}/"
+  ' _ "$REPO_ROOT" "$APP_ID"
 
 echo "==> Composing AppStream catalog and bundle icons for Bazaar / KDE Discover..."
-flatpak build "$WORK_DIR/build-dir" sh -c "
+flatpak build "$WORK_DIR/build-dir" sh -c '
   set -euo pipefail
-  IMG_FMT_ARG=''
-  if appstreamcli compose --help 2>&1 | grep -q -- '--image-format'; then
-    IMG_FMT_ARG='--image-format=png'
+  APP_ID="$1"
+  IMG_FMT_ARG=""
+  if appstreamcli compose --help 2>&1 | grep -q -- "--image-format"; then
+    IMG_FMT_ARG="--image-format=png"
   fi
   appstreamcli compose \
     --prefix=/ \
     --origin=flatpak \
-    --components='${APP_ID}' \
+    --components="$APP_ID" \
     --result-root=/app/share/app-info \
     --data-dir=/app/share/app-info/xmls \
     --icons-dir=/app/share/app-info/icons/flatpak \
-    \$IMG_FMT_ARG \
+    $IMG_FMT_ARG \
     --no-net \
     /app
   if [ -f /app/share/app-info/xmls/flatpak.xml.gz ]; then
-    mv /app/share/app-info/xmls/flatpak.xml.gz /app/share/app-info/xmls/${APP_ID}.xml.gz
+    mv /app/share/app-info/xmls/flatpak.xml.gz "/app/share/app-info/xmls/${APP_ID}.xml.gz"
   fi
   for sz in 64x64 128x128; do
-    if [ -f \"/app/share/app-info/icons/flatpak/\${sz}/${APP_ID}.png\" ]; then
+    if [ -f "/app/share/app-info/icons/flatpak/${sz}/${APP_ID}.png" ]; then
       install -Dm644 \
-        \"/app/share/app-info/icons/flatpak/\${sz}/${APP_ID}.png\" \
-        \"/app/share/icons/hicolor/\${sz}/apps/${APP_ID}.png\"
+        "/app/share/app-info/icons/flatpak/${sz}/${APP_ID}.png" \
+        "/app/share/icons/hicolor/${sz}/apps/${APP_ID}.png"
     fi
   done
-"
+' _ "$APP_ID"
 
 flatpak build-finish "$WORK_DIR/build-dir" \
   --command=librelinkup-kde \

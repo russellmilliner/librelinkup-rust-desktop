@@ -57,13 +57,13 @@ added yourself.
 
 | You want to… | Edit |
 |---|---|
-| add API parsing / network behaviour | `crates/librelinkup-core/src/api.rs` |
-| change alert policy | `models.rs` (`classify_alert`, `should_fire_alert`) + `session.rs` |
-| add a persisted setting | follow the 7-step checklist in ARCHITECTURE.md §2 |
-| add a QML page/control | `src/qml/Main.qml` (+ its own file if > ~200 lines) |
-| add a tray/window action | `qobject_bridge.rs` declaration → `telemetry.rs` delegate → `src/cpp/*.h` |
-| change overlay/flags behaviour | `src/cpp/window_manager.h` + `ui_tests.h` assertions |
-| add a notification action | `models::ALERT_NOTIFICATION_SNOOZE_ACTIONS`, `tray_manager.h`, `handle_notification_action` |
+| add API parsing / network behaviour | `crates/librelinkup-core/src/api/{mod,http,libreview,home_assistant}.rs` |
+| change alert policy | `crates/librelinkup-core/src/models/{mod,alerts}.rs` (`classify_alert`, `should_fire_alert`) + `session.rs` |
+| add a persisted setting | `crates/librelinkup-core/src/models/settings.rs` (follow the 7-step checklist in ARCHITECTURE.md §2) |
+| add a QML page/control | `src/qml/Main.qml` and modular subviews (`DashboardView.qml`, `GlucoseChart.qml`, `LoginView.qml`, `MedicationsView.qml`, `SettingsView.qml`, `AlertsView.qml`, `AccountView.qml`, `HighContrastScrollBar.qml`) |
+| add a tray/window action | `src/bridge/qobject_bridge.rs` declaration → controller (`telemetry.rs` / `settings.rs`) → `src/cpp/*.{h,cpp}` |
+| change overlay/flags behaviour | `src/cpp/window_manager.{h,cpp}` + `src/cpp/resources/kwin-resident.js` + `src/cpp/ui_tests.{h,cpp}` assertions |
+| add a notification action | `models::ALERT_NOTIFICATION_SNOOZE_ACTIONS`, `src/cpp/tray_manager.{h,cpp}`, `handle_notification_action` |
 | change the updater | `updater.rs` (+ tests) and `.github/workflows/windows.yml` signing steps |
 
 ---

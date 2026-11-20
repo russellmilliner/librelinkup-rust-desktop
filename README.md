@@ -6,7 +6,7 @@
 [![Platform: Linux x86_64](https://img.shields.io/badge/Platform-Linux%20x86__64-fcc624?style=for-the-badge&logo=linux&logoColor=black)](https://www.kernel.org/)
 [![Platform: Windows 10/11 x64](https://img.shields.io/badge/Platform-Windows%2010%2F11%20x64-0078d4?style=for-the-badge&logo=windows&logoColor=white)](windows/README.md)
 [![Desktop: KDE Plasma 6](https://img.shields.io/badge/KDE-Plasma%206%20%2F%20Kirigami-1d99f3?style=for-the-badge&logo=kde&logoColor=white)](https://kde.org/plasma-desktop/)
-[![Built with Rust](https://img.shields.io/badge/Rust-2021_Edition-dea584?style=for-the-badge&logo=rust&logoColor=black)](https://www.rust-lang.org/)
+[![Built with Rust](https://img.shields.io/badge/Rust-2024_Edition-dea584?style=for-the-badge&logo=rust&logoColor=black)](https://www.rust-lang.org/)
 [![License: Apache 2.0](https://img.shields.io/badge/License-Apache_2.0-blue.svg?style=for-the-badge)](https://www.apache.org/licenses/LICENSE-2.0)
 [![Ko-fi](https://img.shields.io/badge/Ko--fi-Buy%20Me%20a%20Coffee-ff5e5b?logo=ko-fi&logoColor=white&style=for-the-badge)](https://ko-fi.com/russellmilliner)
 
@@ -193,7 +193,7 @@ The **Medications** tab (available in the top navigation bar on both Linux KDE P
 - **Cross-Platform Native Desktop UIs on a Shared Rust Core**:
   - **Linux (KDE Plasma 6 — Native Wayland + X11 Fallback)**: Built with `cxx-qt`, Qt 6 Quick Controls (`org.kde.desktop`), `org.kde.kirigami`, and `KColorScheme` (`KF6ColorScheme`). Runs on **native Wayland (`QT_QPA_PLATFORM=wayland`)** by default on KDE Plasma 6 Wayland sessions, using KWin D-Bus scripting (`org.kde.KWin` `/Scripting`) and `QWindow::startSystemMove()` for multi-monitor overlay & main-window placement, frameless border enforcement (`w.noBorder = true`), taskbar/pager/switcher exclusion, and virtual-desktop pinning (with automatic X11 `xcb` fallback on X11 sessions).
   - **Windows 10 / 11 (`x64`)**: Built in pure Rust with `eframe` / `egui` (`wgpu` hardware acceleration with automatic `glow` OpenGL fallback), `tray-icon`, `rodio`, and `windows-sys`.
-  - **Shared Core (`crates/librelinkup-core`)**: Unified LibreView API client (12 allowlisted regional endpoints + automatic validated regional redirect), shared session/polling state machine (`session.rs`), AES-256-GCM credential vault envelope (`crypto.rs`), settings model (`settings.rs`), staleness evaluator (`staleness.rs`), alert state machine (`alerts.rs`), and synthesized alarm generator (`audio.rs`).
+  - **Shared Core (`crates/librelinkup-core`)**: Unified LibreView & Home Assistant API client (`api/`), data models, settings & alert policy (`models/`), shared session/polling, staleness & alert coordinator (`session.rs`), HKDF-SHA256 Envelope v3 AES-256-GCM vaults (`crypto.rs`), glycemic analytics (`analytics.rs`), medication tracking (`medications.rs`), Minisign updater (`updater.rs`), XDG paths & atomic `0600` writes (`paths.rs`), event log (`event_log.rs`), and synthesized alarm generator (`alert_sound.rs`).
 - **Light, Dark & System Theme Support**:
   - Dynamically switches between Light, Dark, or your system's color scheme at runtime (`KColorSchemeManager` on KDE Plasma; `egui::Visuals` + dark/light Windows registry detection on Windows).
 - **Single System Tray Icon, Primary-Screen Centering & Persistent Window Placement**:
@@ -234,7 +234,7 @@ The **Medications** tab (available in the top navigation bar on both Linux KDE P
   - **Credentials** (`credentials.enc.json`): LibreView session token, account metadata and, only if you opt in, your password.
   - **Glucose history** (`glucose_history.enc.json`): the rolling 90-day sample series behind eA1C / GMI / Time-in-Range.
   - **Medications** (`medications.enc.json`): your medication schedule and dose log.
-  - All three are **AES-256-GCM** envelopes (`ring`), written atomically at mode `0600` inside a `0700` directory (`write_file_atomic_0600`). Each vault is bound to its own AEAD label, so ciphertext cannot be swapped between them.
+  - All three are **AES-256-GCM** envelopes (`ring`) using **HKDF-SHA256** (Envelope v3 via generic `EncryptedVault<T>`, with legacy PBKDF2 read compatibility), written atomically at mode `0600` inside a `0700` directory (`write_file_atomic_0600`). Each vault is bound to its own AEAD label, so ciphertext cannot be swapped between them.
   - **Linux**: master secret in the desktop keyring (**Secret Service** via `secret-tool` or **KDE KWallet** via `kwallet-query`), falling back to a `0600` keyfile (`~/.config/librelinkup-kde/master.key`). Secrets are piped over **stdin**, never placed on a command line.
   - **Windows**: master secret (`master.dpapi`) protected by **DPAPI (`CryptProtectData`)** bound to your Windows user account.
   - **Fail-closed key handling**: if a vault exists but its key is unavailable, the app refuses to generate a replacement key (which would render your data permanently unreadable) and tells you what to do.
@@ -244,7 +244,7 @@ The **Medications** tab (available in the top navigation bar on both Linux KDE P
   - Built-in Log Viewer with category filtering (`AUTH`, `API`, `CRYPTO`, `TRAY`, `ALERT`, `APP`), minimum severity filtering (`DEBUG`, `INFO`, `WARN`, `ERROR`), real-time search, clipboard copy, and `.log` file export.
 - **Signed, Verified Built-in Update Checker & Installer**:
   - Automatically checks GitHub Releases on startup (configurable via the **Check for updates on startup** toggle in Settings) and provides a one-click **Check for Updates** / **Install Update** workflow in the Settings page, About dialog, System Tray menu, and CLI (`--check-update` / `-u`).
-  - Strict HTTPS host + repository allowlisting (`russellmilliner/librelinkup-rust-desktop`), then **two** checks before anything is executed: the companion `.sha256` (integrity) **and** a **minisign signature** verified against a public key compiled into the binary (authenticity). Unsigned or tampered artifacts are refused.
+  - Strict HTTPS host + repository allowlisting (`russellmilliner/librelinkup-rust-desktop`), anti-downgrade version enforcement, and **two** cryptographic checks before anything is executed: the companion `.sha256` (integrity) **and** a **minisign signature** verified against a public key compiled into the binary with signed trusted-comment artifact binding (`artifact:<filename>`). Unsigned, replayed, or tampered artifacts are refused.
   - Linux releases now ship a signed `.flatpak` bundle, so in-app updates work there too; the Flathub build is updated by the store instead.
 
 ---
@@ -262,9 +262,9 @@ The **Medications** tab (available in the top navigation bar on both Linux KDE P
 
 | File | Contents | Protection |
 | :--- | :--- | :--- |
-| `credentials.enc.json` | LibreView token, account id, optional password | AES-256-GCM (label `credentials`) |
-| `glucose_history.enc.json` | 90 days of glucose readings | AES-256-GCM (label `glucose-history`) |
-| `medications.enc.json` | Medication schedule + dose log | AES-256-GCM (label `medications`) |
+| `credentials.enc.json` | LibreView token, account id, optional password | AES-256-GCM + HKDF-SHA256 v3 (`EncryptedVault<T>`, label `credentials`) |
+| `glucose_history.enc.json` | 90 days of glucose readings | AES-256-GCM + HKDF-SHA256 v3 (`EncryptedVault<T>`, label `glucose-history`) |
+| `medications.enc.json` | Medication schedule + dose log | AES-256-GCM + HKDF-SHA256 v3 (`EncryptedVault<T>`, label `medications`) |
 | `settings.json` | Preferences and alert thresholds | `0600`, plaintext (no identifiers) |
 | `master.key` / `master.dpapi` | Vault key | `0600` file or OS keyring / DPAPI |
 
@@ -298,10 +298,10 @@ If you find **LibreLinkUp Rust Desktop** helpful, consider buying me a coffee on
 
 | Path | Contents |
 | :--- | :--- |
-| [`crates/librelinkup-core/`](crates/librelinkup-core) | Platform-independent core shared by both apps: LibreView API client (`api.rs`), session/polling, re-auth backoff & alert decisions (`session.rs`), AES-256-GCM envelope + master-secret provider (`crypto.rs`), settings & alert policy (`models.rs`), glycemic analytics + 90-day encrypted history vault (`analytics.rs`), medication schedule/dose log with encrypted vault (`medications.rs`), signature-verifying updater (`updater.rs`), XDG paths & atomic `0600` writes (`paths.rs`), event log (`event_log.rs`), alarm WAV generator (`alert_sound.rs`) |
-| `src/bridge/` | Linux CXX-Qt bridge: shared Qt-thread state (`state.rs`), state transitions (`ops.rs`), Qt object declarations (`qobject_bridge.rs`), and the three controllers `telemetry.rs` / `settings.rs` / `medications.rs`, plus XDG autostart (`autostart.rs`) |
-| `src/cpp/` | Modular Qt 6 / KDE Plasma C++ helpers: façade (`app_helper.h`), QPainter tray badge renderer (`icon_renderer.h`), KWin/X11/Wayland overlay manager (`window_manager.h`), StatusNotifierItem & `org.freedesktop.Notifications` snooze action handler (`tray_manager.h`), audio playback (`audio_portal.h`), and headless QML test runner (`ui_tests.h`) |
-| [`windows/`](windows/README.md) | Windows 10/11 app (`eframe` / `egui`), DPAPI integration, WinRT Toast snooze activator, SHA-256 verified self-updater, Inno Setup installer script (`windows/installer/LibreLinkUp.iss`), and build tooling (`windows/scripts/build-windows.sh`). Standalone Cargo workspace so the Linux/Flathub build never vendors Windows-only crates |
+| [`crates/librelinkup-core/`](crates/librelinkup-core) | Platform-independent core shared by both apps: LibreView & Home Assistant API client (`api/{mod,http,libreview,home_assistant}.rs`), session/polling, HA sync & alert cycle coordinator (`session.rs`), HKDF-SHA256 v3 AES-256-GCM envelopes & generic `EncryptedVault<T>` (`crypto.rs`), glucose/settings/alerts/a11y models (`models/{mod,glucose,settings,alerts,a11y}.rs`), glycemic analytics + 90-day encrypted history vault (`analytics.rs`), medication schedule/dose log with encrypted vault (`medications.rs`), Minisign artifact-bound updater (`updater.rs`), XDG paths & atomic `0600` writes (`paths.rs`), event log (`event_log.rs`), alarm WAV generator (`alert_sound.rs`) |
+| `src/bridge/` & `src/qml/` | Linux CXX-Qt bridge (`macros.rs`, `state.rs`, `ops.rs`, `qobject_bridge.rs`, `telemetry.rs`, `settings.rs`, `medications.rs`, `autostart.rs`) and modular Kirigami QML views (`Main.qml`, `DashboardView.qml`, `GlucoseChart.qml`, `LoginView.qml`, `MedicationsView.qml`, `SettingsView.qml`, `AlertsView.qml`, `AccountView.qml`, `OverlayWidget.qml`, `LogViewerDialog.qml`, `AboutDialog.qml`, `HighContrastScrollBar.qml`) |
+| `src/cpp/` | Modular Qt 6 / KDE Plasma C++ helpers split into `.h`/`.cpp` pairs (`app_helper.h`, `icon_renderer.{h,cpp}`, `window_manager.{h,cpp}` + `resources/kwin-resident.js`, `tray_manager.{h,cpp}`, `audio_portal.{h,cpp}`), plus `ui-tests` feature-gated test runner (`ui_tests.{h,cpp}` vs `ui_tests_stub.cpp`) |
+| [`windows/`](windows/README.md) | Modular Windows 10/11 app (`eframe` / `egui`) organized into `service/{mod,commands,sync,alerts}.rs` and `ui/{mod,login,dashboard,chart,overlay,medications,alerts,settings,dialogs}.rs`, plus `tray.rs`, `alerts.rs`, `platform.rs`, DPAPI integration, WinRT Toast snooze activator, Minisign-verified self-updater, Inno Setup installer (`windows/installer/LibreLinkUp.iss`), and build tooling (`windows/scripts/build-windows.sh`). Standalone Cargo workspace so Linux/Flathub builds never vendor Windows-only crates |
 
 ---
 
@@ -320,8 +320,8 @@ cargo clippy --workspace --all-targets -- -D warnings
 # Sign a release artifact you built locally
 ./scripts/sign-release.sh ~/.config/librelinkup-release/release-signing.key <artifact>
 
-# Build release binary
-cargo build --release
+# Build release binary (or pass --no-default-features to omit the ui-tests harness, matching Flatpak builds)
+cargo build --release --no-default-features
 
 # Run normally or minimized to tray
 ./target/release/librelinkup-kde

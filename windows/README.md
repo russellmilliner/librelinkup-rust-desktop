@@ -103,7 +103,7 @@ A borderless, translucent, always-on-top desktop widget (`276×88` default, conf
 
 | Resource | Windows Location / Mechanism |
 | :--- | :--- |
-| **Encrypted Credentials Vault** | `%APPDATA%\LibreLinkUpDesktop\credentials.enc.json` (`AES-256-GCM` + `PBKDF2-HMAC-SHA256`, 210,000 rounds) |
+| **Encrypted Credentials Vault** | `%APPDATA%\LibreLinkUpDesktop\credentials.enc.json` (`AES-256-GCM` + `HKDF-SHA256` v3 via `EncryptedVault<T>`, with legacy PBKDF2 read compatibility) |
 | **Encrypted Glucose History** | `%LOCALAPPDATA%\LibreLinkUpDesktop\glucose_history.enc.json` — 90 days of readings, `AES-256-GCM` |
 | **Encrypted Medication Vault** | `%APPDATA%\LibreLinkUpDesktop\medications.enc.json` — schedule + dose log, `AES-256-GCM` |
 | **DPAPI Master Key** | `%APPDATA%\LibreLinkUpDesktop\master.dpapi` — 32 random bytes encrypted via Windows **DPAPI (`CryptProtectData` / `CryptUnprotectData`)** bound to your Windows user account |
@@ -115,7 +115,7 @@ A borderless, translucent, always-on-top desktop widget (`276×88` default, conf
 | **Single-Instance Mutex** | `Local\LibreLinkUpRustDesktop_SingleInstance` (launching a second instance brings the existing window to the foreground) |
 
 - **Opt-In Password Storage**: By default (`remember_password = false`), only the encrypted LibreView session JWT and account metadata are stored in `credentials.enc.json`. Enable **Remember password in encrypted vault (auto re-login)** on the sign-in screen if you want automatic re-authentication when a session token expires.
-- **Signed, Verified In-App Updater**: When installing an update, `LibreLinkUp.exe` validates that the asset URLs belong to `https://github.com/russellmilliner/librelinkup-rust-desktop/releases/download/...`, downloads the installer into a private folder under `%LOCALAPPDATA%\LibreLinkUpDesktop\`, and verifies **both** the cryptographic **SHA-256 digest** *and* a **minisign signature** against the public key compiled into the binary. Unsigned or tampered installers are never executed. (The SHA-256 sidecar comes from the same origin as the installer, so the signature is the check that actually proves authorship.)
+- **Signed, Verified In-App Updater**: When installing an update, `LibreLinkUp.exe` validates that the asset URLs belong to `https://github.com/russellmilliner/librelinkup-rust-desktop/releases/download/...`, enforces anti-downgrade version checks, downloads the installer into a private folder under `%LOCALAPPDATA%\LibreLinkUpDesktop\`, and verifies **both** the cryptographic **SHA-256 digest** *and* a **minisign signature** (with signed trusted-comment `artifact:<filename>` binding) against the public key compiled into the binary. Unsigned, replayed, or tampered installers are never executed. (The SHA-256 sidecar comes from the same origin as the installer, so the signature is the check that actually proves authorship.)
 - **Fail-closed key handling**: if `credentials.enc.json` exists but `master.dpapi` cannot be unwrapped (for example after copying the vault to another PC), the app refuses to create a replacement key — that would make your data permanently unreadable — and asks you to sign in again.
 - **Encrypted health data**: glucose history and medication data are encrypted with the same DPAPI-protected master key as the credential vault, and plaintext `glucose_history.json` / `medications.json` from earlier versions are migrated and deleted on first launch.
 - **Memory & Log Redaction**: Sensitive credential strings and session tokens are wiped from memory on drop using `zeroize`, custom `Debug` implementations redact secrets and glucose readings, and email addresses are masked in `%LOCALAPPDATA%\LibreLinkUpDesktop\events.log`.
@@ -164,7 +164,7 @@ cargo build --release --manifest-path windows/Cargo.toml
 
 # Build the Inno Setup installer (produces windows\dist\LibreLinkUp-Setup-0.5.15-x64.exe)
 & "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe" `
-    /DAppVersion=0.4.5 `
+    /DAppVersion=0.5.15 `
     /DSourceExe=..\target\release\LibreLinkUp.exe `
     /DOutputDir=..\dist `
     windows\installer\LibreLinkUp.iss
@@ -184,7 +184,7 @@ Prerequisites:
 
 Generated artifacts are placed in `windows/dist/`:
 - `windows/dist/LibreLinkUp-Setup-0.5.15-x64.exe` (+ `.sha256`)
-- `windows/dist/LibreLinkUp-0.4.5-windows-x64-portable.zip` (+ `.sha256`)
+- `windows/dist/LibreLinkUp-0.5.15-windows-x64-portable.zip` (+ `.sha256`)
 
 ---
 

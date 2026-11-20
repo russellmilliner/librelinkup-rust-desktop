@@ -16,7 +16,7 @@
       <li>Zero tracking, zero analytics, and zero advertisements — forever</li>
       <li>Home Assistant LibreLink integration with automatic multi-patient discovery and selector, sensor warmup/expiry countdown, two-way medication &amp; dose sync, and cross-device alert snooze synchronization</li>
       <li>Accessibility support with WCAG AA/AAA High Contrast mode, full-window UI zoom (75%–175%), screen-reader announcements, and status bar connection badge</li>
-      <li>AES-256-GCM and PBKDF2-HMAC-SHA256 encrypted vaults for credentials, 90-day glucose history, and medications</li>
+      <li>AES-256-GCM encrypted vaults (HKDF-SHA256 v3 with PBKDF2 legacy support) for credentials, 90-day glucose history, and medications</li>
       <li>Medications tab with Once Daily, Twice Daily, Weekly (day-of-week), and As-Needed schedules, 1-click dose logging, interactive desktop due-dose reminders, and 12-hour glucose graph dose markers</li>
       <li>90-day Glycemic Analytics computing ADAG Estimated A1C (eA1C), Bergenstal GMI, Time in Range (TIR%), and CV% across 12h, 7d, 14d, 30d, and 90d windows</li>
       <li>Dynamic system tray badge showing live blood glucose value, hover tooltip, and optional KDE Plasma 6 out-of-range relevance mode (hides into the tray drawer when In Range)</li>

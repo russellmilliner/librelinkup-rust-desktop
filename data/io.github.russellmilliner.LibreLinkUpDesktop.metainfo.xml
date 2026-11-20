@@ -57,6 +57,11 @@
   <url type="donation">https://ko-fi.com/russellmilliner</url>
   <content_rating type="oars-1.1" />
   <releases>
+    <release version="0.5.16" date="2026-11-19">
+      <description>
+        <p>Security hardening (monotonic staleness clock, HKDF-SHA256 v3 vaults, Minisign artifact binding, anti-downgrade, SSRF/KWin/Win32 guards), UI and polling performance optimizations, and full core/C++/QML/Windows modularization with ui-tests feature gating</p>
+      </description>
+    </release>
     <release version="0.5.15" date="2026-11-15">
       <description>
         <p>Modernize workspace to Rust 1.100.0 and Edition 2024, add 7-day Cargo publish-age supply-chain cooldown, prune unused dependencies, and adopt std::mem::DropGuard, str::trim_prefix, and bool::toggle on Windows</p>

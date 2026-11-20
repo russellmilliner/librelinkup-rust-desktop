@@ -2,6 +2,17 @@
 
 All notable changes and bumped dependencies for `russellmilliner/librelinkup-rust-desktop` are documented in this file.
 
+## [v0.5.16](https://github.com/russellmilliner/librelinkup-rust-desktop/releases/tag/v0.5.16) — 2026-11-19
+
+### Highlights
+- Security hardening (monotonic staleness clock, HKDF-SHA256 v3 vaults, Minisign artifact binding, anti-downgrade, SSRF/KWin/Win32 guards), UI and polling performance optimizations, and full core/C++/QML/Windows modularization with ui-tests feature gating
+
+### Commits
+- docs: update README, Windows guide, AGENTS, and metainfo for Waves 1-3 (86d835c)
+- refactor: modularize core/C++/QML/Windows, gate ui_tests, and expand regression test suite (8ce036b)
+- perf: eliminate 4Hz/100Hz UI spin loops, cache HKDF v3 vaults, and optimize analytics/HA polling (83700b0)
+- fix(security): harden staleness clock, vault/updater trust chain, C++/Win32 safety, and CI (ab61482)
+
 ## [v0.5.15](https://github.com/russellmilliner/librelinkup-rust-desktop/releases/tag/v0.5.15) — 2026-11-15
 
 ### Highlights

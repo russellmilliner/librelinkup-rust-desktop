@@ -2,6 +2,21 @@
 
 All notable changes and bumped dependencies for `russellmilliner/librelinkup-rust-desktop` are documented in this file.
 
+## [v0.5.17](https://github.com/russellmilliner/librelinkup-rust-desktop/releases/tag/v0.5.17) — 2026-11-23
+
+### Highlights
+- Upgrade url to 2.5.9 and form_urlencoded to 1.2.3 across Linux and Windows lockfiles to resolve RUSTSEC-2026-0592
+
+### Commits
+- chore(deps): upgrade url to 2.5.9 for RUSTSEC-2026-0592 (c52dcaa)
+
+### 📦 Bumped Dependencies (2 packages)
+
+| Package | Previous | Updated | Scope |
+| :--- | :--- | :--- | :--- |
+| `form_urlencoded` | `1.2.2` | **`1.2.3`** | Lockfile (`windows/Cargo.lock`) |
+| `url` | `2.5.8` | **`2.5.9`** | Lockfile (`windows/Cargo.lock`) |
+
 ## [v0.5.16](https://github.com/russellmilliner/librelinkup-rust-desktop/releases/tag/v0.5.16) — 2026-11-19
 
 ### Highlights

@@ -15,7 +15,7 @@ Item {
     readonly property real fontTitlePt: osBaseFontPt * 1.25 * zoomScale
     readonly property bool isLightTheme: (0.2126 * Kirigami.Theme.backgroundColor.r + 0.7152 * Kirigami.Theme.backgroundColor.g + 0.0722 * Kirigami.Theme.backgroundColor.b) > 0.45
     property var telemetry: null
-    readonly property string versionText: telemetry ? String(telemetry.appVersion || "0.5.16") : "0.5.16"
+    readonly property string versionText: telemetry ? String(telemetry.appVersion || "0.5.17") : "0.5.17"
 
     function openAboutWindow() {
     }

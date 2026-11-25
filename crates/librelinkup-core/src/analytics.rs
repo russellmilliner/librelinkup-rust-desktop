@@ -8,9 +8,9 @@ use std::path::Path;
 
 use serde::{Deserialize, Serialize};
 
-use crate::crypto::{phi_secret, AAD_LABEL_GLUCOSE_HISTORY};
+use crate::crypto::{AAD_LABEL_GLUCOSE_HISTORY, phi_secret};
 use crate::event_log::{log_error, log_info};
-use crate::models::{format_glucose_value, parse_libreview_timestamp, GlucoseSnapshot};
+use crate::models::{GlucoseSnapshot, format_glucose_value, parse_libreview_timestamp};
 use crate::paths::{glucose_history_file_path, legacy_glucose_history_file_path};
 
 /// Maximum number of days retained in the rolling local glucose history file.
@@ -285,7 +285,10 @@ impl GlucoseHistoryStore {
             changed = true;
         } else {
             for sample in incoming {
-                match self.samples.binary_search_by_key(&sample.epoch, |s| s.epoch) {
+                match self
+                    .samples
+                    .binary_search_by_key(&sample.epoch, |s| s.epoch)
+                {
                     Ok(idx) => {
                         if self.samples[idx].value_mg_dl != sample.value_mg_dl {
                             self.samples[idx].value_mg_dl = sample.value_mg_dl;
@@ -305,7 +308,11 @@ impl GlucoseHistoryStore {
             self.samples.drain(0..drop_front);
             changed = true;
         }
-        if self.samples.iter().any(|s| s.value_mg_dl <= 0.0 || s.epoch < cutoff) {
+        if self
+            .samples
+            .iter()
+            .any(|s| s.value_mg_dl <= 0.0 || s.epoch < cutoff)
+        {
             let before_prune = self.samples.len();
             self.samples
                 .retain(|s| s.epoch >= cutoff && s.value_mg_dl > 0.0);
@@ -336,9 +343,7 @@ impl GlucoseHistoryStore {
         let cutoff = now_epoch - window.duration_seconds();
         let max_epoch_bound = now_epoch + 3600;
         let start = self.samples.partition_point(|s| s.epoch < cutoff);
-        let end = self
-            .samples
-            .partition_point(|s| s.epoch <= max_epoch_bound);
+        let end = self.samples.partition_point(|s| s.epoch <= max_epoch_bound);
         let slice = if start <= end {
             &self.samples[start..end]
         } else {
@@ -368,9 +373,7 @@ impl GlucoseHistoryStore {
                     fallback_values.push((ep, pt.value_mg_dl));
                 }
             }
-            if fallback_values.is_empty()
-                && snap.value_mg_dl.is_finite()
-                && snap.value_mg_dl > 0.0
+            if fallback_values.is_empty() && snap.value_mg_dl.is_finite() && snap.value_mg_dl > 0.0
             {
                 fallback_values.push((
                     snap.measured_at_epoch.unwrap_or(now_epoch),
@@ -483,10 +486,9 @@ pub fn try_load_glucose_history_from_path_with_secret(
     path: &Path,
     secret: &[u8],
 ) -> Result<Option<GlucoseHistoryStore>, String> {
-    let Some(mut store) = crate::crypto::EncryptedVault::<GlucoseHistoryStore>::new(
-        AAD_LABEL_GLUCOSE_HISTORY,
-    )
-    .load_with_secret(path, secret)?
+    let Some(mut store) =
+        crate::crypto::EncryptedVault::<GlucoseHistoryStore>::new(AAD_LABEL_GLUCOSE_HISTORY)
+            .load_with_secret(path, secret)?
     else {
         return Ok(None);
     };
@@ -503,7 +505,10 @@ pub fn load_glucose_history_from_path(path: &Path) -> GlucoseHistoryStore {
         Ok(Some(store)) => store,
         Ok(None) => GlucoseHistoryStore::default(),
         Err(e) => {
-            log_error("CRYPTO", format!("Could not open glucose history vault: {e}"));
+            log_error(
+                "CRYPTO",
+                format!("Could not open glucose history vault: {e}"),
+            );
             GlucoseHistoryStore::default()
         }
     }
@@ -535,8 +540,7 @@ pub fn try_load_default_glucose_history() -> Result<GlucoseHistoryStore, String>
     if enc_path.exists() {
         let secret = phi_secret()?;
         return Ok(
-            try_load_glucose_history_from_path_with_secret(&enc_path, &secret)?
-                .unwrap_or_default(),
+            try_load_glucose_history_from_path_with_secret(&enc_path, &secret)?.unwrap_or_default(),
         );
     }
 
@@ -544,9 +548,9 @@ pub fn try_load_default_glucose_history() -> Result<GlucoseHistoryStore, String>
     if let Ok(raw) = fs::read_to_string(&legacy_path)
         && let Ok(mut store) = serde_json::from_str::<GlucoseHistoryStore>(&raw)
     {
-        store
-            .samples
-            .retain(|s| s.value_mg_dl.is_finite() && s.value_mg_dl > 0.0 && s.value_mg_dl <= 2000.0);
+        store.samples.retain(|s| {
+            s.value_mg_dl.is_finite() && s.value_mg_dl > 0.0 && s.value_mg_dl <= 2000.0
+        });
         store.samples.sort_by_key(|s| s.epoch);
         match save_glucose_history_to_path(&store, &enc_path) {
             Ok(()) => {
@@ -577,7 +581,10 @@ pub fn load_default_glucose_history() -> GlucoseHistoryStore {
     match try_load_default_glucose_history() {
         Ok(store) => store,
         Err(e) => {
-            log_error("CRYPTO", format!("Could not open glucose history vault: {e}"));
+            log_error(
+                "CRYPTO",
+                format!("Could not open glucose history vault: {e}"),
+            );
             GlucoseHistoryStore::default()
         }
     }
@@ -623,7 +630,10 @@ mod tests {
             value_mg_dl: 250.0,
         });
 
-        assert!(store.ingest_snapshot(&snap, now), "first ingest changes data");
+        assert!(
+            store.ingest_snapshot(&snap, now),
+            "first ingest changes data"
+        );
         let count_after_first = store.samples.len();
         assert!(count_after_first >= 20);
         assert!(store.samples.iter().all(|s| s.epoch >= now - 90 * 86_400));
@@ -678,8 +688,14 @@ mod tests {
 
         // No plaintext reading values or timestamps may appear in the file.
         let raw = fs::read_to_string(&path).unwrap();
-        assert!(raw.contains("\"ciphertext_hex\""), "expected an encrypted envelope");
-        assert!(!raw.contains("\"value_mg_dl\""), "plaintext samples leaked to disk");
+        assert!(
+            raw.contains("\"ciphertext_hex\""),
+            "expected an encrypted envelope"
+        );
+        assert!(
+            !raw.contains("\"value_mg_dl\""),
+            "plaintext samples leaked to disk"
+        );
         assert!(!raw.contains("112.0"));
 
         let loaded = try_load_glucose_history_from_path_with_secret(&path, secret)
@@ -709,17 +725,49 @@ mod tests {
         let now = 1_750_000_000i64;
         let mut store = GlucoseHistoryStore {
             samples: vec![
-                HistorySample { epoch: now - 35 * 86_400, value_mg_dl: 200.0 },
-                HistorySample { epoch: now - 10 * 86_400, value_mg_dl: 150.0 },
-                HistorySample { epoch: now - 6 * 86_400, value_mg_dl: 120.0 },
-                HistorySample { epoch: now - 3600, value_mg_dl: 100.0 },
+                HistorySample {
+                    epoch: now - 35 * 86_400,
+                    value_mg_dl: 200.0,
+                },
+                HistorySample {
+                    epoch: now - 10 * 86_400,
+                    value_mg_dl: 150.0,
+                },
+                HistorySample {
+                    epoch: now - 6 * 86_400,
+                    value_mg_dl: 120.0,
+                },
+                HistorySample {
+                    epoch: now - 3600,
+                    value_mg_dl: 100.0,
+                },
             ],
         };
 
-        assert_eq!(store.compute_stats(StatsWindow::Hours12, now, 70.0, 180.0, None).sample_count, 1);
-        assert_eq!(store.compute_stats(StatsWindow::Days7, now, 70.0, 180.0, None).sample_count, 2);
-        assert_eq!(store.compute_stats(StatsWindow::Days14, now, 70.0, 180.0, None).sample_count, 3);
-        assert_eq!(store.compute_stats(StatsWindow::Days90, now, 70.0, 180.0, None).sample_count, 4);
+        assert_eq!(
+            store
+                .compute_stats(StatsWindow::Hours12, now, 70.0, 180.0, None)
+                .sample_count,
+            1
+        );
+        assert_eq!(
+            store
+                .compute_stats(StatsWindow::Days7, now, 70.0, 180.0, None)
+                .sample_count,
+            2
+        );
+        assert_eq!(
+            store
+                .compute_stats(StatsWindow::Days14, now, 70.0, 180.0, None)
+                .sample_count,
+            3
+        );
+        assert_eq!(
+            store
+                .compute_stats(StatsWindow::Days90, now, 70.0, 180.0, None)
+                .sample_count,
+            4
+        );
 
         // Newer-sample append fast path
         let mut s_append = GlucoseSnapshot {

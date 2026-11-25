@@ -18,12 +18,16 @@ pub const APP_USER_MODEL_ID: &str = "io.github.russellmilliner.LibreLinkUpDeskto
 pub const APP_DISPLAY_NAME: &str = "LibreLinkUp Rust Desktop";
 pub const MAIN_WINDOW_TITLE: &str = "LibreLinkUp Rust Desktop";
 const RUN_VALUE_NAME: &str = "LibreLinkUpDesktop";
-const SINGLE_INSTANCE_MUTEX: &str = "Local\\io.github.russellmilliner.LibreLinkUpDesktop.SingleInstance";
+const SINGLE_INSTANCE_MUTEX: &str =
+    "Local\\io.github.russellmilliner.LibreLinkUpDesktop.SingleInstance";
 
 #[cfg(windows)]
 fn wide(s: &str) -> Vec<u16> {
     use std::os::windows::ffi::OsStrExt;
-    std::ffi::OsStr::new(s).encode_wide().chain(std::iter::once(0)).collect()
+    std::ffi::OsStr::new(s)
+        .encode_wide()
+        .chain(std::iter::once(0))
+        .collect()
 }
 
 /// Hardens DLL search order (`LOAD_LIBRARY_SEARCH_SYSTEM32`) and registers with Windows
@@ -31,7 +35,7 @@ fn wide(s: &str) -> Vec<u16> {
 #[cfg(windows)]
 pub fn harden_process_startup() {
     use windows_sys::Win32::System::LibraryLoader::{
-        SetDefaultDllDirectories, LOAD_LIBRARY_SEARCH_SYSTEM32,
+        LOAD_LIBRARY_SEARCH_SYSTEM32, SetDefaultDllDirectories,
     };
     use windows_sys::Win32::System::Recovery::RegisterApplicationRestart;
 
@@ -68,8 +72,8 @@ pub fn load_or_create_master_secret_at(
                 MAX_DPAPI_KEY_FILE_BYTES
             ));
         }
-        let mut blob = std::fs::read(key_path)
-            .map_err(|e| format!("Failed to read DPAPI master key: {e}"))?;
+        let mut blob =
+            std::fs::read(key_path).map_err(|e| format!("Failed to read DPAPI master key: {e}"))?;
         if blob.len() as u64 > MAX_DPAPI_KEY_FILE_BYTES {
             blob.zeroize();
             return Err(format!(
@@ -116,12 +120,18 @@ pub fn load_or_create_master_secret() -> Result<Zeroizing<Vec<u8>>, String> {
 #[cfg(windows)]
 pub fn dpapi_protect(data: &[u8]) -> Result<Vec<u8>, String> {
     use windows_sys::Win32::Security::Cryptography::{
-        CryptProtectData, CRYPTPROTECT_UI_FORBIDDEN, CRYPT_INTEGER_BLOB,
+        CRYPT_INTEGER_BLOB, CRYPTPROTECT_UI_FORBIDDEN, CryptProtectData,
     };
     let cb_data = u32::try_from(data.len())
         .map_err(|_| "DPAPI input exceeds maximum u32 length".to_string())?;
-    let input = CRYPT_INTEGER_BLOB { cbData: cb_data, pbData: data.as_ptr() as *mut u8 };
-    let mut output = CRYPT_INTEGER_BLOB { cbData: 0, pbData: std::ptr::null_mut() };
+    let input = CRYPT_INTEGER_BLOB {
+        cbData: cb_data,
+        pbData: data.as_ptr() as *mut u8,
+    };
+    let mut output = CRYPT_INTEGER_BLOB {
+        cbData: 0,
+        pbData: std::ptr::null_mut(),
+    };
     let description = wide("LibreLinkUp credential key");
     let ok = unsafe {
         CryptProtectData(
@@ -143,12 +153,18 @@ pub fn dpapi_protect(data: &[u8]) -> Result<Vec<u8>, String> {
 #[cfg(windows)]
 pub fn dpapi_unprotect(data: &[u8]) -> Result<Vec<u8>, String> {
     use windows_sys::Win32::Security::Cryptography::{
-        CryptUnprotectData, CRYPTPROTECT_UI_FORBIDDEN, CRYPT_INTEGER_BLOB,
+        CRYPT_INTEGER_BLOB, CRYPTPROTECT_UI_FORBIDDEN, CryptUnprotectData,
     };
     let cb_data = u32::try_from(data.len())
         .map_err(|_| "DPAPI ciphertext exceeds maximum u32 length".to_string())?;
-    let input = CRYPT_INTEGER_BLOB { cbData: cb_data, pbData: data.as_ptr() as *mut u8 };
-    let mut output = CRYPT_INTEGER_BLOB { cbData: 0, pbData: std::ptr::null_mut() };
+    let input = CRYPT_INTEGER_BLOB {
+        cbData: cb_data,
+        pbData: data.as_ptr() as *mut u8,
+    };
+    let mut output = CRYPT_INTEGER_BLOB {
+        cbData: 0,
+        pbData: std::ptr::null_mut(),
+    };
     let ok = unsafe {
         CryptUnprotectData(
             &input,
@@ -161,7 +177,9 @@ pub fn dpapi_unprotect(data: &[u8]) -> Result<Vec<u8>, String> {
         )
     };
     if ok == 0 {
-        return Err("CryptUnprotectData failed (vault belongs to another user or is corrupt)".into());
+        return Err(
+            "CryptUnprotectData failed (vault belongs to another user or is corrupt)".into(),
+        );
     }
     Ok(take_blob(output))
 }
@@ -206,14 +224,18 @@ const RUN_KEY: &str = "Software\\Microsoft\\Windows\\CurrentVersion\\Run";
 #[cfg(windows)]
 pub fn set_autostart(enabled: bool, start_minimized: bool) -> Result<(), String> {
     use windows_sys::Win32::System::Registry::{
-        RegDeleteKeyValueW, RegSetKeyValueW, HKEY_CURRENT_USER, REG_SZ,
+        HKEY_CURRENT_USER, REG_SZ, RegDeleteKeyValueW, RegSetKeyValueW,
     };
     let key = wide(RUN_KEY);
     let name = wide(RUN_VALUE_NAME);
     if !enabled {
         let rc = unsafe { RegDeleteKeyValueW(HKEY_CURRENT_USER, key.as_ptr(), name.as_ptr()) };
         // ERROR_FILE_NOT_FOUND (2) just means it was already disabled.
-        return if rc == 0 || rc == 2 { Ok(()) } else { Err(format!("RegDeleteKeyValueW failed ({rc})")) };
+        return if rc == 0 || rc == 2 {
+            Ok(())
+        } else {
+            Err(format!("RegDeleteKeyValueW failed ({rc})"))
+        };
     }
     let exe = std::env::current_exe().map_err(|e| e.to_string())?;
     let mut command = format!("\"{}\"", exe.display());
@@ -231,12 +253,16 @@ pub fn set_autostart(enabled: bool, start_minimized: bool) -> Result<(), String>
             (data.len() * 2) as u32,
         )
     };
-    if rc == 0 { Ok(()) } else { Err(format!("RegSetKeyValueW failed ({rc})")) }
+    if rc == 0 {
+        Ok(())
+    } else {
+        Err(format!("RegSetKeyValueW failed ({rc})"))
+    }
 }
 
 #[cfg(windows)]
 pub fn is_autostart_registered() -> bool {
-    use windows_sys::Win32::System::Registry::{RegGetValueW, HKEY_CURRENT_USER, RRF_RT_REG_SZ};
+    use windows_sys::Win32::System::Registry::{HKEY_CURRENT_USER, RRF_RT_REG_SZ, RegGetValueW};
     let key = wide(RUN_KEY);
     let name = wide(RUN_VALUE_NAME);
     let mut size: u32 = 0;
@@ -273,7 +299,7 @@ pub fn is_autostart_registered() -> bool {
 /// notifications show "LibreLinkUp Rust Desktop" with our icon, even for the portable exe.
 #[cfg(windows)]
 pub fn register_notification_identity(icon_png: &[u8]) {
-    use windows_sys::Win32::System::Registry::{RegSetKeyValueW, HKEY_CURRENT_USER, REG_SZ};
+    use windows_sys::Win32::System::Registry::{HKEY_CURRENT_USER, REG_SZ, RegSetKeyValueW};
     use windows_sys::Win32::UI::Shell::SetCurrentProcessExplicitAppUserModelID;
 
     let id = wide(APP_USER_MODEL_ID);
@@ -282,7 +308,9 @@ pub fn register_notification_identity(icon_png: &[u8]) {
     let icon_path = librelinkup_core::paths::data_dir().join("notification-icon.png");
     let _ = std::fs::write(&icon_path, icon_png);
 
-    let key = wide(&format!("Software\\Classes\\AppUserModelId\\{APP_USER_MODEL_ID}"));
+    let key = wide(&format!(
+        "Software\\Classes\\AppUserModelId\\{APP_USER_MODEL_ID}"
+    ));
     for (name, value) in [
         ("DisplayName", APP_DISPLAY_NAME.to_string()),
         ("IconUri", icon_path.display().to_string()),
@@ -330,7 +358,7 @@ impl Drop for SingleInstance {
 /// Returns `None` if another instance is already running (and brings it to the front).
 #[cfg(windows)]
 pub fn acquire_single_instance() -> Option<SingleInstance> {
-    use windows_sys::Win32::Foundation::{CloseHandle, GetLastError, ERROR_ALREADY_EXISTS};
+    use windows_sys::Win32::Foundation::{CloseHandle, ERROR_ALREADY_EXISTS, GetLastError};
     use windows_sys::Win32::System::Threading::CreateMutexW;
     let name = wide(SINGLE_INSTANCE_MUTEX);
     let handle = unsafe { CreateMutexW(std::ptr::null(), 0, name.as_ptr()) };
@@ -374,7 +402,7 @@ fn activate_existing_instance() {
 #[cfg(windows)]
 pub fn show_window(hwnd: isize, visible: bool) {
     use windows_sys::Win32::UI::WindowsAndMessaging::{
-        SetForegroundWindow, ShowWindow, SW_HIDE, SW_RESTORE, SW_SHOW,
+        SW_HIDE, SW_RESTORE, SW_SHOW, SetForegroundWindow, ShowWindow,
     };
     if hwnd == 0 {
         return;
@@ -398,7 +426,7 @@ pub fn show_window(_hwnd: isize, _visible: bool) {}
 #[cfg(windows)]
 pub fn flash_window(hwnd: isize) {
     use windows_sys::Win32::UI::WindowsAndMessaging::{
-        FlashWindowEx, FLASHWINFO, FLASHW_ALL, FLASHW_TIMERNOFG,
+        FLASHW_ALL, FLASHW_TIMERNOFG, FLASHWINFO, FlashWindowEx,
     };
     if hwnd == 0 {
         return;
@@ -422,9 +450,9 @@ pub fn flash_window(_hwnd: isize) {}
 pub fn set_overlay_all_desktops(on_all_desktops: bool) {
     use windows_sys::Win32::System::Threading::GetCurrentProcessId;
     use windows_sys::Win32::UI::WindowsAndMessaging::{
-        FindWindowW, GetWindowLongPtrW, GetWindowThreadProcessId, SetWindowLongPtrW,
-        SetWindowPos, GWL_EXSTYLE, SWP_FRAMECHANGED, SWP_NOACTIVATE, SWP_NOMOVE, SWP_NOSIZE,
-        SWP_NOZORDER, WS_EX_TOOLWINDOW,
+        FindWindowW, GWL_EXSTYLE, GetWindowLongPtrW, GetWindowThreadProcessId, SWP_FRAMECHANGED,
+        SWP_NOACTIVATE, SWP_NOMOVE, SWP_NOSIZE, SWP_NOZORDER, SetWindowLongPtrW, SetWindowPos,
+        WS_EX_TOOLWINDOW,
     };
     let title = wide("LibreLinkUp Overlay");
     let hwnd = unsafe { FindWindowW(std::ptr::null(), title.as_ptr()) };
@@ -469,7 +497,7 @@ pub fn set_overlay_all_desktops(_on_all_desktops: bool) {}
 
 #[cfg(windows)]
 pub fn attach_parent_console() {
-    use windows_sys::Win32::System::Console::{AttachConsole, ATTACH_PARENT_PROCESS};
+    use windows_sys::Win32::System::Console::{ATTACH_PARENT_PROCESS, AttachConsole};
     unsafe { AttachConsole(ATTACH_PARENT_PROCESS) };
 }
 

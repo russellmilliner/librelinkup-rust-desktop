@@ -58,23 +58,21 @@ jobs:
             qml6-module-qtquick qml6-module-qtquick-controls qml6-module-qtquick-templates \
             qml6-module-qtquick-layouts qml6-module-qtquick-window \
             qml6-module-qtquick-dialogs qml6-module-qtqml-workerscript \
-            breeze-icon-theme fonts-noto-core
+            breeze-icon-theme fonts-noto-core \
+            shellcheck nodejs desktop-file-utils appstream libxml2-utils
 
-      - name: Install Rust (stable, clippy)
+      - name: Install Rust (stable, clippy, rustfmt)
         uses: dtolnay/rust-toolchain@39008827e6b4319a349e9a42dfc90579dd25f1ca # stable
         with:
-          components: clippy
+          components: clippy, rustfmt
 
       - name: Cache Cargo
         uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2
 
-      - name: Run Clippy (--workspace --all-targets)
-        run: cargo clippy --workspace --all-targets -- -D warnings
-
-      - name: Run unit & headless Qt/QML integration tests
+      - name: Run full lint, formatting, QML, C++ & test suite (scripts/check.sh)
         env:
           QT_QPA_PLATFORM: offscreen
-        run: cargo test --workspace -- --test-threads=1
+        run: bash scripts/check.sh
 
   build:
     name: Windows Build, Test & Package (x64)
@@ -84,10 +82,10 @@ jobs:
         with:
           persist-credentials: false
 
-      - name: Install Rust (stable, MSVC, clippy)
+      - name: Install Rust (stable, MSVC, clippy, rustfmt)
         uses: dtolnay/rust-toolchain@39008827e6b4319a349e9a42dfc90579dd25f1ca # stable
         with:
-          components: clippy
+          components: clippy, rustfmt
 
       - name: Cache Cargo
         uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2
@@ -96,13 +94,18 @@ jobs:
             windows -> target
             crates/librelinkup-core -> target
 
+      - name: Check Rust formatting
+        run: cargo fmt --manifest-path windows/Cargo.toml -- --check
+
       - name: Clippy shared core & Windows app
         run: |
           cargo clippy --manifest-path crates/librelinkup-core/Cargo.toml --all-targets -- -D warnings
           cargo clippy --manifest-path windows/Cargo.toml --all-targets -- -D warnings
 
-      - name: Test shared core on Windows
-        run: cargo test --release --manifest-path crates/librelinkup-core/Cargo.toml
+      - name: Test shared core & Windows app
+        run: |
+          cargo test --release --manifest-path crates/librelinkup-core/Cargo.toml
+          cargo test --release --manifest-path windows/Cargo.toml
 
       - name: Build LibreLinkUp.exe
         run: cargo build --release --manifest-path windows/Cargo.toml

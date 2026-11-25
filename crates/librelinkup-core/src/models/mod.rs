@@ -14,7 +14,6 @@ pub const MAX_POLL_INTERVAL_SECONDS: u32 = 3600;
 /// Gray used for stale readings in the UI, tray badge and overlay.
 pub const STALE_COLOR_HEX: &str = "#6b7280";
 
-
 mod a11y;
 mod alerts;
 mod glucose;
@@ -37,7 +36,10 @@ mod alert_tests {
     fn parses_libreview_timestamps() {
         let utc = parse_libreview_timestamp("10/19/2026 7:05:09 PM", true).unwrap();
         assert_eq!(utc, 1792436709);
-        assert_eq!(parse_libreview_timestamp("1/2/2026 9:00:00 AM", true), Some(1767344400));
+        assert_eq!(
+            parse_libreview_timestamp("1/2/2026 9:00:00 AM", true),
+            Some(1767344400)
+        );
         assert_eq!(parse_libreview_timestamp("", true), None);
         assert_eq!(parse_libreview_timestamp("garbage", true), None);
     }
@@ -45,7 +47,11 @@ mod alert_tests {
     #[test]
     fn age_and_formatting() {
         assert_eq!(reading_age_minutes(Some(1000), 1000 + 125), Some(2));
-        assert_eq!(reading_age_minutes(Some(2000), 1000), Some(0), "clock skew clamps to 0");
+        assert_eq!(
+            reading_age_minutes(Some(2000), 1000),
+            Some(0),
+            "clock skew clamps to 0"
+        );
         assert_eq!(reading_age_minutes(None, 1000), None);
         assert_eq!(format_reading_age(Some(0)), "just now");
         assert_eq!(format_reading_age(Some(7)), "7 min ago");
@@ -102,11 +108,23 @@ mod alert_tests {
     #[test]
     fn classification() {
         let s = settings();
-        assert_eq!(s.classify_alert(50.0, 70.0, 180.0, false), Some(AlertKind::UrgentLow));
-        assert_eq!(s.classify_alert(65.0, 70.0, 180.0, false), Some(AlertKind::Low));
+        assert_eq!(
+            s.classify_alert(50.0, 70.0, 180.0, false),
+            Some(AlertKind::UrgentLow)
+        );
+        assert_eq!(
+            s.classify_alert(65.0, 70.0, 180.0, false),
+            Some(AlertKind::Low)
+        );
         assert_eq!(s.classify_alert(120.0, 70.0, 180.0, false), None);
-        assert_eq!(s.classify_alert(200.0, 70.0, 180.0, false), Some(AlertKind::High));
-        assert_eq!(s.classify_alert(200.0, 70.0, 180.0, true), Some(AlertKind::Stale));
+        assert_eq!(
+            s.classify_alert(200.0, 70.0, 180.0, false),
+            Some(AlertKind::High)
+        );
+        assert_eq!(
+            s.classify_alert(200.0, 70.0, 180.0, true),
+            Some(AlertKind::Stale)
+        );
         let mut quiet = settings();
         quiet.alert_on_stale = false;
         assert_eq!(quiet.classify_alert(50.0, 70.0, 180.0, true), None);
@@ -124,8 +142,16 @@ mod alert_tests {
         // A different kind (e.g. high -> stale) also fires immediately.
         assert!(s.should_fire_alert(AlertKind::Stale, Some((AlertKind::High, t0)), t0 + 60));
         // Urgent low repeats every 5 min even with a longer configured interval.
-        assert!(!s.should_fire_alert(AlertKind::UrgentLow, Some((AlertKind::UrgentLow, t0)), t0 + 240));
-        assert!(s.should_fire_alert(AlertKind::UrgentLow, Some((AlertKind::UrgentLow, t0)), t0 + 300));
+        assert!(!s.should_fire_alert(
+            AlertKind::UrgentLow,
+            Some((AlertKind::UrgentLow, t0)),
+            t0 + 240
+        ));
+        assert!(s.should_fire_alert(
+            AlertKind::UrgentLow,
+            Some((AlertKind::UrgentLow, t0)),
+            t0 + 300
+        ));
         // Easing from urgent low to low follows the repeat timer (no immediate re-alert).
         assert!(!s.should_fire_alert(AlertKind::Low, Some((AlertKind::UrgentLow, t0)), t0 + 60));
     }
@@ -140,7 +166,10 @@ mod alert_tests {
         assert!(!s.should_fire_alert(AlertKind::Low, None, t0));
         assert!(!s.should_fire_alert(AlertKind::Stale, None, t0));
         assert!(s.should_fire_alert(AlertKind::UrgentLow, None, t0));
-        assert!(s.should_fire_alert(AlertKind::High, None, t0 + 1800), "snooze expired");
+        assert!(
+            s.should_fire_alert(AlertKind::High, None, t0 + 1800),
+            "snooze expired"
+        );
     }
 
     #[test]
@@ -264,7 +293,10 @@ mod alert_tests {
 
         // 20 minutes after activation -> 40m warmup remaining
         assert!(snap.is_sensor_in_warmup(act + 20 * 60));
-        assert_eq!(snap.sensor_warmup_minutes_remaining(act + 20 * 60), Some(40));
+        assert_eq!(
+            snap.sensor_warmup_minutes_remaining(act + 20 * 60),
+            Some(40)
+        );
         let warm_str = snap.format_sensor_status(act + 20 * 60);
         assert!(warm_str.contains("Warmup: 40m remaining"), "got {warm_str}");
         assert!(warm_str.contains("40TUAM8CTE0"), "got {warm_str}");
@@ -325,7 +357,10 @@ mod alert_tests {
         s.tray_only_relevant_out_of_range = true;
         assert!(!s.is_tray_relevant(&waiting, false));
         assert!(!s.is_tray_relevant(&in_range, false));
-        assert!(s.is_tray_relevant(&in_range, true), "stale reading is relevant");
+        assert!(
+            s.is_tray_relevant(&in_range, true),
+            "stale reading is relevant"
+        );
         assert!(s.is_tray_relevant(&high, false));
         assert!(s.is_tray_relevant(&low, false));
         assert!(s.is_tray_relevant(&urgent_low, false));

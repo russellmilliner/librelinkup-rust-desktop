@@ -142,4 +142,3 @@ impl AppSettings {
         }
     }
 }
-

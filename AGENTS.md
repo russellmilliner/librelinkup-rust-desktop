@@ -9,6 +9,12 @@ before editing. If your change conflicts with anything here, stop and ask.
 ## 1. Commands you must run before declaring work done
 
 ```bash
+# 0. Unified repo-wide gate (Rust fmt + clippy + tests, QML, C++, shell, JS, metadata, docs)
+./scripts/check.sh
+
+# Enable the staged git pre-commit hook (once per clone)
+git config core.hooksPath .githooks
+
 # 1. Core logic tests (fast)
 cargo test -p librelinkup-core
 

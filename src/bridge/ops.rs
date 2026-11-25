@@ -3,12 +3,14 @@
 //! Nothing here touches Qt types: it mutates [`AppState`] only. The controllers are thin
 //! property mirrors on top, which keeps the Qt bridge boring and the logic unit-testable.
 
-use crate::analytics::{save_default_glucose_history, StatsWindow, HISTORY_PERSIST_MIN_INTERVAL_SECS};
+use crate::analytics::{
+    HISTORY_PERSIST_MIN_INTERVAL_SECS, StatsWindow, save_default_glucose_history,
+};
 use crate::bridge::state::AppState;
 use crate::event_log::{get_event_count, get_event_seq, get_events_json};
 use crate::models::{
-    clamp_poll_interval, format_glucose_value, format_reading_age, format_target_range,
-    trend_arrow_description, trend_arrow_symbol, AppSettings, GlucoseRangeStatus, STALE_COLOR_HEX,
+    AppSettings, GlucoseRangeStatus, STALE_COLOR_HEX, clamp_poll_interval, format_glucose_value,
+    format_reading_age, format_target_range, trend_arrow_description, trend_arrow_symbol,
 };
 use crate::session::{effective_reading_age_minutes, format_snooze_until};
 
@@ -63,7 +65,9 @@ pub fn current_settings(state: &AppState) -> AppSettings {
     s.snooze_updated_at_epoch = state.snooze_updated_at_epoch;
     s.check_updates_on_startup = state.check_updates_on_startup;
     s.remember_password = state.remember_password;
-    s.stats_window = StatsWindow::from_code(&state.stats_window).code().to_string();
+    s.stats_window = StatsWindow::from_code(&state.stats_window)
+        .code()
+        .to_string();
     s.data_source = state.data_source.clone();
     s.ha_url = state.ha_url.clone();
     s.ha_sensor_entity_id = state.ha_sensor_entity_id.clone();
@@ -153,9 +157,8 @@ pub fn refresh_display(state: &mut AppState) {
 
     if state.logged_in {
         if stale {
-            state.status_message = format!(
-                "No new sensor readings ({age_text}) — check sensor/phone"
-            );
+            state.status_message =
+                format!("No new sensor readings ({age_text}) — check sensor/phone");
         } else if state.status_message.starts_with("No new sensor readings") {
             state.status_message = "Live CGM telemetry active".to_string();
         }
@@ -235,7 +238,8 @@ pub fn refresh_logs(state: &mut AppState) {
 /// large multi-month vaults do not stall the Qt GUI thread. Refuses to overwrite if the vault
 /// failed to load at startup.
 pub fn persist_history_if_due(state: &mut AppState, force: bool) {
-    static HISTORY_SAVE_LOCK: std::sync::OnceLock<std::sync::Mutex<()>> = std::sync::OnceLock::new();
+    static HISTORY_SAVE_LOCK: std::sync::OnceLock<std::sync::Mutex<()>> =
+        std::sync::OnceLock::new();
 
     if state.history_vault_load_failed {
         if force {

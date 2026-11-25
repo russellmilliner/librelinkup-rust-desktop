@@ -22,3 +22,6 @@ serde_json = "1.0"
 chrono = "0.4"
 # Zero-dependency minisign signature verification for signed auto-updates.
 minisign-verify = "0.3"
+
+[lints]
+workspace = true

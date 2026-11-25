@@ -16,9 +16,15 @@ fn main() {
     res.set_icon("assets/app.ico")
         .set_manifest_file("assets/LibreLinkUp.exe.manifest")
         .set("ProductName", "LibreLinkUp Rust Desktop")
-        .set("FileDescription", "LibreLinkUp Rust Desktop — blood glucose monitor")
+        .set(
+            "FileDescription",
+            "LibreLinkUp Rust Desktop — blood glucose monitor",
+        )
         .set("CompanyName", "Russell Milliner")
-        .set("LegalCopyright", "Copyright © Russell Milliner. Apache License 2.0.")
+        .set(
+            "LegalCopyright",
+            "Copyright © Russell Milliner. Apache License 2.0.",
+        )
         .set("OriginalFilename", "LibreLinkUp.exe")
         .set("ProductVersion", version)
         .set("FileVersion", version);

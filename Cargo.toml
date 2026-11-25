@@ -21,6 +21,14 @@ path = "src/lib.rs"
 [workspace]
 members = [".", "crates/librelinkup-core"]
 
+[workspace.lints.clippy]
+all = { level = "warn", priority = -1 }
+dbg_macro = "warn"
+todo = "warn"
+
+[lints]
+workspace = true
+
 [[bin]]
 name = "librelinkup-kde"
 path = "src/main.rs"

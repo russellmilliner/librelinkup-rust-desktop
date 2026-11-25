@@ -2,14 +2,14 @@
 
 use eframe::egui::{self, Color32, RichText};
 use librelinkup_core::models::{
-    clamp_ui_zoom_percent, MAX_POLL_INTERVAL_SECONDS, MIN_POLL_INTERVAL_SECONDS,
+    MAX_POLL_INTERVAL_SECONDS, MIN_POLL_INTERVAL_SECONDS, clamp_ui_zoom_percent,
 };
 use librelinkup_core::paths::credentials_file_path;
 use zeroize::{Zeroize, Zeroizing};
 
 use super::{
-    clear_text_edit_undoer, region_combo, LibreLinkUpApp, Tab, LOGIN_HA_TOK_EDIT_SALT,
-    LOGIN_PW_EDIT_SALT, SETTINGS_HA_TOK_EDIT_SALT,
+    LOGIN_HA_TOK_EDIT_SALT, LOGIN_PW_EDIT_SALT, LibreLinkUpApp, SETTINGS_HA_TOK_EDIT_SALT, Tab,
+    clear_text_edit_undoer, region_combo,
 };
 use crate::service::{Command, Shared};
 
@@ -17,56 +17,79 @@ impl LibreLinkUpApp {
     pub(super) fn settings_view(&mut self, ui: &mut egui::Ui, state: &Shared) {
         let mut s = state.settings.clone();
         ui.heading("Settings");
-        egui::Frame::group(ui.style()).inner_margin(12).show(ui, |ui| {
-            egui::Grid::new("settings").num_columns(2).spacing([16.0, 10.0]).show(ui, |ui| {
-                ui.label("Theme");
-                ui.horizontal(|ui| {
-                    ui.selectable_value(&mut s.theme_mode, "system".to_string(), "System");
-                    ui.selectable_value(&mut s.theme_mode, "light".to_string(), "Light");
-                    ui.selectable_value(&mut s.theme_mode, "dark".to_string(), "Dark");
-                });
-                ui.end_row();
-                ui.label("UI Zoom (75%–175%)");
-                ui.horizontal(|ui| {
-                    let cur_z = clamp_ui_zoom_percent(s.ui_text_scale);
-                    if ui.add_enabled(cur_z > 75, egui::Button::new("−")).clicked() {
-                        s.ui_text_scale = clamp_ui_zoom_percent(cur_z - 10);
-                    }
-                    if ui.button(format!("{cur_z}%")).on_hover_text("Reset UI zoom to 100%").clicked() {
-                        s.ui_text_scale = 100;
-                    }
-                    if ui.add_enabled(cur_z < 175, egui::Button::new("+")).clicked() {
-                        s.ui_text_scale = clamp_ui_zoom_percent(cur_z + 10);
-                    }
-                    ui.checkbox(&mut s.high_contrast_mode, "High Contrast Mode");
-                });
-                ui.end_row();
-                ui.label("Glucose unit");
-                ui.horizontal(|ui| {
-                    ui.selectable_value(&mut s.result_unit, "mg/dL".to_string(), "mg/dL");
-                    ui.selectable_value(&mut s.result_unit, "mmol/L".to_string(), "mmol/L");
-                });
-                ui.end_row();
-                ui.label("Refresh every");
-                ui.add(
-                    egui::DragValue::new(&mut s.poll_interval_seconds)
-                        .range(MIN_POLL_INTERVAL_SECONDS..=MAX_POLL_INTERVAL_SECONDS)
-                        .suffix(" s"),
-                );
-                ui.end_row();
-                ui.label("Regional endpoint");
-                region_combo(ui, &mut s.country);
-                ui.end_row();
+        egui::Frame::group(ui.style())
+            .inner_margin(12)
+            .show(ui, |ui| {
+                egui::Grid::new("settings")
+                    .num_columns(2)
+                    .spacing([16.0, 10.0])
+                    .show(ui, |ui| {
+                        ui.label("Theme");
+                        ui.horizontal(|ui| {
+                            ui.selectable_value(&mut s.theme_mode, "system".to_string(), "System");
+                            ui.selectable_value(&mut s.theme_mode, "light".to_string(), "Light");
+                            ui.selectable_value(&mut s.theme_mode, "dark".to_string(), "Dark");
+                        });
+                        ui.end_row();
+                        ui.label("UI Zoom (75%–175%)");
+                        ui.horizontal(|ui| {
+                            let cur_z = clamp_ui_zoom_percent(s.ui_text_scale);
+                            if ui.add_enabled(cur_z > 75, egui::Button::new("−")).clicked() {
+                                s.ui_text_scale = clamp_ui_zoom_percent(cur_z - 10);
+                            }
+                            if ui
+                                .button(format!("{cur_z}%"))
+                                .on_hover_text("Reset UI zoom to 100%")
+                                .clicked()
+                            {
+                                s.ui_text_scale = 100;
+                            }
+                            if ui
+                                .add_enabled(cur_z < 175, egui::Button::new("+"))
+                                .clicked()
+                            {
+                                s.ui_text_scale = clamp_ui_zoom_percent(cur_z + 10);
+                            }
+                            ui.checkbox(&mut s.high_contrast_mode, "High Contrast Mode");
+                        });
+                        ui.end_row();
+                        ui.label("Glucose unit");
+                        ui.horizontal(|ui| {
+                            ui.selectable_value(&mut s.result_unit, "mg/dL".to_string(), "mg/dL");
+                            ui.selectable_value(&mut s.result_unit, "mmol/L".to_string(), "mmol/L");
+                        });
+                        ui.end_row();
+                        ui.label("Refresh every");
+                        ui.add(
+                            egui::DragValue::new(&mut s.poll_interval_seconds)
+                                .range(MIN_POLL_INTERVAL_SECONDS..=MAX_POLL_INTERVAL_SECONDS)
+                                .suffix(" s"),
+                        );
+                        ui.end_row();
+                        ui.label("Regional endpoint");
+                        region_combo(ui, &mut s.country);
+                        ui.end_row();
+                    });
             });
-        });
         ui.add_space(8.0);
-        egui::Frame::group(ui.style()).inner_margin(12).show(ui, |ui| {
-            ui.label(RichText::new("System tray").strong());
-            ui.checkbox(&mut s.show_glucose_in_tray_icon, "Show glucose value in the tray icon");
-            ui.checkbox(&mut s.show_glucose_in_tray_tooltip, "Show glucose details in the tray tooltip");
-            ui.checkbox(&mut s.autostart_enabled, "Start at Windows sign-in");
-            ui.add_enabled(s.autostart_enabled, egui::Checkbox::new(&mut s.start_minimized, "Start minimized to the tray"));
-        });
+        egui::Frame::group(ui.style())
+            .inner_margin(12)
+            .show(ui, |ui| {
+                ui.label(RichText::new("System tray").strong());
+                ui.checkbox(
+                    &mut s.show_glucose_in_tray_icon,
+                    "Show glucose value in the tray icon",
+                );
+                ui.checkbox(
+                    &mut s.show_glucose_in_tray_tooltip,
+                    "Show glucose details in the tray tooltip",
+                );
+                ui.checkbox(&mut s.autostart_enabled, "Start at Windows sign-in");
+                ui.add_enabled(
+                    s.autostart_enabled,
+                    egui::Checkbox::new(&mut s.start_minimized, "Start minimized to the tray"),
+                );
+            });
         ui.add_space(8.0);
         egui::Frame::group(ui.style()).inner_margin(12).show(ui, |ui| {
             ui.label(RichText::new("Floating overlay").strong());
@@ -80,12 +103,14 @@ impl LibreLinkUpApp {
             ui.label(RichText::new("Drag the overlay to move it. Scroll wheel adjusts opacity. Right-click or use buttons for options.").small().weak());
         });
         ui.add_space(8.0);
-        egui::Frame::group(ui.style()).inner_margin(12).show(ui, |ui| {
-            ui.label(RichText::new("Application updates").strong());
-            ui.checkbox(
-                &mut s.check_updates_on_startup,
-                "Automatically check GitHub Releases for updates (on startup & every 6 hours)",
-            );
+        egui::Frame::group(ui.style())
+            .inner_margin(12)
+            .show(ui, |ui| {
+                ui.label(RichText::new("Application updates").strong());
+                ui.checkbox(
+                    &mut s.check_updates_on_startup,
+                    "Automatically check GitHub Releases for updates (on startup & every 6 hours)",
+                );
                 ui.horizontal(|ui| {
                     let btn_label = if state.checking_updates {
                         "Checking..."
@@ -112,7 +137,10 @@ impl LibreLinkUpApp {
                                 format!("⬇ Install {}", upd.latest_version)
                             };
                             if ui
-                                .add_enabled(!state.installing_update, egui::Button::new(inst_label))
+                                .add_enabled(
+                                    !state.installing_update,
+                                    egui::Button::new(inst_label),
+                                )
                                 .clicked()
                             {
                                 self.send(Command::InstallUpdate);
@@ -120,7 +148,13 @@ impl LibreLinkUpApp {
                             ui.hyperlink_to("Release Notes", &upd.release_url);
                         }
                     } else {
-                        ui.label(RichText::new(format!("Current version: v{}", env!("CARGO_PKG_VERSION"))).weak());
+                        ui.label(
+                            RichText::new(format!(
+                                "Current version: v{}",
+                                env!("CARGO_PKG_VERSION")
+                            ))
+                            .weak(),
+                        );
                     }
                 });
             });
@@ -250,51 +284,73 @@ impl LibreLinkUpApp {
 
     pub(super) fn account_view(&mut self, ui: &mut egui::Ui, state: &Shared) {
         ui.heading("Account & Encrypted Credential Vault");
-        egui::Frame::group(ui.style()).inner_margin(12).show(ui, |ui| {
-            egui::Grid::new("account").num_columns(2).spacing([16.0, 8.0]).show(ui, |ui| {
-                ui.label("Session status");
-                ui.label(&state.status);
-                ui.end_row();
-                ui.label("Account");
-                ui.label(if state.username.is_empty() { "—" } else { &state.username });
-                ui.end_row();
-                let name = format!("{} {}", state.snapshot.first_name, state.snapshot.last_name).trim().to_string();
-                ui.label("Connected patient");
-                ui.label(if name.is_empty() { "—".to_string() } else { name });
-                ui.end_row();
-                ui.label("Region");
-                ui.label(state.settings.country.to_uppercase());
-                ui.end_row();
-                ui.label("Encryption");
-                ui.label("AES-256-GCM; key protected by Windows DPAPI (current user)");
-                ui.end_row();
-                ui.label("Vault path");
-                ui.label(credentials_file_path().display().to_string());
-                ui.end_row();
+        egui::Frame::group(ui.style())
+            .inner_margin(12)
+            .show(ui, |ui| {
+                egui::Grid::new("account")
+                    .num_columns(2)
+                    .spacing([16.0, 8.0])
+                    .show(ui, |ui| {
+                        ui.label("Session status");
+                        ui.label(&state.status);
+                        ui.end_row();
+                        ui.label("Account");
+                        ui.label(if state.username.is_empty() {
+                            "—"
+                        } else {
+                            &state.username
+                        });
+                        ui.end_row();
+                        let name =
+                            format!("{} {}", state.snapshot.first_name, state.snapshot.last_name)
+                                .trim()
+                                .to_string();
+                        ui.label("Connected patient");
+                        ui.label(if name.is_empty() {
+                            "—".to_string()
+                        } else {
+                            name
+                        });
+                        ui.end_row();
+                        ui.label("Region");
+                        ui.label(state.settings.country.to_uppercase());
+                        ui.end_row();
+                        ui.label("Encryption");
+                        ui.label("AES-256-GCM; key protected by Windows DPAPI (current user)");
+                        ui.end_row();
+                        ui.label("Vault path");
+                        ui.label(credentials_file_path().display().to_string());
+                        ui.end_row();
+                    });
+                ui.add_space(8.0);
+                let mut remember = state.settings.remember_password;
+                if ui
+                    .checkbox(
+                        &mut remember,
+                        "Remember password in encrypted vault (auto-renew expired tokens)",
+                    )
+                    .changed()
+                {
+                    let mut ns = state.settings.clone();
+                    ns.remember_password = remember;
+                    self.save_settings(ns);
+                }
+                ui.add_space(10.0);
+                if ui
+                    .add_enabled(
+                        state.logged_in,
+                        egui::Button::new("Sign Out & Wipe Encrypted Vault"),
+                    )
+                    .clicked()
+                {
+                    self.login_password.zeroize();
+                    self.ha_token_input.zeroize();
+                    clear_text_edit_undoer(ui.ctx(), egui::Id::unique(LOGIN_PW_EDIT_SALT));
+                    clear_text_edit_undoer(ui.ctx(), egui::Id::unique(LOGIN_HA_TOK_EDIT_SALT));
+                    clear_text_edit_undoer(ui.ctx(), egui::Id::unique(SETTINGS_HA_TOK_EDIT_SALT));
+                    self.send(Command::Logout);
+                    self.tab = Tab::Dashboard;
+                }
             });
-            ui.add_space(8.0);
-            let mut remember = state.settings.remember_password;
-            if ui
-                .checkbox(
-                    &mut remember,
-                    "Remember password in encrypted vault (auto-renew expired tokens)",
-                )
-                .changed()
-            {
-                let mut ns = state.settings.clone();
-                ns.remember_password = remember;
-                self.save_settings(ns);
-            }
-            ui.add_space(10.0);
-            if ui.add_enabled(state.logged_in, egui::Button::new("Sign Out & Wipe Encrypted Vault")).clicked() {
-                self.login_password.zeroize();
-                self.ha_token_input.zeroize();
-                clear_text_edit_undoer(ui.ctx(), egui::Id::unique(LOGIN_PW_EDIT_SALT));
-                clear_text_edit_undoer(ui.ctx(), egui::Id::unique(LOGIN_HA_TOK_EDIT_SALT));
-                clear_text_edit_undoer(ui.ctx(), egui::Id::unique(SETTINGS_HA_TOK_EDIT_SALT));
-                self.send(Command::Logout);
-                self.tab = Tab::Dashboard;
-            }
-        });
     }
 }

@@ -6,12 +6,12 @@ use eframe::egui::{
     self, Align2, Color32, CornerRadius, FontId, Pos2, Rect, Sense, Stroke, Vec2, ViewportBuilder,
     ViewportCommand, ViewportId,
 };
-use librelinkup_core::models::{format_glucose_value, AppSettings};
+use librelinkup_core::models::{AppSettings, format_glucose_value};
 use tokio::sync::mpsc::UnboundedSender;
 
 use super::{
-    darken_color, hex_color, paint_trend_arrow, reading_status, LibreLinkUpApp, UiHandle,
-    OVERLAY_ID,
+    LibreLinkUpApp, OVERLAY_ID, UiHandle, darken_color, hex_color, paint_trend_arrow,
+    reading_status,
 };
 use crate::service::{Command, SharedState};
 
@@ -28,16 +28,23 @@ impl LibreLinkUpApp {
             .with_always_on_top()
             .with_taskbar(false)
             .with_resizable(false)
-            .with_inner_size([settings.overlay_width.clamp(200, 600) as f32, settings.overlay_height.clamp(70, 260) as f32]);
+            .with_inner_size([
+                settings.overlay_width.clamp(200, 600) as f32,
+                settings.overlay_height.clamp(70, 260) as f32,
+            ]);
         if settings.overlay_x > -32_000 && settings.overlay_y > -32_000 {
             builder = builder.with_position([settings.overlay_x as f32, settings.overlay_y as f32]);
         }
         let shared = self.shared.clone();
         let tx = self.tx.clone();
         let ui_handle = self.ui_handle.clone();
-        ctx.show_viewport_deferred(ViewportId::from_hash_of(OVERLAY_ID), builder, move |ui, _class| {
-            overlay_ui(ui, &shared, &tx, &ui_handle);
-        });
+        ctx.show_viewport_deferred(
+            ViewportId::from_hash_of(OVERLAY_ID),
+            builder,
+            move |ui, _class| {
+                overlay_ui(ui, &shared, &tx, &ui_handle);
+            },
+        );
     }
 }
 
@@ -54,11 +61,18 @@ pub(super) fn reset_overlay_desktop_cache() {
 }
 
 /// Floating always-on-top overlay. Drag to move; scroll wheel adjusts transparency; right-click or buttons for options.
-fn overlay_ui(ui: &mut egui::Ui, shared: &SharedState, tx: &UnboundedSender<Command>, ui_handle: &Arc<UiHandle>) {
+fn overlay_ui(
+    ui: &mut egui::Ui,
+    shared: &SharedState,
+    tx: &UnboundedSender<Command>,
+    ui_handle: &Arc<UiHandle>,
+) {
     let state = shared.lock().unwrap_or_else(|p| p.into_inner()).clone();
     let s = &state.settings;
     {
-        let mut cache = overlay_desktop_cache().lock().unwrap_or_else(|e| e.into_inner());
+        let mut cache = overlay_desktop_cache()
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
         if *cache != Some((state.data_rev, s.overlay_on_all_desktops)) {
             crate::platform::set_overlay_all_desktops(s.overlay_on_all_desktops);
             *cache = Some((state.data_rev, s.overlay_on_all_desktops));
@@ -126,13 +140,26 @@ fn overlay_ui(ui: &mut egui::Ui, shared: &SharedState, tx: &UnboundedSender<Comm
     } else {
         light_border
     };
-    painter.rect_stroke(rect, CornerRadius::same(12), Stroke::new(2.0, stroke_col), egui::StrokeKind::Inside);
+    painter.rect_stroke(
+        rect,
+        CornerRadius::same(12),
+        Stroke::new(2.0, stroke_col),
+        egui::StrokeKind::Inside,
+    );
     if s.overlay_dark_theme {
-        painter.rect_filled(Rect::from_min_size(rect.min, Vec2::new(6.0, rect.height())), CornerRadius::same(3), status_color);
+        painter.rect_filled(
+            Rect::from_min_size(rect.min, Vec2::new(6.0, rect.height())),
+            CornerRadius::same(3),
+            status_color,
+        );
     }
 
     // Drag and right-click interaction for the background
-    let response = ui.interact(rect, ui.scope_id().with("overlay-drag"), Sense::click_and_drag());
+    let response = ui.interact(
+        rect,
+        ui.scope_id().with("overlay-drag"),
+        Sense::click_and_drag(),
+    );
 
     let value = format_glucose_value(snap.value_mg_dl, &s.result_unit);
     painter.text(
@@ -162,16 +189,25 @@ fn overlay_ui(ui: &mut egui::Ui, shared: &SharedState, tx: &UnboundedSender<Comm
     } else {
         format!("{} • {label} • {age_text}", s.result_unit)
     };
-    painter.text(rect.left_center() + Vec2::new(18.0, 22.0), Align2::LEFT_CENTER, sub, FontId::proportional(12.0), Color32::from_white_alpha(230));
+    painter.text(
+        rect.left_center() + Vec2::new(18.0, 22.0),
+        Align2::LEFT_CENTER,
+        sub,
+        FontId::proportional(12.0),
+        Color32::from_white_alpha(230),
+    );
 
     // 2-row action button cluster on the right side (3 top buttons: 20x22, 2 bottom buttons: 32x22)
     let top_btn_size = Vec2::new(20.0, 22.0);
     let bot_btn_size = Vec2::new(32.0, 22.0);
     let btn_spacing = 4.0;
     let grid_w = top_btn_size.x * 3.0 + btn_spacing * 2.0; // 68.0
-    let grid_h = top_btn_size.y * 2.0 + btn_spacing;       // 48.0
+    let grid_h = top_btn_size.y * 2.0 + btn_spacing; // 48.0
     let buttons_rect = Rect::from_min_size(
-        Pos2::new(rect.max.x - 10.0 - grid_w, rect.min.y + (rect.height() - grid_h) * 0.5),
+        Pos2::new(
+            rect.max.x - 10.0 - grid_w,
+            rect.min.y + (rect.height() - grid_h) * 0.5,
+        ),
         Vec2::new(grid_w, grid_h),
     );
 
@@ -195,11 +231,25 @@ fn overlay_ui(ui: &mut egui::Ui, shared: &SharedState, tx: &UnboundedSender<Comm
 
     let theme_icon = if s.overlay_dark_theme { "🌙" } else { "🎨" };
     let theme_tooltip = if s.overlay_dark_theme {
-        format!("Overlay Dark Theme ON (Click for Color Fill • Scroll wheel adjusts {}% opacity)", current_opacity)
+        format!(
+            "Overlay Dark Theme ON (Click for Color Fill • Scroll wheel adjusts {}% opacity)",
+            current_opacity
+        )
     } else {
-        format!("Overlay Color Fill ON (Click for Dark Theme • Scroll wheel adjusts {}% opacity)", current_opacity)
+        format!(
+            "Overlay Color Fill ON (Click for Dark Theme • Scroll wheel adjusts {}% opacity)",
+            current_opacity
+        )
     };
-    let btn_theme_resp = draw_overlay_button(ui, btn_theme_rect, "btn_theme", theme_icon, 10.0, &theme_tooltip, false);
+    let btn_theme_resp = draw_overlay_button(
+        ui,
+        btn_theme_rect,
+        "btn_theme",
+        theme_icon,
+        10.0,
+        &theme_tooltip,
+        false,
+    );
     if btn_theme_resp.clicked() {
         let mut ns = s.clone();
         ns.overlay_dark_theme.toggle();
@@ -232,17 +282,41 @@ fn overlay_ui(ui: &mut egui::Ui, shared: &SharedState, tx: &UnboundedSender<Comm
         ui_handle.repaint_all();
     }
 
-    let btn_restore_resp = draw_overlay_button(ui, btn_restore_rect, "btn_restore", "↗", 12.0, "Open LibreLinkUp Rust Desktop", false);
+    let btn_restore_resp = draw_overlay_button(
+        ui,
+        btn_restore_rect,
+        "btn_restore",
+        "↗",
+        12.0,
+        "Open LibreLinkUp Rust Desktop",
+        false,
+    );
     if btn_restore_resp.clicked() {
         ui_handle.show_main_window();
     }
 
-    let btn_menu_resp = draw_overlay_button(ui, btn_menu_rect, "btn_menu", "☰", 11.0, "Open Menu (or right-click anywhere on overlay)", false);
+    let btn_menu_resp = draw_overlay_button(
+        ui,
+        btn_menu_rect,
+        "btn_menu",
+        "☰",
+        11.0,
+        "Open Menu (or right-click anywhere on overlay)",
+        false,
+    );
     egui::Popup::menu(&btn_menu_resp).show(|ui| {
         show_overlay_menu(ui, s, shared, tx, ui_handle);
     });
 
-    let btn_close_resp = draw_overlay_button(ui, btn_close_rect, "btn_close", "✕", 11.0, "Hide Overlay", true);
+    let btn_close_resp = draw_overlay_button(
+        ui,
+        btn_close_rect,
+        "btn_close",
+        "✕",
+        11.0,
+        "Hide Overlay",
+        true,
+    );
     if btn_close_resp.clicked() {
         let mut ns = s.clone();
         ns.overlay_visible = false;
@@ -314,7 +388,12 @@ fn draw_overlay_button(
         Color32::from_white_alpha(150)
     };
     painter.rect_filled(rect, CornerRadius::same(6), bg);
-    painter.rect_stroke(rect, CornerRadius::same(6), Stroke::new(1.0, border), egui::StrokeKind::Inside);
+    painter.rect_stroke(
+        rect,
+        CornerRadius::same(6),
+        Stroke::new(1.0, border),
+        egui::StrokeKind::Inside,
+    );
     painter.text(
         rect.center(),
         Align2::CENTER_CENTER,

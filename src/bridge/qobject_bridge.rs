@@ -623,7 +623,7 @@ pub mod qobject {
 
         #[qinvokable]
         fn remove_medication(self: Pin<&mut MedicationsController>, medication_id: QString)
-            -> bool;
+        -> bool;
 
         #[qinvokable]
         fn log_medication_dose(

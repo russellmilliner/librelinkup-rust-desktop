@@ -11,7 +11,7 @@ use cxx_qt_lib::QString;
 
 use crate::bridge::autostart::sync_autostart_desktop_file;
 use crate::bridge::ops;
-use crate::bridge::qobject_bridge::{qobject, SettingsControllerRust};
+use crate::bridge::qobject_bridge::{SettingsControllerRust, qobject};
 use crate::bridge::state::{mark_state_dirty, with_state};
 use crate::crypto::save_default_credentials;
 use crate::event_log::{
@@ -230,12 +230,7 @@ impl qobject::SettingsController {
         sync_str!(self, set_language, language, language);
         sync_str!(self, set_window_mode, window_mode, window_mode);
         sync_val!(self, set_overlay_visible, overlay_visible, overlay_visible);
-        sync_val!(
-            self,
-            set_overlay_only_mode,
-            overlay_only_mode,
-            overlay_only
-        );
+        sync_val!(self, set_overlay_only_mode, overlay_only_mode, overlay_only);
         sync_val!(
             self,
             set_overlay_on_all_desktops,
@@ -306,18 +301,43 @@ impl qobject::SettingsController {
             flash_window_enabled,
             flash_window
         );
-        sync_val!(self, set_audio_alert_enabled, audio_alert_enabled, audio_alert);
-        sync_val!(self, set_use_custom_sound, use_custom_sound, use_custom_sound);
+        sync_val!(
+            self,
+            set_audio_alert_enabled,
+            audio_alert_enabled,
+            audio_alert
+        );
+        sync_val!(
+            self,
+            set_use_custom_sound,
+            use_custom_sound,
+            use_custom_sound
+        );
         sync_str!(
             self,
             set_custom_sound_path,
             custom_sound_path,
             custom_sound_path
         );
-        sync_val!(self, set_override_threshold, override_threshold, override_threshold);
+        sync_val!(
+            self,
+            set_override_threshold,
+            override_threshold,
+            override_threshold
+        );
         sync_val!(self, set_custom_target_low, custom_target_low, custom_low);
-        sync_val!(self, set_custom_target_high, custom_target_high, custom_high);
-        sync_val!(self, set_remember_password, remember_password, remember_password);
+        sync_val!(
+            self,
+            set_custom_target_high,
+            custom_target_high,
+            custom_high
+        );
+        sync_val!(
+            self,
+            set_remember_password,
+            remember_password,
+            remember_password
+        );
         sync_str!(
             self,
             set_credentials_vault_path,
@@ -358,7 +378,12 @@ impl qobject::SettingsController {
             check_updates_on_startup,
             check_updates
         );
-        sync_val!(self, set_update_available, update_available, update_available);
+        sync_val!(
+            self,
+            set_update_available,
+            update_available,
+            update_available
+        );
         sync_str!(self, set_latest_version, latest_version, latest_version);
         sync_str!(self, set_update_url, update_url, update_url);
         sync_str!(
@@ -575,10 +600,11 @@ impl qobject::SettingsController {
         let updated = with_state(|s| {
             s.country = clean.clone();
             if let Some(creds) = s.creds.as_mut()
-                && creds.country != clean {
-                    creds.country = clean.clone();
-                    let _ = save_default_credentials(&creds.sanitized_for_storage(remember_pw));
-                }
+                && creds.country != clean
+            {
+                creds.country = clean.clone();
+                let _ = save_default_credentials(&creds.sanitized_for_storage(remember_pw));
+            }
             s.logged_in
         });
         let _ = with_state(|s| ops::persist_settings(s));

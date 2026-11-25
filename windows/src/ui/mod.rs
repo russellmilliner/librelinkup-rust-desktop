@@ -1,7 +1,7 @@
 //! Main window (egui) and floating overlay viewport.
 
-use std::sync::atomic::{AtomicBool, AtomicIsize, Ordering};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, AtomicIsize, Ordering};
 
 mod alerts;
 mod chart;
@@ -20,15 +20,15 @@ use librelinkup_core::api::normalize_country_code;
 use librelinkup_core::event_log::{get_all_events, get_event_seq};
 use librelinkup_core::medications::MedicationSchedule;
 use librelinkup_core::models::{
-    accessible_glucose_announcement, clamp_ui_zoom_percent, format_glucose_value,
-    format_reading_age, parse_libreview_timestamp, trend_arrow_symbol, AppSettings,
-    GlucoseRangeStatus, STALE_COLOR_HEX,
+    AppSettings, GlucoseRangeStatus, STALE_COLOR_HEX, accessible_glucose_announcement,
+    clamp_ui_zoom_percent, format_glucose_value, format_reading_age, parse_libreview_timestamp,
+    trend_arrow_symbol,
 };
 use librelinkup_core::session::{effective_reading_age_minutes, format_snooze_until};
 use tokio::sync::mpsc::UnboundedSender;
 use zeroize::Zeroize;
 
-use crate::service::{now_epoch, Command, Shared, SharedState};
+use crate::service::{Command, Shared, SharedState, now_epoch};
 use crate::tray::TrayView;
 
 pub const OVERLAY_ID: &str = "llu-overlay";
@@ -59,15 +59,18 @@ pub struct UiHandle {
 impl UiHandle {
     pub fn show_main_window(&self) {
         self.window_visible.store(true, Ordering::SeqCst);
-        self.ctx.send_viewport_cmd_to(ViewportId::ROOT, ViewportCommand::Visible(true));
-        self.ctx.send_viewport_cmd_to(ViewportId::ROOT, ViewportCommand::Focus);
+        self.ctx
+            .send_viewport_cmd_to(ViewportId::ROOT, ViewportCommand::Visible(true));
+        self.ctx
+            .send_viewport_cmd_to(ViewportId::ROOT, ViewportCommand::Focus);
         crate::platform::show_window(self.hwnd.load(Ordering::SeqCst), true);
         self.ctx.request_repaint();
     }
 
     pub fn hide_main_window(&self) {
         self.window_visible.store(false, Ordering::SeqCst);
-        self.ctx.send_viewport_cmd_to(ViewportId::ROOT, ViewportCommand::Visible(false));
+        self.ctx
+            .send_viewport_cmd_to(ViewportId::ROOT, ViewportCommand::Visible(false));
         self.ctx.request_repaint();
     }
 
@@ -81,14 +84,17 @@ impl UiHandle {
 
     pub fn quit(&self) {
         self.quitting.store(true, Ordering::SeqCst);
-        self.ctx.send_viewport_cmd_to(ViewportId::ROOT, ViewportCommand::Visible(true));
-        self.ctx.send_viewport_cmd_to(ViewportId::ROOT, ViewportCommand::Close);
+        self.ctx
+            .send_viewport_cmd_to(ViewportId::ROOT, ViewportCommand::Visible(true));
+        self.ctx
+            .send_viewport_cmd_to(ViewportId::ROOT, ViewportCommand::Close);
         self.ctx.request_repaint();
     }
 
     pub fn repaint_all(&self) {
         self.ctx.request_repaint();
-        self.ctx.request_repaint_of(ViewportId::from_hash_of(OVERLAY_ID));
+        self.ctx
+            .request_repaint_of(ViewportId::from_hash_of(OVERLAY_ID));
     }
 }
 
@@ -153,7 +159,11 @@ pub(super) fn clear_text_edit_undoer(ctx: &egui::Context, id: egui::Id) {
     }
 }
 impl LibreLinkUpApp {
-    pub fn new(shared: SharedState, tx: UnboundedSender<Command>, ui_handle: Arc<UiHandle>) -> Self {
+    pub fn new(
+        shared: SharedState,
+        tx: UnboundedSender<Command>,
+        ui_handle: Arc<UiHandle>,
+    ) -> Self {
         let (region, ha_url, ha_entity) = shared
             .lock()
             .map(|s| {
@@ -171,7 +181,11 @@ impl LibreLinkUpApp {
             tab: Tab::Dashboard,
             login_email: String::new(),
             login_password: String::new(),
-            login_region: if region.is_empty() { "us".into() } else { region },
+            login_region: if region.is_empty() {
+                "us".into()
+            } else {
+                region
+            },
             ha_url_input: ha_url,
             ha_token_input: String::new(),
             ha_entity_input: ha_entity,
@@ -233,7 +247,9 @@ impl LibreLinkUpApp {
                 .snapshot
                 .graph_points
                 .iter()
-                .filter_map(|p| parse_libreview_timestamp(&p.timestamp, false).map(|t| (t, p.value_mg_dl)))
+                .filter_map(|p| {
+                    parse_libreview_timestamp(&p.timestamp, false).map(|t| (t, p.value_mg_dl))
+                })
                 .filter(|(t, _)| *t >= start)
                 .collect();
             points.sort_by_key(|(t, _)| *t);
@@ -263,7 +279,10 @@ impl LibreLinkUpApp {
             if rank(&e.level) < min {
                 continue;
             }
-            let line = format!("{}  [{}] {}: {}", e.timestamp, e.level, e.category, e.message);
+            let line = format!(
+                "{}  [{}] {}: {}",
+                e.timestamp, e.level, e.category, e.message
+            );
             if !query.is_empty() && !line.to_ascii_lowercase().contains(query) {
                 continue;
             }
@@ -278,7 +297,10 @@ impl LibreLinkUpApp {
     }
 
     pub(super) fn snapshot(&self) -> Shared {
-        self.shared.lock().unwrap_or_else(|p| p.into_inner()).clone()
+        self.shared
+            .lock()
+            .unwrap_or_else(|p| p.into_inner())
+            .clone()
     }
 
     pub(super) fn send(&self, cmd: Command) {
@@ -332,7 +354,11 @@ pub fn build_tray_view(state: &Shared) -> TrayView {
     let (label, color, stale, age_text) = reading_status(state);
     let value = format_glucose_value(snap.value_mg_dl, &s.result_unit);
     let c = hex_color(color);
-    let badge = if s.show_glucose_in_tray_icon && snap.value_mg_dl > 0.0 { value.clone() } else { String::new() };
+    let badge = if s.show_glucose_in_tray_icon && snap.value_mg_dl > 0.0 {
+        value.clone()
+    } else {
+        String::new()
+    };
     let mut tooltip = if !s.show_glucose_in_tray_tooltip {
         "LibreLinkUp Rust Desktop".to_string()
     } else if snap.value_mg_dl <= 0.0 {
@@ -342,7 +368,11 @@ pub fn build_tray_view(state: &Shared) -> TrayView {
             "{value} {} {} ({label})\n{}",
             s.result_unit,
             trend_arrow_symbol(snap.trend_arrow),
-            if age_text.is_empty() { snap.timestamp.clone() } else { age_text.clone() }
+            if age_text.is_empty() {
+                snap.timestamp.clone()
+            } else {
+                age_text.clone()
+            }
         )
     };
     if stale && s.show_glucose_in_tray_tooltip {
@@ -376,38 +406,46 @@ pub fn build_tray_view(state: &Shared) -> TrayView {
 impl eframe::App for LibreLinkUpApp {
     fn logic(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
         if self.ui_handle.window_visible.load(Ordering::SeqCst)
-            && let Some(outer) = ctx.input(|i| i.viewport().outer_rect) {
-                let wx = outer.min.x.round() as i32;
-                let wy = outer.min.y.round() as i32;
-                let ww = outer.width().round() as i32;
-                let wh = outer.height().round() as i32;
-                if wx > -32_000 && wy > -32_000 && ww >= 640 && wh >= 480 {
-                    let updated = self.shared.lock().ok().and_then(|mut s| {
-                        if (s.settings.window_x - wx).abs() > 2
-                            || (s.settings.window_y - wy).abs() > 2
-                            || (s.settings.window_width - ww).abs() > 2
-                            || (s.settings.window_height - wh).abs() > 2
-                        {
-                            s.settings.window_x = wx;
-                            s.settings.window_y = wy;
-                            s.settings.window_width = ww;
-                            s.settings.window_height = wh;
-                            Some(s.settings.clone())
-                        } else {
-                            None
-                        }
-                    });
-                    if let Some(new_settings) = updated {
-                        self.send(Command::SaveSettings(Box::new(new_settings)));
+            && let Some(outer) = ctx.input(|i| i.viewport().outer_rect)
+        {
+            let wx = outer.min.x.round() as i32;
+            let wy = outer.min.y.round() as i32;
+            let ww = outer.width().round() as i32;
+            let wh = outer.height().round() as i32;
+            if wx > -32_000 && wy > -32_000 && ww >= 640 && wh >= 480 {
+                let updated = self.shared.lock().ok().and_then(|mut s| {
+                    if (s.settings.window_x - wx).abs() > 2
+                        || (s.settings.window_y - wy).abs() > 2
+                        || (s.settings.window_width - ww).abs() > 2
+                        || (s.settings.window_height - wh).abs() > 2
+                    {
+                        s.settings.window_x = wx;
+                        s.settings.window_y = wy;
+                        s.settings.window_width = ww;
+                        s.settings.window_height = wh;
+                        Some(s.settings.clone())
+                    } else {
+                        None
                     }
+                });
+                if let Some(new_settings) = updated {
+                    self.send(Command::SaveSettings(Box::new(new_settings)));
                 }
             }
+        }
         // Closing the main window hides it to the tray; Quit (tray menu) really exits.
-        if ctx.input(|i| i.viewport().close_requested()) && !self.ui_handle.quitting.load(Ordering::SeqCst) {
+        if ctx.input(|i| i.viewport().close_requested())
+            && !self.ui_handle.quitting.load(Ordering::SeqCst)
+        {
             ctx.send_viewport_cmd(ViewportCommand::CancelClose);
             self.ui_handle.hide_main_window();
         }
-        if !self.shared.lock().map(|s| s.settings.overlay_visible).unwrap_or(false) {
+        if !self
+            .shared
+            .lock()
+            .map(|s| s.settings.overlay_visible)
+            .unwrap_or(false)
+        {
             overlay::reset_overlay_desktop_cache();
         }
         // Reading age / snooze countdowns change over time even without new data.
@@ -457,50 +495,58 @@ impl eframe::App for LibreLinkUpApp {
                 ui.add_space(6.0);
             }
             if let Some(ref upd) = state.update_info
-                && upd.update_available {
-                    egui::Frame::new()
-                        .fill(Color32::from_rgb(3, 105, 161))
-                        .corner_radius(6)
-                        .inner_margin(8)
-                        .show(ui, |ui| {
-                            ui.horizontal(|ui| {
-                                ui.label(
-                                    RichText::new(format!(
-                                        "⬆ New version available: {} (current: {})",
-                                        upd.latest_version, upd.current_version
-                                    ))
-                                    .strong()
-                                    .color(Color32::WHITE),
-                                );
-                                let inst_label = if state.installing_update {
-                                    "Installing...".to_string()
-                                } else {
-                                    format!("⬇ Install {}", upd.latest_version)
-                                };
-                                if ui
-                                    .add_enabled(!state.installing_update, egui::Button::new(inst_label))
-                                    .clicked()
-                                {
-                                    self.send(Command::InstallUpdate);
-                                }
-                                ui.hyperlink_to(
-                                    RichText::new("View Release Notes").color(Color32::from_rgb(224, 242, 254)).underline(),
-                                    &upd.release_url,
-                                );
-                            });
+                && upd.update_available
+            {
+                egui::Frame::new()
+                    .fill(Color32::from_rgb(3, 105, 161))
+                    .corner_radius(6)
+                    .inner_margin(8)
+                    .show(ui, |ui| {
+                        ui.horizontal(|ui| {
+                            ui.label(
+                                RichText::new(format!(
+                                    "⬆ New version available: {} (current: {})",
+                                    upd.latest_version, upd.current_version
+                                ))
+                                .strong()
+                                .color(Color32::WHITE),
+                            );
+                            let inst_label = if state.installing_update {
+                                "Installing...".to_string()
+                            } else {
+                                format!("⬇ Install {}", upd.latest_version)
+                            };
+                            if ui
+                                .add_enabled(
+                                    !state.installing_update,
+                                    egui::Button::new(inst_label),
+                                )
+                                .clicked()
+                            {
+                                self.send(Command::InstallUpdate);
+                            }
+                            ui.hyperlink_to(
+                                RichText::new("View Release Notes")
+                                    .color(Color32::from_rgb(224, 242, 254))
+                                    .underline(),
+                                &upd.release_url,
+                            );
                         });
-                    ui.add_space(6.0);
-                }
-            egui::ScrollArea::vertical().auto_shrink([false, false]).show(ui, |ui| match self.tab {
-                Tab::Dashboard if !state.logged_in => self.login_view(ui, &state),
-                Tab::Dashboard => self.dashboard(ui, &state),
-                Tab::Medications => self.medications_view(ui, &state),
-                Tab::Settings => self.settings_view(ui, &state),
-                Tab::Alerts => self.alerts_view(ui, &state),
-                Tab::Account => self.account_view(ui, &state),
-                Tab::Logs => self.logs_view(ui),
-                Tab::About => self.about_view(ui, &state),
-            });
+                    });
+                ui.add_space(6.0);
+            }
+            egui::ScrollArea::vertical()
+                .auto_shrink([false, false])
+                .show(ui, |ui| match self.tab {
+                    Tab::Dashboard if !state.logged_in => self.login_view(ui, &state),
+                    Tab::Dashboard => self.dashboard(ui, &state),
+                    Tab::Medications => self.medications_view(ui, &state),
+                    Tab::Settings => self.settings_view(ui, &state),
+                    Tab::Alerts => self.alerts_view(ui, &state),
+                    Tab::Account => self.account_view(ui, &state),
+                    Tab::Logs => self.logs_view(ui),
+                    Tab::About => self.about_view(ui, &state),
+                });
         });
 
         if state.settings.overlay_visible {
@@ -629,12 +675,7 @@ impl LibreLinkUpApp {
     fn footer(&mut self, ui: &mut egui::Ui, state: &Shared) {
         let (_, _, stale, age_text) = reading_status(state);
         let summary = if state.logged_in {
-            accessible_glucose_announcement(
-                &state.snapshot,
-                &state.settings,
-                stale,
-                &age_text,
-            )
+            accessible_glucose_announcement(&state.snapshot, &state.settings, stale, &age_text)
         } else {
             state.status.clone()
         };
@@ -760,7 +801,10 @@ impl LibreLinkUpApp {
                 ui.selectable_value(&mut self.tab, tab, label);
             }
             ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
-                let refresh = ui.add_enabled(state.logged_in && !state.busy && !state.demo, egui::Button::new("🔄"));
+                let refresh = ui.add_enabled(
+                    state.logged_in && !state.busy && !state.demo,
+                    egui::Button::new("🔄"),
+                );
                 if refresh.on_hover_text("Refresh glucose now").clicked() {
                     self.send(Command::RefreshNow);
                 }
@@ -773,7 +817,11 @@ impl LibreLinkUpApp {
 }
 
 pub(super) fn region_combo(ui: &mut egui::Ui, region: &mut String) {
-    let current = REGIONS.iter().find(|(c, _)| c == region).map(|(_, n)| *n).unwrap_or("United States");
+    let current = REGIONS
+        .iter()
+        .find(|(c, _)| c == region)
+        .map(|(_, n)| *n)
+        .unwrap_or("United States");
     egui::ComboBox::from_id_salt("region")
         .selected_text(format!("{current} ({region})"))
         .width(260.0)

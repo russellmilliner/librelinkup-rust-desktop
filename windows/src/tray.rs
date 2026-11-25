@@ -3,10 +3,10 @@
 //! Runs on a dedicated thread with its own Win32 message pump, so it stays responsive and
 //! up to date even while the main window is hidden.
 
-use std::sync::mpsc::{channel, Receiver, Sender, TryRecvError};
 #[cfg(windows)]
 use std::sync::Arc;
 use std::sync::OnceLock;
+use std::sync::mpsc::{Receiver, Sender, TryRecvError, channel};
 use std::time::Duration;
 
 use ab_glyph::{Font, FontArc, PxScale, ScaleFont};
@@ -154,10 +154,15 @@ fn build_menu() -> (Menu, MenuIds) {
     let refresh = MenuItem::new("Refresh Reading Now", true, None);
     let snooze_menu = Submenu::new("Snooze Alerts", true);
     let snooze_status = MenuItem::new("Not snoozed", false, None);
-    let snooze: Vec<(MenuItem, i32)> = [("30 minutes", 30), ("1 hour", 60), ("2 hours", 120), ("Cancel snooze", 0)]
-        .into_iter()
-        .map(|(label, minutes)| (MenuItem::new(label, true, None), minutes))
-        .collect();
+    let snooze: Vec<(MenuItem, i32)> = [
+        ("30 minutes", 30),
+        ("1 hour", 60),
+        ("2 hours", 120),
+        ("Cancel snooze", 0),
+    ]
+    .into_iter()
+    .map(|(label, minutes)| (MenuItem::new(label, true, None), minutes))
+    .collect();
     let _ = snooze_menu.append(&snooze_status);
     let _ = snooze_menu.append(&PredefinedMenuItem::separator());
     for (item, _) in &snooze {
@@ -178,7 +183,20 @@ fn build_menu() -> (Menu, MenuIds) {
     let _ = menu.append(&check_updates);
     let _ = menu.append(&PredefinedMenuItem::separator());
     let _ = menu.append(&quit);
-    (menu, MenuIds { show, refresh, status, snooze_status, snooze, overlay, autostart, check_updates, quit })
+    (
+        menu,
+        MenuIds {
+            show,
+            refresh,
+            status,
+            snooze_status,
+            snooze,
+            overlay,
+            autostart,
+            check_updates,
+            quit,
+        },
+    )
 }
 
 fn run(
@@ -197,7 +215,10 @@ fn run(
     {
         Ok(t) => t,
         Err(e) => {
-            librelinkup_core::event_log::log_error("TRAY", format!("Failed to create tray icon: {e}"));
+            librelinkup_core::event_log::log_error(
+                "TRAY",
+                format!("Failed to create tray icon: {e}"),
+            );
             return;
         }
     };
@@ -223,13 +244,19 @@ fn run(
                 on_action(TrayAction::SetAutostart(ids.autostart.is_checked()));
             } else if id == *ids.check_updates.id() {
                 on_action(TrayAction::CheckUpdates);
-            } else if let Some((_, minutes)) = ids.snooze.iter().find(|(item, _)| *item.id() == id) {
+            } else if let Some((_, minutes)) = ids.snooze.iter().find(|(item, _)| *item.id() == id)
+            {
                 on_action(TrayAction::Snooze(*minutes));
             }
         }
 
         while let Ok(event) = TrayIconEvent::receiver().try_recv() {
-            if let TrayIconEvent::Click { button: MouseButton::Left, button_state: MouseButtonState::Up, .. } = event {
+            if let TrayIconEvent::Click {
+                button: MouseButton::Left,
+                button_state: MouseButtonState::Up,
+                ..
+            } = event
+            {
                 on_action(TrayAction::ToggleWindow);
             }
         }
@@ -261,16 +288,10 @@ fn run(
         {
             if let Some(ref ev) = wake {
                 use windows_sys::Win32::UI::WindowsAndMessaging::{
-                    MsgWaitForMultipleObjectsEx, MWMO_INPUTAVAILABLE, QS_ALLINPUT,
+                    MWMO_INPUTAVAILABLE, MsgWaitForMultipleObjectsEx, QS_ALLINPUT,
                 };
                 unsafe {
-                    MsgWaitForMultipleObjectsEx(
-                        1,
-                        &ev.0,
-                        2000,
-                        QS_ALLINPUT,
-                        MWMO_INPUTAVAILABLE,
-                    );
+                    MsgWaitForMultipleObjectsEx(1, &ev.0, 2000, QS_ALLINPUT, MWMO_INPUTAVAILABLE);
                 }
             } else {
                 std::thread::sleep(Duration::from_millis(150));
@@ -281,13 +302,21 @@ fn run(
     }
 }
 
-fn apply_view(tray: &TrayIcon, ids: &MenuIds, view: &TrayView, prev: Option<&TrayView>, font: Option<&FontArc>) {
-    let icon_changed = prev.is_none_or(|p| p.badge != view.badge || p.badge_color != view.badge_color);
+fn apply_view(
+    tray: &TrayIcon,
+    ids: &MenuIds,
+    view: &TrayView,
+    prev: Option<&TrayView>,
+    font: Option<&FontArc>,
+) {
+    let icon_changed =
+        prev.is_none_or(|p| p.badge != view.badge || p.badge_color != view.badge_color);
     if icon_changed {
         let icon = if view.badge.is_empty() {
             app_icon()
         } else {
-            font.and_then(|f| render_badge(f, &view.badge, view.badge_color)).unwrap_or_else(app_icon)
+            font.and_then(|f| render_badge(f, &view.badge, view.badge_color))
+                .unwrap_or_else(app_icon)
         };
         let _ = tray.set_icon(Some(icon));
     }
@@ -295,7 +324,11 @@ fn apply_view(tray: &TrayIcon, ids: &MenuIds, view: &TrayView, prev: Option<&Tra
     let tooltip: String = view.tooltip.chars().take(127).collect();
     let _ = tray.set_tooltip(Some(tooltip));
     ids.status.set_text(&view.status_line);
-    ids.snooze_status.set_text(if view.snooze_line.is_empty() { "Not snoozed" } else { &view.snooze_line });
+    ids.snooze_status.set_text(if view.snooze_line.is_empty() {
+        "Not snoozed"
+    } else {
+        &view.snooze_line
+    });
     ids.overlay.set_checked(view.overlay_visible);
     ids.autostart.set_checked(view.autostart);
 }
@@ -314,9 +347,10 @@ fn load_badge_font() -> Option<FontArc> {
     for name in ["segoeuib.ttf", "arialbd.ttf", "segoeui.ttf", "arial.ttf"] {
         let path = std::path::Path::new(&windir).join("Fonts").join(name);
         if let Ok(bytes) = std::fs::read(&path)
-            && let Ok(font) = FontArc::try_from_vec(bytes) {
-                return Some(font);
-            }
+            && let Ok(font) = FontArc::try_from_vec(bytes)
+        {
+            return Some(font);
+        }
     }
     FontArc::try_from_slice(epaint_default_fonts::UBUNTU_LIGHT).ok()
 }
@@ -328,7 +362,8 @@ pub fn render_badge(font: &FontArc, text: &str, color: [u8; 3]) -> Option<Icon> 
     let radius = 6.0f32;
     for y in 0..size {
         for x in 0..size {
-            let coverage = rounded_rect_coverage(x as f32 + 0.5, y as f32 + 0.5, size as f32, radius);
+            let coverage =
+                rounded_rect_coverage(x as f32 + 0.5, y as f32 + 0.5, size as f32, radius);
             if coverage > 0.0 {
                 let i = (y * size + x) * 4;
                 rgba[i..i + 3].copy_from_slice(&color);
@@ -342,7 +377,9 @@ pub fn render_badge(font: &FontArc, text: &str, color: [u8; 3]) -> Option<Icon> 
     let mut px = 22.0f32;
     let width_at = |px: f32| -> f32 {
         let scaled = font.as_scaled(PxScale::from(px));
-        text.chars().map(|c| scaled.h_advance(font.glyph_id(c))).sum()
+        text.chars()
+            .map(|c| scaled.h_advance(font.glyph_id(c)))
+            .sum()
     };
     while px > 8.0 && width_at(px) > max_width {
         px -= 0.5;
@@ -356,7 +393,8 @@ pub fn render_badge(font: &FontArc, text: &str, color: [u8; 3]) -> Option<Icon> 
 
     for c in text.chars() {
         let glyph_id = font.glyph_id(c);
-        let glyph = glyph_id.with_scale_and_position(PxScale::from(px), ab_glyph::point(x, baseline));
+        let glyph =
+            glyph_id.with_scale_and_position(PxScale::from(px), ab_glyph::point(x, baseline));
         x += scaled.h_advance(glyph_id);
         if let Some(outline) = font.outline_glyph(glyph) {
             let bounds = outline.px_bounds();
@@ -389,7 +427,7 @@ fn rounded_rect_coverage(px: f32, py: f32, size: f32, radius: f32) -> f32 {
 #[cfg(windows)]
 fn pump_messages() {
     use windows_sys::Win32::UI::WindowsAndMessaging::{
-        DispatchMessageW, PeekMessageW, TranslateMessage, MSG, PM_REMOVE,
+        DispatchMessageW, MSG, PM_REMOVE, PeekMessageW, TranslateMessage,
     };
     unsafe {
         let mut msg: MSG = std::mem::zeroed();

@@ -2,10 +2,10 @@
 //! LibreLinkUp Rust Desktop for Windows.
 
 mod alerts;
-mod ui;
 mod platform;
 mod service;
 mod tray;
+mod ui;
 
 use std::sync::atomic::{AtomicBool, AtomicIsize, Ordering};
 use std::sync::{Arc, Mutex, OnceLock};
@@ -13,9 +13,9 @@ use std::sync::{Arc, Mutex, OnceLock};
 use eframe::egui;
 use librelinkup_core::event_log::{log_error, log_info};
 
-use crate::ui::{build_tray_view, LibreLinkUpApp, UiHandle};
 use crate::service::{Command, SharedState, UiNotifier};
 use crate::tray::{TrayAction, TraySender};
+use crate::ui::{LibreLinkUpApp, UiHandle, build_tray_view};
 
 const ICON_256: &[u8] = include_bytes!("../assets/icon-256.png");
 
@@ -29,10 +29,11 @@ impl UiNotifier for Notifier {
     fn state_changed(&self) {
         self.ui.repaint_all();
         if let (Some(shared), Ok(tray)) = (self.shared.get(), self.tray.lock())
-            && let Some(tray) = tray.as_ref() {
-                let view = build_tray_view(&shared.lock().unwrap_or_else(|p| p.into_inner()));
-                let _ = tray.send(view);
-            }
+            && let Some(tray) = tray.as_ref()
+        {
+            let view = build_tray_view(&shared.lock().unwrap_or_else(|p| p.into_inner()));
+            let _ = tray.send(view);
+        }
     }
 
     fn attention(&self, flash: bool, bring_to_front: bool) {
@@ -62,7 +63,10 @@ fn main() {
     let args: Vec<String> = std::env::args().collect();
     if args.iter().any(|a| a == "--version" || a == "-V") {
         platform::attach_parent_console();
-        println!("LibreLinkUp Rust Desktop for Windows v{}", env!("CARGO_PKG_VERSION"));
+        println!(
+            "LibreLinkUp Rust Desktop for Windows v{}",
+            env!("CARGO_PKG_VERSION")
+        );
         return;
     }
     if args.iter().any(|a| a == "--help" || a == "-h" || a == "/?") {
@@ -91,9 +95,12 @@ fn main() {
         platform::attach_parent_console();
         std::process::exit(self_test());
     }
-    let start_minimized = args
-        .iter()
-        .any(|a| matches!(a.as_str(), "--minimized" | "-m" | "--start-minimized" | "--autostart" | "--hidden"));
+    let start_minimized = args.iter().any(|a| {
+        matches!(
+            a.as_str(),
+            "--minimized" | "-m" | "--start-minimized" | "--autostart" | "--hidden"
+        )
+    });
 
     platform::harden_process_startup();
     install_panic_hook();
@@ -122,7 +129,9 @@ fn main() {
         }
     }
     if let Some(e) = last_error {
-        show_fatal_error(&format!("LibreLinkUp could not start a graphics renderer:\n\n{e}"));
+        show_fatal_error(&format!(
+            "LibreLinkUp could not start a graphics renderer:\n\n{e}"
+        ));
     }
     #[allow(clippy::drop_non_drop)]
     drop(_instance);
@@ -249,11 +258,15 @@ fn install_fonts(ctx: &egui::Context) {
     let fonts_dir = std::path::Path::new(&windir).join("Fonts");
     let mut fonts = egui::FontDefinitions::default();
     let mut inserted = Vec::new();
-    for (name, file) in [("segoe-ui", "segoeui.ttf"), ("segoe-ui-symbol", "seguisym.ttf")] {
+    for (name, file) in [
+        ("segoe-ui", "segoeui.ttf"),
+        ("segoe-ui-symbol", "seguisym.ttf"),
+    ] {
         if let Ok(bytes) = std::fs::read(fonts_dir.join(file)) {
-            fonts
-                .font_data
-                .insert(name.to_string(), Arc::new(egui::FontData::from_owned(bytes)));
+            fonts.font_data.insert(
+                name.to_string(),
+                Arc::new(egui::FontData::from_owned(bytes)),
+            );
             inserted.push(name.to_string());
         }
     }
@@ -268,11 +281,23 @@ fn install_fonts(ctx: &egui::Context) {
 #[cfg(windows)]
 fn show_fatal_error(message: &str) {
     use std::os::windows::ffi::OsStrExt;
-    use windows_sys::Win32::UI::WindowsAndMessaging::{MessageBoxW, MB_ICONERROR, MB_OK};
-    let wide = |s: &str| -> Vec<u16> { std::ffi::OsStr::new(s).encode_wide().chain(Some(0)).collect() };
+    use windows_sys::Win32::UI::WindowsAndMessaging::{MB_ICONERROR, MB_OK, MessageBoxW};
+    let wide = |s: &str| -> Vec<u16> {
+        std::ffi::OsStr::new(s)
+            .encode_wide()
+            .chain(Some(0))
+            .collect()
+    };
     let text = wide(message);
     let caption = wide(platform::APP_DISPLAY_NAME);
-    unsafe { MessageBoxW(std::ptr::null_mut(), text.as_ptr(), caption.as_ptr(), MB_OK | MB_ICONERROR) };
+    unsafe {
+        MessageBoxW(
+            std::ptr::null_mut(),
+            text.as_ptr(),
+            caption.as_ptr(),
+            MB_OK | MB_ICONERROR,
+        )
+    };
 }
 
 #[cfg(not(windows))]
@@ -283,7 +308,9 @@ fn show_fatal_error(message: &str) {
 /// Headless checks of the Windows integration (used by CI and Wine smoke tests).
 /// Prints one line per check and returns the process exit code (0 = all passed).
 fn self_test() -> i32 {
-    use librelinkup_core::crypto::{load_credentials_with_secret, save_credentials_with_secret, StoredCredentials};
+    use librelinkup_core::crypto::{
+        StoredCredentials, load_credentials_with_secret, save_credentials_with_secret,
+    };
     let mut failures = 0;
     let mut check = |name: &str, result: Result<String, String>| match result {
         Ok(detail) => println!("PASS {name}: {detail}"),
@@ -292,113 +319,164 @@ fn self_test() -> i32 {
             println!("FAIL {name}: {e}");
         }
     };
-    println!("LibreLinkUp Rust Desktop for Windows v{} self-test", env!("CARGO_PKG_VERSION"));
+    println!(
+        "LibreLinkUp Rust Desktop for Windows v{} self-test",
+        env!("CARGO_PKG_VERSION")
+    );
 
-    check("paths", Ok(format!(
-        "config={} data={}",
-        librelinkup_core::paths::config_dir().display(),
-        librelinkup_core::paths::data_dir().display()
-    )));
+    check(
+        "paths",
+        Ok(format!(
+            "config={} data={}",
+            librelinkup_core::paths::config_dir().display(),
+            librelinkup_core::paths::data_dir().display()
+        )),
+    );
 
-    check("dpapi", (|| {
-        let secret = b"llu-self-test-secret";
-        let blob = platform::dpapi_protect(secret)?;
-        let back = platform::dpapi_unprotect(&blob)?;
-        if back == secret && blob != secret { Ok(format!("{} byte blob round-trip", blob.len())) } else { Err("round-trip mismatch".into()) }
-    })());
+    check(
+        "dpapi",
+        (|| {
+            let secret = b"llu-self-test-secret";
+            let blob = platform::dpapi_protect(secret)?;
+            let back = platform::dpapi_unprotect(&blob)?;
+            if back == secret && blob != secret {
+                Ok(format!("{} byte blob round-trip", blob.len()))
+            } else {
+                Err("round-trip mismatch".into())
+            }
+        })(),
+    );
 
-    check("vault", (|| {
-        let key = librelinkup_core::crypto::generate_random_key()?;
-        let secret = platform::dpapi_unprotect(&platform::dpapi_protect(&key)?)?;
-        let path = std::mem::DropGuard::new(
-            std::env::temp_dir().join(format!("llu-selftest-{}.json", std::process::id())),
-            |p| {
-                let _ = std::fs::remove_file(p);
-            },
-        );
-        let creds = StoredCredentials {
-            username: "self-test@example.com".into(),
-            password: "p\"w\\d".into(),
-            token: "tok".into(),
-            account_id: "acc".into(),
-            country: "us".into(),
-            language: "en".into(),
-            patient_id: String::new(),
-            first_name: String::new(),
-            last_name: String::new(),
-            ha_token: String::new(),
-        };
-        save_credentials_with_secret(&creds, &path, &secret)?;
-        let loaded = load_credentials_with_secret(&path, &secret)?.ok_or("vault missing")?;
-        if loaded == creds { Ok("AES-256-GCM envelope with DPAPI-protected key".into()) } else { Err("decrypted credentials differ".into()) }
-    })());
+    check(
+        "vault",
+        (|| {
+            let key = librelinkup_core::crypto::generate_random_key()?;
+            let secret = platform::dpapi_unprotect(&platform::dpapi_protect(&key)?)?;
+            let path = std::mem::DropGuard::new(
+                std::env::temp_dir().join(format!("llu-selftest-{}.json", std::process::id())),
+                |p| {
+                    let _ = std::fs::remove_file(p);
+                },
+            );
+            let creds = StoredCredentials {
+                username: "self-test@example.com".into(),
+                password: "p\"w\\d".into(),
+                token: "tok".into(),
+                account_id: "acc".into(),
+                country: "us".into(),
+                language: "en".into(),
+                patient_id: String::new(),
+                first_name: String::new(),
+                last_name: String::new(),
+                ha_token: String::new(),
+            };
+            save_credentials_with_secret(&creds, &path, &secret)?;
+            let loaded = load_credentials_with_secret(&path, &secret)?.ok_or("vault missing")?;
+            if loaded == creds {
+                Ok("AES-256-GCM envelope with DPAPI-protected key".into())
+            } else {
+                Err("decrypted credentials differ".into())
+            }
+        })(),
+    );
 
-    check("vault-key-guard", (|| {
-        let dir = std::env::temp_dir().join(format!("llu-dpapi-guard-{}", std::process::id()));
-        let _ = std::fs::remove_dir_all(&dir);
-        std::fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
-        let dir = std::mem::DropGuard::new(dir, |d| {
-            let _ = std::fs::remove_dir_all(d);
-        });
-        let key_path = dir.join("master.dpapi");
-        let creds_path = dir.join("credentials.enc.json");
-        let meds_path = dir.join("medications.enc.json");
-        let hist_path = dir.join("glucose_history.enc.json");
+    check(
+        "vault-key-guard",
+        (|| {
+            let dir = std::env::temp_dir().join(format!("llu-dpapi-guard-{}", std::process::id()));
+            let _ = std::fs::remove_dir_all(&dir);
+            std::fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
+            let dir = std::mem::DropGuard::new(dir, |d| {
+                let _ = std::fs::remove_dir_all(d);
+            });
+            let key_path = dir.join("master.dpapi");
+            let creds_path = dir.join("credentials.enc.json");
+            let meds_path = dir.join("medications.enc.json");
+            let hist_path = dir.join("glucose_history.enc.json");
 
-        // 1. Signed-out state (no credentials.enc.json) with existing glucose history -> must refuse rotation.
-        std::fs::write(&hist_path, b"{}").map_err(|e| e.to_string())?;
-        let res_hist = platform::load_or_create_master_secret_at(
-            &key_path,
-            &[&creds_path, &meds_path, &hist_path],
-        );
-        if !matches!(res_hist, Err(ref e) if e.contains("Refusing to create a new key")) || key_path.exists() {
-            return Err("expected I-5 refusal when glucose_history.enc.json exists without master.dpapi".into());
-        }
+            // 1. Signed-out state (no credentials.enc.json) with existing glucose history -> must refuse rotation.
+            std::fs::write(&hist_path, b"{}").map_err(|e| e.to_string())?;
+            let res_hist = platform::load_or_create_master_secret_at(
+                &key_path,
+                &[&creds_path, &meds_path, &hist_path],
+            );
+            if !matches!(res_hist, Err(ref e) if e.contains("Refusing to create a new key"))
+                || key_path.exists()
+            {
+                return Err("expected I-5 refusal when glucose_history.enc.json exists without master.dpapi".into());
+            }
 
-        // 2. Signed-out state with existing medications vault -> must refuse rotation.
-        let _ = std::fs::remove_file(&hist_path);
-        std::fs::write(&meds_path, b"{}").map_err(|e| e.to_string())?;
-        let res_meds = platform::load_or_create_master_secret_at(
-            &key_path,
-            &[&creds_path, &meds_path, &hist_path],
-        );
-        if !matches!(res_meds, Err(ref e) if e.contains("Refusing to create a new key")) || key_path.exists() {
-            return Err("expected I-5 refusal when medications.enc.json exists without master.dpapi".into());
-        }
+            // 2. Signed-out state with existing medications vault -> must refuse rotation.
+            let _ = std::fs::remove_file(&hist_path);
+            std::fs::write(&meds_path, b"{}").map_err(|e| e.to_string())?;
+            let res_meds = platform::load_or_create_master_secret_at(
+                &key_path,
+                &[&creds_path, &meds_path, &hist_path],
+            );
+            if !matches!(res_meds, Err(ref e) if e.contains("Refusing to create a new key"))
+                || key_path.exists()
+            {
+                return Err(
+                    "expected I-5 refusal when medications.enc.json exists without master.dpapi"
+                        .into(),
+                );
+            }
 
-        // 3. Clean directory -> creates master.dpapi and unprotects to identical key on second call.
-        let _ = std::fs::remove_file(&meds_path);
-        let first = platform::load_or_create_master_secret_at(
-            &key_path,
-            &[&creds_path, &meds_path, &hist_path],
-        )?;
-        let second = platform::load_or_create_master_secret_at(
-            &key_path,
-            &[&creds_path, &meds_path, &hist_path],
-        )?;
-        if !first.is_empty() && *first == *second {
-            Ok("I-5 refuses key rotation across credentials/medications/history vaults".into())
-        } else {
-            Err("DPAPI master key mismatch after round-trip".into())
-        }
-    })());
+            // 3. Clean directory -> creates master.dpapi and unprotects to identical key on second call.
+            let _ = std::fs::remove_file(&meds_path);
+            let first = platform::load_or_create_master_secret_at(
+                &key_path,
+                &[&creds_path, &meds_path, &hist_path],
+            )?;
+            let second = platform::load_or_create_master_secret_at(
+                &key_path,
+                &[&creds_path, &meds_path, &hist_path],
+            )?;
+            if !first.is_empty() && *first == *second {
+                Ok("I-5 refuses key rotation across credentials/medications/history vaults".into())
+            } else {
+                Err("DPAPI master key mismatch after round-trip".into())
+            }
+        })(),
+    );
 
-    check("registry", Ok(format!("autostart registered = {}", platform::is_autostart_registered())));
+    check(
+        "registry",
+        Ok(format!(
+            "autostart registered = {}",
+            platform::is_autostart_registered()
+        )),
+    );
 
     check("tray-badge", {
-        let font = ab_glyph::FontArc::try_from_slice(epaint_default_fonts::UBUNTU_LIGHT).map_err(|e| e.to_string());
-        font.and_then(|f| tray::render_badge(&f, "148", [34, 197, 94]).map(|_| "32x32 icon rendered".to_string()).ok_or_else(|| "render failed".to_string()))
+        let font = ab_glyph::FontArc::try_from_slice(epaint_default_fonts::UBUNTU_LIGHT)
+            .map_err(|e| e.to_string());
+        font.and_then(|f| {
+            tray::render_badge(&f, "148", [34, 197, 94])
+                .map(|_| "32x32 icon rendered".to_string())
+                .ok_or_else(|| "render failed".to_string())
+        })
     });
 
     check("alert-sound", {
         let samples = librelinkup_core::alert_sound::generate_alert_samples();
-        if samples.len() > 44_100 { Ok(format!("{} samples", samples.len())) } else { Err("too short".into()) }
+        if samples.len() > 44_100 {
+            Ok(format!("{} samples", samples.len()))
+        } else {
+            Err("too short".into())
+        }
     });
 
     check("updater", {
         let sample = r#"{"tag_name":"v9.9.9","html_url":"https://github.com/russellmilliner/librelinkup-rust-desktop/releases/tag/v9.9.9"}"#;
         librelinkup_core::updater::parse_github_release_json(sample, env!("CARGO_PKG_VERSION"))
-            .and_then(|res| if res.update_available { Ok(res.message) } else { Err("expected update_available=true".into()) })
+            .and_then(|res| {
+                if res.update_available {
+                    Ok(res.message)
+                } else {
+                    Err("expected update_available=true".into())
+                }
+            })
     });
 
     check("region-normalization", {
@@ -413,18 +491,31 @@ fn self_test() -> i32 {
         }
     });
 
-    check("network", (|| {
-        let rt = tokio::runtime::Builder::new_current_thread().enable_all().build().map_err(|e| e.to_string())?;
-        // Invalid credentials must yield LibreView's "invalid credentials" (proves DNS, TLS and
-        // the HTTP client/curl fallback work), never a transport error. Also test "FI" -> api-eu.
-        match rt.block_on(librelinkup_core::api::authenticate_async("FI", "llu-self-test@example.invalid", "not-a-real-password")) {
+    check(
+        "network",
+        (|| {
+            let rt = tokio::runtime::Builder::new_current_thread()
+                .enable_all()
+                .build()
+                .map_err(|e| e.to_string())?;
+            // Invalid credentials must yield LibreView's "invalid credentials" (proves DNS, TLS and
+            // the HTTP client/curl fallback work), never a transport error. Also test "FI" -> api-eu.
+            match rt.block_on(librelinkup_core::api::authenticate_async("FI", "llu-self-test@example.invalid", "not-a-real-password")) {
             Err(librelinkup_core::api::ApiError::InvalidCredentials) => Ok("LibreView EU reachable via FI->eu normalization (invalid test credentials rejected as expected)".into()),
             Err(librelinkup_core::api::ApiError::NetworkError(e)) => Err(format!("network error: {e}")),
             other => Ok(format!("LibreView responded: {other:?}")),
         }
-    })());
+        })(),
+    );
 
-    println!("{}", if failures == 0 { "ALL CHECKS PASSED".to_string() } else { format!("{failures} CHECK(S) FAILED") });
+    println!(
+        "{}",
+        if failures == 0 {
+            "ALL CHECKS PASSED".to_string()
+        } else {
+            format!("{failures} CHECK(S) FAILED")
+        }
+    );
     if failures == 0 { 0 } else { 1 }
 }
 
@@ -432,14 +523,20 @@ fn self_test() -> i32 {
 fn install_panic_hook() {
     let default_hook = std::panic::take_hook();
     std::panic::set_hook(Box::new(move |info| {
-        let location = info.location().map(|l| format!("{}:{}", l.file(), l.line())).unwrap_or_default();
+        let location = info
+            .location()
+            .map(|l| format!("{}:{}", l.file(), l.line()))
+            .unwrap_or_default();
         let payload = info
             .payload()
             .downcast_ref::<&str>()
             .map(|s| s.to_string())
             .or_else(|| info.payload().downcast_ref::<String>().cloned())
             .unwrap_or_else(|| "unknown panic".into());
-        let thread = std::thread::current().name().unwrap_or("unnamed").to_string();
+        let thread = std::thread::current()
+            .name()
+            .unwrap_or("unnamed")
+            .to_string();
         let line = format!(
             "{} panic in thread '{thread}' at {location}: {payload}\n{}\n",
             chrono::Local::now().format("%Y-%m-%d %H:%M:%S"),
@@ -455,7 +552,11 @@ fn install_panic_hook() {
             let backup = data_dir.join("crash.log.1");
             let _ = std::fs::rename(&path, &backup);
         }
-        if let Ok(mut f) = std::fs::OpenOptions::new().create(true).append(true).open(&path) {
+        if let Ok(mut f) = std::fs::OpenOptions::new()
+            .create(true)
+            .append(true)
+            .open(&path)
+        {
             use std::io::Write;
             let _ = f.write_all(line.as_bytes());
         }

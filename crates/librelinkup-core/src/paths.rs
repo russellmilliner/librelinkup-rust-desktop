@@ -30,7 +30,10 @@ fn current_uid_or_pid() -> u32 {
     }
     #[cfg(all(unix, not(target_os = "linux")))]
     {
-        if let Some(uid) = env::var("UID").ok().and_then(|s| s.trim().parse::<u32>().ok()) {
+        if let Some(uid) = env::var("UID")
+            .ok()
+            .and_then(|s| s.trim().parse::<u32>().ok())
+        {
             return uid;
         }
     }
@@ -138,10 +141,7 @@ pub fn write_file_atomic_0600(path: &Path, contents: &[u8]) -> Result<(), String
         .parent()
         .filter(|p| !p.as_os_str().is_empty())
         .unwrap_or_else(|| Path::new("."));
-    let file_name = path
-        .file_name()
-        .and_then(|n| n.to_str())
-        .unwrap_or("tmp");
+    let file_name = path.file_name().and_then(|n| n.to_str()).unwrap_or("tmp");
     let prefix = format!(".{file_name}.tmp-");
     let (tmp_path, mut tmp_file) = create_private_temp_file(parent, &prefix, "")?;
     if let Err(e) = tmp_file
@@ -205,7 +205,7 @@ pub fn decode_file_uri_or_path(raw: &str) -> PathBuf {
         if raw_bytes[i] == b'%'
             && i + 2 < raw_bytes.len()
             && let Ok(hex) = std::str::from_utf8(&raw_bytes[i + 1..i + 3])
-                && let Ok(val) = u8::from_str_radix(hex, 16)
+            && let Ok(val) = u8::from_str_radix(hex, 16)
         {
             bytes.push(val);
             i += 3;
@@ -225,9 +225,7 @@ pub fn decode_file_uri_or_path(raw: &str) -> PathBuf {
         let decoded = String::from_utf8_lossy(&bytes);
         #[cfg(windows)]
         {
-            let norm = if decoded.starts_with('/')
-                && decoded.as_bytes().get(2) == Some(&b':')
-            {
+            let norm = if decoded.starts_with('/') && decoded.as_bytes().get(2) == Some(&b':') {
                 &decoded[1..]
             } else {
                 decoded.as_ref()
@@ -276,30 +274,30 @@ pub fn config_dir() -> PathBuf {
     }
     #[cfg(not(windows))]
     {
-    // XDG_CONFIG_HOME is ~/.config on the host and ~/.var/app/<APP_ID>/config inside
-    // Flatpak, so the sandboxed build persists data without any host filesystem access.
-    let base = resolve_xdg_base(
-        env::var("XDG_CONFIG_HOME").ok().as_deref(),
-        &home_dir(),
-        ".config",
-    );
-    let dir = base.join(APP_DIR_NAME);
-    let _ = fs::create_dir_all(&dir);
-    restrict_dir_permissions(&dir);
+        // XDG_CONFIG_HOME is ~/.config on the host and ~/.var/app/<APP_ID>/config inside
+        // Flatpak, so the sandboxed build persists data without any host filesystem access.
+        let base = resolve_xdg_base(
+            env::var("XDG_CONFIG_HOME").ok().as_deref(),
+            &home_dir(),
+            ".config",
+        );
+        let dir = base.join(APP_DIR_NAME);
+        let _ = fs::create_dir_all(&dir);
+        restrict_dir_permissions(&dir);
 
-    static MIGRATE_ONCE: Once = Once::new();
-    MIGRATE_ONCE.call_once(|| {
-        let migrated = migrate_legacy_files(&legacy_config_dir(), &dir, LEGACY_CONFIG_FILES);
-        if !migrated.is_empty() {
-            eprintln!(
-                "librelinkup-kde: migrated {} from {} to {}",
-                migrated.join(", "),
-                legacy_config_dir().display(),
-                dir.display()
-            );
-        }
-    });
-    dir
+        static MIGRATE_ONCE: Once = Once::new();
+        MIGRATE_ONCE.call_once(|| {
+            let migrated = migrate_legacy_files(&legacy_config_dir(), &dir, LEGACY_CONFIG_FILES);
+            if !migrated.is_empty() {
+                eprintln!(
+                    "librelinkup-kde: migrated {} from {} to {}",
+                    migrated.join(", "),
+                    legacy_config_dir().display(),
+                    dir.display()
+                );
+            }
+        });
+        dir
     }
 }
 
@@ -507,7 +505,10 @@ mod tests {
         let expected = PathBuf::from("/home/u/.config");
         assert_eq!(resolve_xdg_base(None, home, ".config"), expected);
         assert_eq!(resolve_xdg_base(Some("  "), home, ".config"), expected);
-        assert_eq!(resolve_xdg_base(Some("relative/dir"), home, ".config"), expected);
+        assert_eq!(
+            resolve_xdg_base(Some("relative/dir"), home, ".config"),
+            expected
+        );
     }
 
     #[test]
@@ -524,9 +525,18 @@ mod tests {
         let migrated =
             migrate_legacy_files(&legacy, &dest, &["settings.json", "master.key", "missing"]);
         assert_eq!(migrated, vec!["master.key".to_string()]);
-        assert_eq!(fs::read_to_string(dest.join("master.key")).unwrap(), "legacy-key");
-        assert_eq!(fs::read_to_string(dest.join("settings.json")).unwrap(), "new-settings");
-        assert!(legacy.join("master.key").exists(), "source must never be removed");
+        assert_eq!(
+            fs::read_to_string(dest.join("master.key")).unwrap(),
+            "legacy-key"
+        );
+        assert_eq!(
+            fs::read_to_string(dest.join("settings.json")).unwrap(),
+            "new-settings"
+        );
+        assert!(
+            legacy.join("master.key").exists(),
+            "source must never be removed"
+        );
 
         // Same directory is a no-op.
         assert!(migrate_legacy_files(&dest, &dest, &["master.key"]).is_empty());

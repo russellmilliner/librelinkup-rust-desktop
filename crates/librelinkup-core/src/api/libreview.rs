@@ -2,14 +2,14 @@ use serde::Serialize;
 use serde_json::Value;
 use zeroize::Zeroizing;
 
-use super::{
-    is_valid_patient_id, normalize_country_code, resolve_base_url, send_json_request,
-    shared_libreview_client, try_normalize_region_code, ApiError, AuthSuccess,
-};
 use super::http::send_json_request_raw;
+use super::{
+    ApiError, AuthSuccess, is_valid_patient_id, normalize_country_code, resolve_base_url,
+    send_json_request, shared_libreview_client, try_normalize_region_code,
+};
 use crate::models::{
-    parse_libreview_timestamp, GlucoseSnapshot, GraphPoint, DEFAULT_TARGET_HIGH_MG_DL,
-    DEFAULT_TARGET_LOW_MG_DL,
+    DEFAULT_TARGET_HIGH_MG_DL, DEFAULT_TARGET_LOW_MG_DL, GlucoseSnapshot, GraphPoint,
+    parse_libreview_timestamp,
 };
 
 pub fn parse_login_response(
@@ -35,9 +35,9 @@ pub fn parse_login_response(
         ));
     }
 
-    let data = body
-        .get("data")
-        .ok_or_else(|| ApiError::ParseError("Missing 'data' field in login response".to_string()))?;
+    let data = body.get("data").ok_or_else(|| {
+        ApiError::ParseError("Missing 'data' field in login response".to_string())
+    })?;
 
     let redirect = data
         .get("redirect")
@@ -124,12 +124,9 @@ pub fn parse_login_response(
 pub fn parse_connections_response(
     body: &Value,
 ) -> Result<(String, String, String, f64, f64), ApiError> {
-    let data = body
-        .get("data")
-        .and_then(|v| v.as_array())
-        .ok_or_else(|| {
-            ApiError::ParseError("Missing 'data' array in /connections response".to_string())
-        })?;
+    let data = body.get("data").and_then(|v| v.as_array()).ok_or_else(|| {
+        ApiError::ParseError("Missing 'data' array in /connections response".to_string())
+    })?;
 
     let first = data.first().ok_or(ApiError::NoConnectionsFound)?;
     let patient_id = first
@@ -176,9 +173,9 @@ pub fn parse_graph_response(
     fallback_first_name: &str,
     fallback_last_name: &str,
 ) -> Result<GlucoseSnapshot, ApiError> {
-    let data = body
-        .get("data")
-        .ok_or_else(|| ApiError::ParseError("Missing 'data' object in /graph response".to_string()))?;
+    let data = body.get("data").ok_or_else(|| {
+        ApiError::ParseError("Missing 'data' object in /graph response".to_string())
+    })?;
     let conn = data.get("connection").ok_or_else(|| {
         ApiError::ParseError("Missing 'data.connection' in /graph response".to_string())
     })?;
@@ -410,7 +407,10 @@ pub async fn fetch_cgm_snapshot_with_patient_hint_async(
     let base = resolve_base_url(country);
     let client = shared_libreview_client(base.starts_with("http://"))?;
 
-    if let Some(hint) = patient_id_hint.map(str::trim).filter(|h| is_safe_patient_id_hint(h)) {
+    if let Some(hint) = patient_id_hint
+        .map(str::trim)
+        .filter(|h| is_safe_patient_id_hint(h))
+    {
         let graph_url = format!("{base}/connections/{hint}/graph");
         match send_json_request(
             client,
@@ -460,4 +460,3 @@ pub async fn fetch_cgm_snapshot_with_patient_hint_async(
 
     parse_graph_response(&graph_body, &patient_id, &first_name, &last_name)
 }
-

@@ -4,8 +4,8 @@ use eframe::egui::{self, RichText};
 use zeroize::Zeroizing;
 
 use super::{
-    clear_text_edit_undoer, region_combo, LibreLinkUpApp, LOGIN_HA_TOK_EDIT_SALT,
-    LOGIN_PW_EDIT_SALT,
+    LOGIN_HA_TOK_EDIT_SALT, LOGIN_PW_EDIT_SALT, LibreLinkUpApp, clear_text_edit_undoer,
+    region_combo,
 };
 use crate::service::{Command, Shared};
 

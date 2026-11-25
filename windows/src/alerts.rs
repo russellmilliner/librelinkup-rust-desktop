@@ -6,10 +6,10 @@ use std::num::NonZero;
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 
-use librelinkup_core::alert_sound::{generate_alert_samples, SAMPLE_RATE};
+use librelinkup_core::alert_sound::{SAMPLE_RATE, generate_alert_samples};
 use librelinkup_core::event_log::{log_info, log_warn};
 use librelinkup_core::models::{
-    parse_notification_snooze_action, ALERT_NOTIFICATION_SNOOZE_ACTIONS,
+    ALERT_NOTIFICATION_SNOOZE_ACTIONS, parse_notification_snooze_action,
 };
 
 #[cfg(target_os = "windows")]
@@ -49,9 +49,10 @@ pub fn play_alert_sound(custom_sound: Option<PathBuf>) {
                 log_warn("ALERT", format!("Alert sound failed: {e}"));
                 // A broken custom file must never silence the alarm: retry with the built-in one.
                 if custom_sound.is_some()
-                    && let Err(e) = play_blocking(None) {
-                        log_warn("ALERT", format!("Built-in alarm failed: {e}"));
-                    }
+                    && let Err(e) = play_blocking(None)
+                {
+                    log_warn("ALERT", format!("Built-in alarm failed: {e}"));
+                }
             }
         })
         .is_err()

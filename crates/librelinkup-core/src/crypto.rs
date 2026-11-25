@@ -22,11 +22,11 @@ use std::path::Path;
 use std::sync::Mutex;
 use std::sync::OnceLock;
 
-use ring::aead::{Aad, LessSafeKey, Nonce, UnboundKey, AES_256_GCM};
+use ring::aead::{AES_256_GCM, Aad, LessSafeKey, Nonce, UnboundKey};
 use ring::hkdf;
 use ring::pbkdf2;
 use ring::rand::{SecureRandom, SystemRandom};
-use serde::{de::DeserializeOwned, Deserialize, Serialize};
+use serde::{Deserialize, Serialize, de::DeserializeOwned};
 use zeroize::{Zeroize, Zeroizing};
 
 use crate::paths::{
@@ -376,7 +376,10 @@ pub fn decrypt_bytes_with_secret(
         && envelope.version != ENVELOPE_VERSION_V2
         && envelope.version != ENVELOPE_VERSION_V1
     {
-        return Err(format!("Unsupported envelope version: {}", envelope.version));
+        return Err(format!(
+            "Unsupported envelope version: {}",
+            envelope.version
+        ));
     }
     if envelope.version == ENVELOPE_VERSION_V1 && label != AAD_LABEL_CREDENTIALS {
         return Err("Legacy v1 envelopes are only accepted for credentials".to_string());
@@ -484,8 +487,7 @@ pub fn decrypt_credentials_with_secret(
     envelope: &EncryptedEnvelope,
     master_secret: &[u8],
 ) -> Result<StoredCredentials, String> {
-    let mut plaintext =
-        decrypt_bytes_with_secret(envelope, master_secret, AAD_LABEL_CREDENTIALS)?;
+    let mut plaintext = decrypt_bytes_with_secret(envelope, master_secret, AAD_LABEL_CREDENTIALS)?;
     let res = serde_json::from_slice::<StoredCredentials>(&plaintext)
         .map_err(|e| format!("Failed to parse decrypted credentials JSON: {e}"));
     plaintext.zeroize();
@@ -561,7 +563,13 @@ fn try_keyring_lookup() -> Option<Zeroizing<String>> {
         ),
         (
             "kwallet-query",
-            &["-r", "vault-master-secret", "-f", "LibreLinkUp", "kdewallet"],
+            &[
+                "-r",
+                "vault-master-secret",
+                "-f",
+                "LibreLinkUp",
+                "kdewallet",
+            ],
         ),
         (
             "flatpak-spawn",
@@ -625,11 +633,12 @@ fn try_keyring_store(hex_secret: &str) -> bool {
             return false;
         };
         if let Some(mut stdin) = child.stdin.take()
-            && stdin.write_all(hex_secret.as_bytes()).is_err() {
-                let _ = child.kill();
-                let _ = child.wait();
-                return false;
-            }
+            && stdin.write_all(hex_secret.as_bytes()).is_err()
+        {
+            let _ = child.kill();
+            let _ = child.wait();
+            return false;
+        }
         child.wait().map(|s| s.success()).unwrap_or(false)
     };
 
@@ -664,7 +673,13 @@ fn try_keyring_store(hex_secret: &str) -> bool {
     }
 
     let mut kwallet = Command::new("kwallet-query");
-    kwallet.args(["-w", "vault-master-secret", "-f", "LibreLinkUp", "kdewallet"]);
+    kwallet.args([
+        "-w",
+        "vault-master-secret",
+        "-f",
+        "LibreLinkUp",
+        "kdewallet",
+    ]);
     try_pipe(kwallet)
 }
 
@@ -875,27 +890,24 @@ impl<T: Serialize> EncryptedVault<T> {
     ) -> Result<(), String> {
         let mut json = serde_json::to_vec(value)
             .map_err(|e| format!("Failed to serialize {} vault: {e}", self.label))?;
-        let res = encrypt_bytes_with_secret(&json, master_secret, self.label).and_then(|envelope| {
-            let serialized = if self.pretty {
-                serde_json::to_string_pretty(&envelope)
-            } else {
-                serde_json::to_string(&envelope)
-            }
-            .map_err(|e| format!("Failed to serialize {} envelope: {e}", self.label))?;
-            write_file_atomic_0600(path, serialized.as_bytes())
-                .map_err(|e| format!("Failed to write {} vault: {e}", self.label))
-        });
+        let res =
+            encrypt_bytes_with_secret(&json, master_secret, self.label).and_then(|envelope| {
+                let serialized = if self.pretty {
+                    serde_json::to_string_pretty(&envelope)
+                } else {
+                    serde_json::to_string(&envelope)
+                }
+                .map_err(|e| format!("Failed to serialize {} envelope: {e}", self.label))?;
+                write_file_atomic_0600(path, serialized.as_bytes())
+                    .map_err(|e| format!("Failed to write {} vault: {e}", self.label))
+            });
         json.zeroize();
         res
     }
 }
 
 impl<T: DeserializeOwned> EncryptedVault<T> {
-    pub fn load_with_secret(
-        &self,
-        path: &Path,
-        master_secret: &[u8],
-    ) -> Result<Option<T>, String> {
+    pub fn load_with_secret(&self, path: &Path, master_secret: &[u8]) -> Result<Option<T>, String> {
         if !path.exists() {
             return Ok(None);
         }
@@ -1156,7 +1168,12 @@ mod tests {
         let key = LessSafeKey::new(UnboundKey::new(&AES_256_GCM, &derived).unwrap());
         derived.zeroize();
         let mut ct = b"v2-plaintext".to_vec();
-        let aad = associated_data(ENVELOPE_VERSION_V2, AAD_LABEL_MEDICATIONS, iterations, &salt);
+        let aad = associated_data(
+            ENVELOPE_VERSION_V2,
+            AAD_LABEL_MEDICATIONS,
+            iterations,
+            &salt,
+        );
         key.seal_in_place_append_tag(
             Nonce::assume_unique_for_key(nonce),
             Aad::from(aad.as_slice()),
@@ -1304,7 +1321,8 @@ mod tests {
         fs::write(&good_entry, payload).unwrap();
         let _ = fs::set_permissions(&good_entry, fs::Permissions::from_mode(0o600));
 
-        let migrated = try_migrate_legacy_leveldb_credentials(&dir).expect("should migrate from 000002.log");
+        let migrated =
+            try_migrate_legacy_leveldb_credentials(&dir).expect("should migrate from 000002.log");
         assert_eq!(migrated.token, "legacy-tok-42");
         assert_eq!(migrated.account_id, "legacy-acc-42");
         assert_eq!(migrated.country, "de");
@@ -1352,7 +1370,8 @@ mod tests {
         }
 
         let secret = vec![0x7Au8; 32];
-        let env = encrypt_bytes_with_secret(b"hello-hkdf-v3", &secret, AAD_LABEL_MEDICATIONS).unwrap();
+        let env =
+            encrypt_bytes_with_secret(b"hello-hkdf-v3", &secret, AAD_LABEL_MEDICATIONS).unwrap();
         assert_eq!(env.version, 3);
         assert_eq!(env.kdf, KDF_HKDF_SHA256);
         assert_eq!(env.iterations, 0);

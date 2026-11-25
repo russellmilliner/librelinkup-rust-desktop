@@ -11,7 +11,7 @@ use crate::bridge::qobject_bridge::qobject;
 use crate::event_log::{log_error, log_info, log_warn};
 use crate::models::AppSettings;
 use crate::paths::{
-    autostart_desktop_path, quote_desktop_exec_arg, write_file_atomic_0600, APP_ID,
+    APP_ID, autostart_desktop_path, quote_desktop_exec_arg, write_file_atomic_0600,
 };
 
 /// Single long-lived multi-thread runtime for all LibreView network I/O, so nothing

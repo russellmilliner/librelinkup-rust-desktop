@@ -3,15 +3,15 @@ use std::sync::OnceLock;
 use std::time::Duration;
 
 use reqwest::header::{
-    HeaderMap, HeaderValue, ACCEPT, AUTHORIZATION, CACHE_CONTROL, CONTENT_TYPE, PRAGMA, USER_AGENT,
+    ACCEPT, AUTHORIZATION, CACHE_CONTROL, CONTENT_TYPE, HeaderMap, HeaderValue, PRAGMA, USER_AGENT,
 };
-use ring::digest::{digest, SHA256};
+use ring::digest::{SHA256, digest};
 use serde_json::Value;
 use zeroize::{Zeroize, Zeroizing};
 
 use super::{
-    insecure_test_endpoint_allowed, is_loopback_test_url, ApiError, LLU_PRODUCT, LLU_USER_AGENT,
-    LLU_VERSION,
+    ApiError, LLU_PRODUCT, LLU_USER_AGENT, LLU_VERSION, insecure_test_endpoint_allowed,
+    is_loopback_test_url,
 };
 use crate::crypto::bytes_to_hex;
 
@@ -94,8 +94,9 @@ fn build_common_headers(
 
     if let Some(tok) = token {
         let mut auth_val = format!("Bearer {}", tok.trim());
-        let mut hv = HeaderValue::from_str(&auth_val)
-            .map_err(|e| ApiError::ParseError(format!("Invalid authorization token header: {e}")))?;
+        let mut hv = HeaderValue::from_str(&auth_val).map_err(|e| {
+            ApiError::ParseError(format!("Invalid authorization token header: {e}"))
+        })?;
         auth_val.zeroize();
         hv.set_sensitive(true);
         headers.insert(AUTHORIZATION, hv);
@@ -163,12 +164,18 @@ fn build_curl_secret_config_raw(
     let mut cfg = String::new();
     if let Some(tok) = token {
         let mut header = format!("Authorization: Bearer {}", tok.trim());
-        cfg.push_str(&format!("header = \"{}\"\n", escape_curl_config_value(&header)));
+        cfg.push_str(&format!(
+            "header = \"{}\"\n",
+            escape_curl_config_value(&header)
+        ));
         header.zeroize();
     }
     if let Some(acc) = account_id {
         let header = format!("Account-Id: {}", sha256_account_id(acc));
-        cfg.push_str(&format!("header = \"{}\"\n", escape_curl_config_value(&header)));
+        cfg.push_str(&format!(
+            "header = \"{}\"\n",
+            escape_curl_config_value(&header)
+        ));
     }
     if let Some(body) = raw_json_body {
         let mut escaped = escape_curl_config_value(body);
@@ -385,11 +392,11 @@ pub(super) async fn send_json_request_raw(
 
             // Cloudflare WAF returned 403 Forbidden without a LibreView JSON body
             // (e.g. TLS JA3/JA4 block on rustls): retry once via system curl (OpenSSL + HTTP/2).
-            if status_u16 == 403 && crate::updater::system_curl_available()
+            if status_u16 == 403
+                && crate::updater::system_curl_available()
                 && let Ok((code, val)) =
-                    curl_fallback_json(method.as_str(), url, token, account_id, raw_json_body)
-                        .await
-                    && ((200..300).contains(&code) || val.get("status").is_some())
+                    curl_fallback_json(method.as_str(), url, token, account_id, raw_json_body).await
+                && ((200..300).contains(&code) || val.get("status").is_some())
             {
                 return Ok(val);
             }
@@ -399,11 +406,12 @@ pub(super) async fn send_json_request_raw(
         Err(e) => {
             // Timeouts and connection failures (offline, DNS) would fail identically via
             // curl and only add another 15 s of waiting, so skip the fallback for them.
-            if !e.is_timeout() && !e.is_connect() && crate::updater::system_curl_available()
+            if !e.is_timeout()
+                && !e.is_connect()
+                && crate::updater::system_curl_available()
                 && let Ok((code, val)) =
-                    curl_fallback_json(method.as_str(), url, token, account_id, raw_json_body)
-                        .await
-                    && ((200..300).contains(&code) || val.get("status").is_some())
+                    curl_fallback_json(method.as_str(), url, token, account_id, raw_json_body).await
+                && ((200..300).contains(&code) || val.get("status").is_some())
             {
                 return Ok(val);
             }
@@ -453,4 +461,3 @@ pub(super) async fn send_ha_json_request(
     serde_json::from_str::<Value>(&text)
         .map_err(|e| ApiError::ParseError(format!("Invalid Home Assistant JSON response: {e}")))
 }
-

@@ -9,9 +9,9 @@ use std::path::Path;
 use chrono::{Datelike, Local, NaiveTime, TimeZone};
 use serde::{Deserialize, Serialize};
 
-use crate::crypto::{phi_secret, AAD_LABEL_MEDICATIONS};
+use crate::crypto::{AAD_LABEL_MEDICATIONS, phi_secret};
 use crate::event_log::{log_error, log_info};
-use crate::models::{parse_libreview_timestamp, GlucoseSnapshot};
+use crate::models::{GlucoseSnapshot, parse_libreview_timestamp};
 use crate::paths::{legacy_medications_file_path, medications_file_path};
 
 /// Minimum seconds between repeated desktop reminder notifications for the same medication.
@@ -258,14 +258,16 @@ fn parse_single_time_slot(raw_part: &str) -> Option<NaiveTime> {
             None => (num_part, "0"),
         };
         if let (Ok(mut hour), Ok(min)) = (h_str.parse::<u32>(), m_str.parse::<u32>())
-            && (1..=12).contains(&hour) && min < 60 {
-                if is_pm && hour < 12 {
-                    hour += 12;
-                } else if !is_pm && hour == 12 {
-                    hour = 0;
-                }
-                return NaiveTime::from_hms_opt(hour, min, 0);
+            && (1..=12).contains(&hour)
+            && min < 60
+        {
+            if is_pm && hour < 12 {
+                hour += 12;
+            } else if !is_pm && hour == 12 {
+                hour = 0;
             }
+            return NaiveTime::from_hms_opt(hour, min, 0);
+        }
     }
     None
 }
@@ -278,14 +280,17 @@ pub fn parse_scheduled_slots(raw: &str, schedule: MedicationSchedule) -> Vec<Nai
         .collect();
 
     if slots.is_empty()
-        && let Some(t) = NaiveTime::from_hms_opt(8, 0, 0) {
-            slots.push(t);
-        }
-    if schedule == MedicationSchedule::TwiceDaily && slots.len() == 1
+        && let Some(t) = NaiveTime::from_hms_opt(8, 0, 0)
+    {
+        slots.push(t);
+    }
+    if schedule == MedicationSchedule::TwiceDaily
+        && slots.len() == 1
         && let Some(t2) = NaiveTime::from_hms_opt(20, 0, 0)
-            && slots[0] != t2 {
-                slots.push(t2);
-            }
+        && slots[0] != t2
+    {
+        slots.push(t2);
+    }
     slots.sort();
     slots.dedup();
     slots
@@ -354,7 +359,8 @@ impl MedicationStore {
             });
         }
         let prefix = format!("{assigned_id}@");
-        self.notified_slots.retain(|k, _| !k.starts_with(&prefix) && k != &assigned_id);
+        self.notified_slots
+            .retain(|k, _| !k.starts_with(&prefix) && k != &assigned_id);
         Ok(assigned_id)
     }
 
@@ -363,7 +369,8 @@ impl MedicationStore {
         let before = self.medications.len();
         self.medications.retain(|m| m.id != trimmed);
         let prefix = format!("{trimmed}@");
-        self.notified_slots.retain(|k, _| !k.starts_with(&prefix) && k != trimmed);
+        self.notified_slots
+            .retain(|k, _| !k.starts_with(&prefix) && k != trimmed);
         self.medications.len() != before
     }
 
@@ -385,11 +392,7 @@ impl MedicationStore {
             let dt = entry.taken_at_epoch.abs_diff(prev.taken_at_epoch);
             let from_reminder =
                 entry.notes.contains("desktop reminder") || prev.notes.contains("desktop reminder");
-            if from_reminder {
-                dt < 600
-            } else {
-                dt < 60
-            }
+            if from_reminder { dt < 600 } else { dt < 60 }
         };
 
         for entry in self.dose_logs.drain(..) {
@@ -454,15 +457,20 @@ impl MedicationStore {
             )
         };
 
-        let dup_window: u64 = if notes.contains("desktop reminder") { 600 } else { 60 };
+        let dup_window: u64 = if notes.contains("desktop reminder") {
+            600
+        } else {
+            60
+        };
         if med_id != "adhoc"
             && let Some(existing) = self.dose_logs.iter().find(|d| {
                 d.medication_id == med_id
                     && !d.skipped
                     && d.taken_at_epoch.abs_diff(taken_at_epoch) < dup_window
-            }) {
-                return Ok(existing.clone());
-            }
+            })
+        {
+            return Ok(existing.clone());
+        }
 
         let entry = MedicationDoseLog {
             id: format!("dose-{taken_at_epoch}-{}", self.dose_logs.len() + 1),
@@ -506,7 +514,11 @@ impl MedicationStore {
             .cloned()
             .ok_or_else(|| "Select a scheduled medication to skip.".to_string())?;
 
-        let dup_window: u64 = if notes.contains("desktop reminder") { 600 } else { 60 };
+        let dup_window: u64 = if notes.contains("desktop reminder") {
+            600
+        } else {
+            60
+        };
         if let Some(existing) = self.dose_logs.iter().find(|d| {
             d.medication_id == med.id
                 && d.skipped
@@ -552,11 +564,12 @@ impl MedicationStore {
 
     /// Evaluates the current status of a medication (`Taken`, `DueNow`, `Upcoming`, `AsNeeded`)
     /// and a concise human-readable status string at `now_epoch`.
-    pub fn medication_status(&self, med: &MedicationDef, now_epoch: i64) -> (DoseStatusKind, String) {
-        let last_dose = self
-            .dose_logs
-            .iter()
-            .find(|d| d.medication_id == med.id);
+    pub fn medication_status(
+        &self,
+        med: &MedicationDef,
+        now_epoch: i64,
+    ) -> (DoseStatusKind, String) {
+        let last_dose = self.dose_logs.iter().find(|d| d.medication_id == med.id);
 
         if med.schedule == MedicationSchedule::AsNeeded {
             let label = if let Some(d) = last_dose {
@@ -597,16 +610,17 @@ impl MedicationStore {
             }
             if today_wd == med.weekday % 7
                 && let Some(slot) = slots.first()
-                    && now_dt.time() >= *slot {
-                        return (
-                            DoseStatusKind::DueNow,
-                            format!(
-                                "⏰ Due today ({} {})",
-                                weekday_short_name(med.weekday),
-                                slot.format("%H:%M")
-                            ),
-                        );
-                    }
+                && now_dt.time() >= *slot
+            {
+                return (
+                    DoseStatusKind::DueNow,
+                    format!(
+                        "⏰ Due today ({} {})",
+                        weekday_short_name(med.weekday),
+                        slot.format("%H:%M")
+                    ),
+                );
+            }
             return (
                 DoseStatusKind::Upcoming,
                 format!(
@@ -631,18 +645,19 @@ impl MedicationStore {
             .collect();
 
         if doses_today.len() >= slots.len()
-            && let Some(latest) = doses_today.first() {
-                if latest.skipped {
-                    return (
-                        DoseStatusKind::Skipped,
-                        format!("⏭ Skipped ({})", latest.taken_at_display),
-                    );
-                }
+            && let Some(latest) = doses_today.first()
+        {
+            if latest.skipped {
                 return (
-                    DoseStatusKind::Taken,
-                    format!("✓ Taken ({})", latest.taken_at_display),
+                    DoseStatusKind::Skipped,
+                    format!("⏭ Skipped ({})", latest.taken_at_display),
                 );
             }
+            return (
+                DoseStatusKind::Taken,
+                format!("✓ Taken ({})", latest.taken_at_display),
+            );
+        }
 
         // Check if any slot today is due and not yet satisfied
         for (idx, slot) in slots.iter().enumerate() {
@@ -654,7 +669,10 @@ impl MedicationStore {
             }
         }
 
-        if let Some(next_slot) = slots.iter().find(|&&s| s > now_dt.time()).or_else(|| slots.first())
+        if let Some(next_slot) = slots
+            .iter()
+            .find(|&&s| s > now_dt.time())
+            .or_else(|| slots.first())
         {
             return (
                 DoseStatusKind::Upcoming,
@@ -662,7 +680,10 @@ impl MedicationStore {
             );
         }
 
-        (DoseStatusKind::Upcoming, format!("Scheduled {}", med.scheduled_time))
+        (
+            DoseStatusKind::Upcoming,
+            format!("Scheduled {}", med.scheduled_time),
+        )
     }
 
     /// If `med` is currently `DueNow` at `now_epoch`, returns the due scheduled `(NaiveTime, detail_label)`.
@@ -691,16 +712,17 @@ impl MedicationStore {
             }
             if today_wd == med.weekday % 7
                 && let Some(slot) = slots.first()
-                    && now_dt.time() >= *slot {
-                        return Some((
-                            *slot,
-                            format!(
-                                "⏰ Due today ({} {})",
-                                weekday_short_name(med.weekday),
-                                slot.format("%H:%M")
-                            ),
-                        ));
-                    }
+                && now_dt.time() >= *slot
+            {
+                return Some((
+                    *slot,
+                    format!(
+                        "⏰ Due today ({} {})",
+                        weekday_short_name(med.weekday),
+                        slot.format("%H:%M")
+                    ),
+                ));
+            }
             return None;
         }
 
@@ -1118,7 +1140,16 @@ impl MedicationStore {
                         .as_ref()
                         .map(|m| m.id.as_str())
                         .unwrap_or(trig_med);
-                    if self.log_dose(id_or_name, None, trig_epoch, None, "Logged via Home Assistant").is_ok() {
+                    if self
+                        .log_dose(
+                            id_or_name,
+                            None,
+                            trig_epoch,
+                            None,
+                            "Logged via Home Assistant",
+                        )
+                        .is_ok()
+                    {
                         changed = true;
                     }
                 }
@@ -1174,8 +1205,20 @@ pub fn build_demo_medication_store(now_epoch: i64) -> MedicationStore {
         true,
         "Weekly Friday morning dose",
     );
-    let _ = store.log_dose(&id1, Some("500 mg"), now_epoch - 7 * 3600, Some(124.0), "Morning dose");
-    let _ = store.log_dose(&id1, Some("500 mg"), now_epoch - 2 * 3600, Some(148.0), "Evening dose");
+    let _ = store.log_dose(
+        &id1,
+        Some("500 mg"),
+        now_epoch - 7 * 3600,
+        Some(124.0),
+        "Morning dose",
+    );
+    let _ = store.log_dose(
+        &id1,
+        Some("500 mg"),
+        now_epoch - 2 * 3600,
+        Some(148.0),
+        "Evening dose",
+    );
     store
 }
 
@@ -1326,7 +1369,11 @@ mod tests {
         assert!(reminders[0].title.contains("Metformin"));
 
         // Second evaluation within 60 minutes does not re-fire.
-        assert!(store.evaluate_due_reminders(now + 120, &mut notified).is_empty());
+        assert!(
+            store
+                .evaluate_due_reminders(now + 120, &mut notified)
+                .is_empty()
+        );
 
         // Logging the dose marks it Taken today and includes it in the 12h graph window.
         let dose = store
@@ -1397,8 +1444,18 @@ mod tests {
         ]);
         let states_arr = ha_states.as_array().unwrap();
         assert!(store.merge_from_ha_states(states_arr));
-        assert!(store.medications.iter().any(|m| m.name == "Lantus SoloStar"));
-        assert!(store.dose_logs.iter().any(|d| d.medication_name == "Lantus SoloStar"));
+        assert!(
+            store
+                .medications
+                .iter()
+                .any(|m| m.name == "Lantus SoloStar")
+        );
+        assert!(
+            store
+                .dose_logs
+                .iter()
+                .any(|d| d.medication_name == "Lantus SoloStar")
+        );
         // Merging identical states a second time is idempotent (returns false)
         assert!(!store.merge_from_ha_states(states_arr));
     }
@@ -1460,21 +1517,45 @@ mod tests {
         assert!(reminders[0].body.contains("Gliburide (1mg)"));
 
         // Even 2 or 4 hours later, the 07:30 slot does not fire duplicate reminders
-        assert!(store.evaluate_due_reminders(morning + 2 * 3600, &mut notified).is_empty());
-        assert!(store.evaluate_due_reminders(morning + 4 * 3600, &mut notified).is_empty());
+        assert!(
+            store
+                .evaluate_due_reminders(morning + 2 * 3600, &mut notified)
+                .is_empty()
+        );
+        assert!(
+            store
+                .evaluate_due_reminders(morning + 4 * 3600, &mut notified)
+                .is_empty()
+        );
 
         // Mark all 3 morning doses as taken
         for id in [&m1, &m2, &m3] {
             store
-                .log_dose(id, None, morning + 60, Some(105.0), "Logged from desktop reminder")
+                .log_dose(
+                    id,
+                    None,
+                    morning + 60,
+                    Some(105.0),
+                    "Logged from desktop reminder",
+                )
                 .unwrap();
         }
         // Accidental rapid second click from desktop reminder within 10 minutes is deduplicated
         store
-            .log_dose(&m1, None, morning + 65, Some(105.0), "Logged from desktop reminder")
+            .log_dose(
+                &m1,
+                None,
+                morning + 65,
+                Some(105.0),
+                "Logged from desktop reminder",
+            )
             .unwrap();
         assert_eq!(
-            store.dose_logs.iter().filter(|d| d.medication_id == m1).count(),
+            store
+                .dose_logs
+                .iter()
+                .filter(|d| d.medication_id == m1)
+                .count(),
             1
         );
 
@@ -1488,7 +1569,11 @@ mod tests {
         assert_eq!(evening_reminders.len(), 1);
         assert_eq!(evening_reminders[0].medication_id, m1);
         assert!(evening_reminders[0].title.contains("Metformin"));
-        assert!(store.evaluate_due_reminders(evening + 3600, &mut notified).is_empty());
+        assert!(
+            store
+                .evaluate_due_reminders(evening + 3600, &mut notified)
+                .is_empty()
+        );
     }
 
     #[test]
@@ -1549,6 +1634,9 @@ mod tests {
         assert_eq!(store.dose_logs.len(), 2);
         assert_eq!(store.dose_logs[0].medication_id, "m1");
         assert_eq!(store.dose_logs[1].medication_id, "m2");
-        assert!(!store.deduplicate_dose_logs(), "second call must be idempotent");
+        assert!(
+            !store.deduplicate_dose_logs(),
+            "second call must be idempotent"
+        );
     }
 }

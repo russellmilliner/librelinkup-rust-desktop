@@ -8,7 +8,7 @@ use std::pin::Pin;
 use cxx_qt_lib::QString;
 
 use crate::bridge::ops;
-use crate::bridge::qobject_bridge::{qobject, MedicationsControllerRust};
+use crate::bridge::qobject_bridge::{MedicationsControllerRust, qobject};
 use crate::bridge::state::{mark_state_dirty, now_epoch, with_state};
 use crate::event_log::{log_info, log_warn};
 use crate::medications::MedicationSchedule;
@@ -113,7 +113,9 @@ impl qobject::MedicationsController {
 
     pub fn remove_medication(mut self: Pin<&mut Self>, medication_id: QString) -> bool {
         let removed = with_state(|s| {
-            let ok = s.medication_store.remove_medication(&medication_id.to_string());
+            let ok = s
+                .medication_store
+                .remove_medication(&medication_id.to_string());
             if ok {
                 let _ = ops::save_medications_if_safe(s);
                 ops::refresh_medication_views(s);

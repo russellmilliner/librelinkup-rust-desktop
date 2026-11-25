@@ -2,12 +2,10 @@ use std::sync::Mutex;
 
 use serde_json::Value;
 
-use super::{
-    send_ha_json_request, shared_ha_client, ApiError,
-};
+use super::{ApiError, send_ha_json_request, shared_ha_client};
 use crate::models::{
-    parse_libreview_timestamp, GlucoseSnapshot, GraphPoint, DEFAULT_TARGET_HIGH_MG_DL,
-    DEFAULT_TARGET_LOW_MG_DL,
+    DEFAULT_TARGET_HIGH_MG_DL, DEFAULT_TARGET_LOW_MG_DL, GlucoseSnapshot, GraphPoint,
+    parse_libreview_timestamp,
 };
 
 // ---------------------------------------------------------------------------
@@ -91,15 +89,11 @@ pub fn is_private_or_local_ha_host(host_port: &str) -> bool {
                         || (octets[0] == 100 && (64..=127).contains(&octets[1]));
                 }
                 let seg = v6.segments();
-                v6.is_loopback()
-                    || v6.is_unicast_link_local()
-                    || (seg[0] & 0xfe00) == 0xfc00
+                v6.is_loopback() || v6.is_unicast_link_local() || (seg[0] & 0xfe00) == 0xfc00
             }
         };
     }
-    if host.bytes().all(|b| b.is_ascii_digit())
-        || host.starts_with("0x")
-        || host.starts_with("0o")
+    if host.bytes().all(|b| b.is_ascii_digit()) || host.starts_with("0x") || host.starts_with("0o")
     {
         return false;
     }
@@ -224,13 +218,14 @@ fn format_rfc3339_as_local_libreview(iso_raw: &str) -> Option<(i64, String)> {
         return Some((epoch, local_str));
     }
     if let Some(epoch) = parse_libreview_timestamp(trimmed, true)
-        && let Some(dt) = chrono::DateTime::from_timestamp(epoch, 0) {
-            let local_str = dt
-                .with_timezone(&chrono::Local)
-                .format("%m/%d/%Y %I:%M:%S %p")
-                .to_string();
-            return Some((epoch, local_str));
-        }
+        && let Some(dt) = chrono::DateTime::from_timestamp(epoch, 0)
+    {
+        let local_str = dt
+            .with_timezone(&chrono::Local)
+            .format("%m/%d/%Y %I:%M:%S %p")
+            .to_string();
+        return Some((epoch, local_str));
+    }
     None
 }
 
@@ -248,10 +243,7 @@ pub struct HaPatientOption {
 }
 
 fn is_ha_primary_glucose_sensor(item: &Value) -> bool {
-    let id = item
-        .get("entity_id")
-        .and_then(|v| v.as_str())
-        .unwrap_or("");
+    let id = item.get("entity_id").and_then(|v| v.as_str()).unwrap_or("");
     if !id.starts_with("sensor.")
         || id.contains("_delta_")
         || id.ends_with("_rate_of_change")
@@ -269,15 +261,17 @@ fn is_ha_primary_glucose_sensor(item: &Value) -> bool {
         .and_then(|v| v.as_str())
         .unwrap_or("");
     dev_class.eq_ignore_ascii_case("blood_glucose_concentration")
-        || (id.ends_with("_measurement")
-            && attribution.to_ascii_lowercase().contains("libreview"))
+        || (id.ends_with("_measurement") && attribution.to_ascii_lowercase().contains("libreview"))
 }
 
 /// Discovers all patient glucose measurement sensors present in a Home Assistant `/api/states` array.
 pub fn discover_ha_patients(states_arr: &[Value]) -> Vec<HaPatientOption> {
     let mut options: Vec<(bool, HaPatientOption)> = Vec::new();
 
-    for item in states_arr.iter().filter(|i| is_ha_primary_glucose_sensor(i)) {
+    for item in states_arr
+        .iter()
+        .filter(|i| is_ha_primary_glucose_sensor(i))
+    {
         let Some(entity_id) = item.get("entity_id").and_then(|v| v.as_str()) else {
             continue;
         };
@@ -312,15 +306,15 @@ pub fn discover_ha_patients(states_arr: &[Value]) -> Vec<HaPatientOption> {
             && let Some(friendly) = attrs
                 .and_then(|a| a.get("friendly_name"))
                 .and_then(|v| v.as_str())
-            {
-                let cleaned = friendly
-                    .trim()
-                    .strip_suffix(" Measurement")
-                    .or_else(|| friendly.trim().strip_suffix(" Glucose"))
-                    .or_else(|| friendly.trim().strip_suffix(" Blood Glucose"))
-                    .unwrap_or(friendly.trim());
-                patient_name = cleaned.trim().to_string();
-            }
+        {
+            let cleaned = friendly
+                .trim()
+                .strip_suffix(" Measurement")
+                .or_else(|| friendly.trim().strip_suffix(" Glucose"))
+                .or_else(|| friendly.trim().strip_suffix(" Blood Glucose"))
+                .unwrap_or(friendly.trim());
+            patient_name = cleaned.trim().to_string();
+        }
         if patient_name.is_empty() {
             patient_name = prefix.replace('_', " ");
         }
@@ -396,10 +390,7 @@ pub fn find_ha_glucose_entity<'a>(
 
     // 1. Prefer `sensor.*_measurement` with a live numeric reading.
     if let Some(found) = states_arr.iter().find(|item| {
-        let id = item
-            .get("entity_id")
-            .and_then(|v| v.as_str())
-            .unwrap_or("");
+        let id = item.get("entity_id").and_then(|v| v.as_str()).unwrap_or("");
         id.ends_with("_measurement") && is_glucose_sensor(item) && has_numeric_state(item)
     }) {
         return Ok(found);
@@ -439,7 +430,6 @@ fn parse_ha_states_slice_and_history(
     history_body: Option<&Value>,
     entity_id_hint: &str,
 ) -> Result<GlucoseSnapshot, ApiError> {
-
     let primary = find_ha_glucose_entity(states_arr, entity_id_hint)?;
     let entity_id = primary
         .get("entity_id")
@@ -463,13 +453,7 @@ fn parse_ha_states_slice_and_history(
         .and_then(|v| v.as_str())
         .unwrap_or("mg/dL");
     let is_mmol = unit_attr.to_ascii_lowercase().contains("mmol");
-    let to_mg_dl = |val: f64| -> f64 {
-        if is_mmol {
-            val * 18.0182
-        } else {
-            val
-        }
-    };
+    let to_mg_dl = |val: f64| -> f64 { if is_mmol { val * 18.0182 } else { val } };
     let value_mg_dl = to_mg_dl(raw_val);
     if !value_mg_dl.is_finite() || value_mg_dl <= 0.0 || value_mg_dl > 2000.0 {
         return Err(ApiError::ParseError(format!(
@@ -494,10 +478,10 @@ fn parse_ha_states_slice_and_history(
         e.get("entity_id")
             .and_then(|v| v.as_str())
             .is_some_and(|id| id == arrow_entity_id)
-    })
-        && let Some(st) = ent.get("state").and_then(|v| v.as_str()) {
-            trend_arrow = parse_ha_trend_str(st);
-        }
+    }) && let Some(st) = ent.get("state").and_then(|v| v.as_str())
+    {
+        trend_arrow = parse_ha_trend_str(st);
+    }
 
     // Check `sensor.<prefix>_trend` or `sensor.<prefix>_trend_2`
     if trend_arrow.is_none() {
@@ -509,35 +493,40 @@ fn parse_ha_states_slice_and_history(
         }) {
             if let Some(ent_attrs) = ent.get("attributes") {
                 if let Some(arr_str) = ent_attrs.get("trend_arrow").and_then(|v| v.as_str())
-                    && let Some(code) = parse_ha_trend_str(arr_str) {
-                        trend_arrow = Some(code);
-                        break;
-                    }
-                if let Some(cat_str) = ent_attrs.get("trend_category").and_then(|v| v.as_str())
-                    && let Some(code) = parse_ha_trend_str(cat_str) {
-                        trend_arrow = Some(code);
-                        break;
-                    }
-            }
-            if let Some(st) = ent.get("state").and_then(|v| v.as_str())
-                && let Some(code) = parse_ha_trend_str(st) {
+                    && let Some(code) = parse_ha_trend_str(arr_str)
+                {
                     trend_arrow = Some(code);
                     break;
                 }
+                if let Some(cat_str) = ent_attrs.get("trend_category").and_then(|v| v.as_str())
+                    && let Some(code) = parse_ha_trend_str(cat_str)
+                {
+                    trend_arrow = Some(code);
+                    break;
+                }
+            }
+            if let Some(st) = ent.get("state").and_then(|v| v.as_str())
+                && let Some(code) = parse_ha_trend_str(st)
+            {
+                trend_arrow = Some(code);
+                break;
+            }
         }
     }
 
     // Fallback to primary sensor's own attributes (`trend_arrow` or `icon`)
     if trend_arrow.is_none()
-        && let Some(a) = attrs {
-            if let Some(s) = a.get("trend_arrow").and_then(|v| v.as_str()) {
-                trend_arrow = parse_ha_trend_str(s);
-            }
-            if trend_arrow.is_none()
-                && let Some(icon) = a.get("icon").and_then(|v| v.as_str()) {
-                    trend_arrow = parse_ha_trend_str(icon);
-                }
+        && let Some(a) = attrs
+    {
+        if let Some(s) = a.get("trend_arrow").and_then(|v| v.as_str()) {
+            trend_arrow = parse_ha_trend_str(s);
         }
+        if trend_arrow.is_none()
+            && let Some(icon) = a.get("icon").and_then(|v| v.as_str())
+        {
+            trend_arrow = parse_ha_trend_str(icon);
+        }
+    }
     let trend_arrow = trend_arrow.unwrap_or(3);
 
     // 2. Timestamp & measured_at_epoch discovery
@@ -549,19 +538,20 @@ fn parse_ha_states_slice_and_history(
             .is_some_and(|id| id == ts_prefix || id.starts_with(&format!("{ts_prefix}_")))
     }) {
         if let Some(st) = ent.get("state").and_then(|v| v.as_str())
-            && let Some(parsed) = format_rfc3339_as_local_libreview(st) {
-                ts_pair = Some(parsed);
-                break;
-            }
+            && let Some(parsed) = format_rfc3339_as_local_libreview(st)
+        {
+            ts_pair = Some(parsed);
+            break;
+        }
     }
     if ts_pair.is_none()
         && let Some(lu) = primary
             .get("last_updated")
             .and_then(|v| v.as_str())
             .or_else(|| primary.get("last_changed").and_then(|v| v.as_str()))
-        {
-            ts_pair = format_rfc3339_as_local_libreview(lu);
-        }
+    {
+        ts_pair = format_rfc3339_as_local_libreview(lu);
+    }
     let (measured_at_epoch, timestamp) = match ts_pair {
         Some((ep, s)) => (Some(ep), s),
         None => (None, String::new()),
@@ -584,10 +574,7 @@ fn parse_ha_states_slice_and_history(
                     || id.starts_with(&format!("sensor.{prefix}_expiration_timestamp"))
             })
     }) {
-        let ent_id = ent
-            .get("entity_id")
-            .and_then(|v| v.as_str())
-            .unwrap_or("");
+        let ent_id = ent.get("entity_id").and_then(|v| v.as_str()).unwrap_or("");
         if let Some(st) = ent.get("state").and_then(|v| v.as_str()) {
             if ent_id.starts_with(&format!("sensor.{prefix}_application_timestamp"))
                 && sensor_activated_at_epoch.is_none()
@@ -601,53 +588,59 @@ fn parse_ha_states_slice_and_history(
         }
         if let Some(a) = ent.get("attributes") {
             if patient_id.is_empty()
-                && let Some(pid) = a.get("Patient ID").and_then(|v| v.as_str()) {
-                    patient_id = pid.trim().to_string();
-                }
+                && let Some(pid) = a.get("Patient ID").and_then(|v| v.as_str())
+            {
+                patient_id = pid.trim().to_string();
+            }
             if full_name.is_empty()
-                && let Some(pname) = a.get("Patient").and_then(|v| v.as_str()) {
-                    full_name = pname.trim().to_string();
-                }
+                && let Some(pname) = a.get("Patient").and_then(|v| v.as_str())
+            {
+                full_name = pname.trim().to_string();
+            }
             if sensor_serial.is_empty()
-                && let Some(sn) = a.get("Serial number").and_then(|v| v.as_str()) {
-                    sensor_serial = sn.trim().to_string();
-                }
+                && let Some(sn) = a.get("Serial number").and_then(|v| v.as_str())
+            {
+                sensor_serial = sn.trim().to_string();
+            }
             if sensor_activated_at_epoch.is_none()
-                && let Some(act_str) = a.get("Activation date").and_then(|v| v.as_str()) {
-                    sensor_activated_at_epoch = parse_libreview_timestamp(act_str, true);
-                }
+                && let Some(act_str) = a.get("Activation date").and_then(|v| v.as_str())
+            {
+                sensor_activated_at_epoch = parse_libreview_timestamp(act_str, true);
+            }
             if sensor_lifespan_days <= 0
-                && let Some(days) = a.get("Sensor lifespan days").and_then(|v| v.as_i64()) {
-                    sensor_lifespan_days = days.clamp(1, 60) as i32;
-                }
+                && let Some(days) = a.get("Sensor lifespan days").and_then(|v| v.as_i64())
+            {
+                sensor_lifespan_days = days.clamp(1, 60) as i32;
+            }
             if let Some(plus) = a.get("Sensor plus model").and_then(|v| v.as_bool()) {
                 sensor_plus_model = plus;
             }
         }
     }
     if sensor_expires_at_epoch.is_none()
-        && let Some(act) = sensor_activated_at_epoch {
-            let days = if sensor_lifespan_days > 0 {
-                i64::from(sensor_lifespan_days)
-            } else if sensor_plus_model {
-                15
-            } else {
-                14
-            };
-            sensor_expires_at_epoch = Some(act + days * 86_400);
-        }
+        && let Some(act) = sensor_activated_at_epoch
+    {
+        let days = if sensor_lifespan_days > 0 {
+            i64::from(sensor_lifespan_days)
+        } else if sensor_plus_model {
+            15
+        } else {
+            14
+        };
+        sensor_expires_at_epoch = Some(act + days * 86_400);
+    }
     if full_name.is_empty()
         && let Some(friendly) = attrs
             .and_then(|a| a.get("friendly_name"))
             .and_then(|v| v.as_str())
-        {
-            let cleaned = friendly
-                .trim()
-                .strip_suffix(" Measurement")
-                .or_else(|| friendly.trim().strip_suffix(" Glucose"))
-                .unwrap_or(friendly.trim());
-            full_name = cleaned.trim().to_string();
-        }
+    {
+        let cleaned = friendly
+            .trim()
+            .strip_suffix(" Measurement")
+            .or_else(|| friendly.trim().strip_suffix(" Glucose"))
+            .unwrap_or(friendly.trim());
+        full_name = cleaned.trim().to_string();
+    }
     let (first_name, last_name) = match full_name.split_once(' ') {
         Some((f, l)) => (f.trim().to_string(), l.trim().to_string()),
         None => (full_name, String::new()),
@@ -666,13 +659,15 @@ fn parse_ha_states_slice_and_history(
     }) {
         if let Some(a) = ent.get("attributes") {
             if let Some(low) = a.get("target_low_mgdl").and_then(|v| v.as_f64())
-                && low > 0.0 {
-                    target_low_mg_dl = low;
-                }
+                && low > 0.0
+            {
+                target_low_mg_dl = low;
+            }
             if let Some(high) = a.get("target_high_mgdl").and_then(|v| v.as_f64())
-                && high > 0.0 {
-                    target_high_mg_dl = high;
-                }
+                && high > 0.0
+            {
+                target_high_mg_dl = high;
+            }
         }
     }
 
@@ -714,9 +709,9 @@ fn parse_ha_states_slice_and_history(
     }
 
     if value_mg_dl > 0.0 && !timestamp.is_empty() {
-        let already_last = graph_points
-            .last()
-            .is_some_and(|last| last.timestamp == timestamp && (last.value_mg_dl - value_mg_dl).abs() < 0.5);
+        let already_last = graph_points.last().is_some_and(|last| {
+            last.timestamp == timestamp && (last.value_mg_dl - value_mg_dl).abs() < 0.5
+        });
         if !already_last {
             graph_points.push(GraphPoint {
                 timestamp: timestamp.clone(),
@@ -864,14 +859,8 @@ pub async fn fetch_ha_states_array_async(
     }
     let client = shared_ha_client()?;
     let states_url = format!("{base}/api/states");
-    let states_body = send_ha_json_request(
-        client,
-        reqwest::Method::GET,
-        &states_url,
-        token,
-        None,
-    )
-    .await?;
+    let states_body =
+        send_ha_json_request(client, reqwest::Method::GET, &states_url, token, None).await?;
     if let Value::Array(arr) = states_body {
         Ok(arr)
     } else {
@@ -922,13 +911,8 @@ pub async fn fetch_ha_sync_states_async(
     };
     let snooze_sensor_fut = async {
         if sync_snooze {
-            fetch_optional_ha_entity_state(
-                client,
-                &base,
-                token,
-                "sensor.librelinkup_alert_snooze",
-            )
-            .await
+            fetch_optional_ha_entity_state(client, &base, token, "sensor.librelinkup_alert_snooze")
+                .await
         } else {
             Ok(None)
         }
@@ -1071,14 +1055,8 @@ pub async fn fetch_ha_cgm_snapshot_and_states_async(
 
     let client = shared_ha_client()?;
     let states_url = format!("{base}/api/states");
-    let states_body = send_ha_json_request(
-        client,
-        reqwest::Method::GET,
-        &states_url,
-        token,
-        None,
-    )
-    .await?;
+    let states_body =
+        send_ha_json_request(client, reqwest::Method::GET, &states_url, token, None).await?;
 
     let Value::Array(states_arr) = states_body else {
         return Err(ApiError::ParseError(
@@ -1099,19 +1077,14 @@ pub async fn fetch_ha_cgm_snapshot_and_states_async(
         let hist_url = format!(
             "{base}/api/history/period/{start_iso}?filter_entity_id={safe_entity_id}&minimal_response&no_attributes"
         );
-        send_ha_json_request(
-            client,
-            reqwest::Method::GET,
-            &hist_url,
-            token,
-            None,
-        )
-        .await
-        .ok()
+        send_ha_json_request(client, reqwest::Method::GET, &hist_url, token, None)
+            .await
+            .ok()
     } else {
         None
     };
 
-    let snap = parse_ha_states_slice_and_history(&states_arr, history_body.as_ref(), entity_id_hint)?;
+    let snap =
+        parse_ha_states_slice_and_history(&states_arr, history_body.as_ref(), entity_id_hint)?;
     Ok((snap, states_arr))
 }

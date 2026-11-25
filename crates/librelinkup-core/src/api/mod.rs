@@ -202,7 +202,6 @@ pub fn is_valid_patient_id(patient_id: &str) -> bool {
             .all(|b| b.is_ascii_alphanumeric() || b == b'-' || b == b'_')
 }
 
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -211,7 +210,10 @@ mod tests {
     fn curl_config_escaping_handles_quotes_backslashes_and_controls() {
         assert_eq!(escape_curl_config_value(r#"a"b\c"#), r#"a\"b\\c"#);
         assert_eq!(escape_curl_config_value("x\ny\rz\t"), "x\\ny\\rz\\t");
-        assert_eq!(escape_curl_config_value("plain-token.123"), "plain-token.123");
+        assert_eq!(
+            escape_curl_config_value("plain-token.123"),
+            "plain-token.123"
+        );
     }
 
     #[test]
@@ -264,15 +266,25 @@ mod tests {
 
     #[test]
     fn normalize_iso_countries_to_libreview_regions() {
-        for eu_country in ["FI", "fi", "SE", "NO", "DK", "NL", "BE", "AT", "ES", "IT", "PL", "PT", "CH", "ZA"] {
-            assert_eq!(normalize_country_code(eu_country), "eu", "failed for {eu_country}");
+        for eu_country in [
+            "FI", "fi", "SE", "NO", "DK", "NL", "BE", "AT", "ES", "IT", "PL", "PT", "CH", "ZA",
+        ] {
+            assert_eq!(
+                normalize_country_code(eu_country),
+                "eu",
+                "failed for {eu_country}"
+            );
             assert_eq!(
                 resolve_base_url(eu_country),
                 "https://api-eu.libreview.io/llu"
             );
         }
         for eu2_country in ["GB", "uk", "IE"] {
-            assert_eq!(normalize_country_code(eu2_country), "eu2", "failed for {eu2_country}");
+            assert_eq!(
+                normalize_country_code(eu2_country),
+                "eu2",
+                "failed for {eu2_country}"
+            );
             assert_eq!(
                 resolve_base_url(eu2_country),
                 "https://api-eu2.libreview.io/llu"
@@ -334,14 +346,24 @@ mod tests {
         let url = "http://127.0.0.1:18080/llu";
         // Allowed only when the insecure policy switch is on (debug builds / test flag).
         assert!(loopback_url_allowed(url, true));
-        assert!(!loopback_url_allowed(url, false), "release builds must refuse plaintext loopback");
+        assert!(
+            !loopback_url_allowed(url, false),
+            "release builds must refuse plaintext loopback"
+        );
         assert!(!loopback_url_allowed("http://localhost:1234/llu?x=1", true));
-        assert!(!loopback_url_allowed("http://user:pw@127.0.0.1:1/llu", true));
+        assert!(!loopback_url_allowed(
+            "http://user:pw@127.0.0.1:1/llu",
+            true
+        ));
         assert!(!loopback_url_allowed("https://api.libreview.io/llu", true));
         // With the switch off, a stored loopback "region" normalizes back to the safe default.
         assert_eq!(
             normalize_country_code(url),
-            if insecure_test_endpoint_allowed() { url } else { "global" }
+            if insecure_test_endpoint_allowed() {
+                url
+            } else {
+                "global"
+            }
         );
     }
 
@@ -464,7 +486,8 @@ mod tests {
             }
         ]]);
 
-        let snap = parse_ha_states_and_history(&states, Some(&history), "").expect("parse HA states");
+        let snap =
+            parse_ha_states_and_history(&states, Some(&history), "").expect("parse HA states");
         assert_eq!(snap.value_mg_dl, 105.0);
         assert_eq!(snap.trend_arrow, 4); // ↗ Rising
         assert_eq!(snap.first_name, "Alex");
@@ -608,11 +631,7 @@ mod tests {
         }
 
         // Public IPv6 and obfuscated public IPv4 forms do not get trusted as local LAN
-        for non_local in [
-            "[2001:db8::1]:8123",
-            "134744072:80",
-            "0x08080808:80",
-        ] {
+        for non_local in ["[2001:db8::1]:8123", "134744072:80", "0x08080808:80"] {
             assert!(
                 !is_private_or_local_ha_host(non_local),
                 "expected '{non_local}' NOT to classify as local"

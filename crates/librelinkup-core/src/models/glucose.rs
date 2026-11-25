@@ -289,9 +289,13 @@ pub fn parse_libreview_timestamp(raw: &str, as_utc: bool) -> Option<i64> {
     if let Ok(dt) = DateTime::parse_from_rfc3339(trimmed) {
         return Some(dt.timestamp());
     }
-    let naive = ["%m/%d/%Y %I:%M:%S %p", "%m/%d/%Y %H:%M:%S", "%Y-%m-%dT%H:%M:%S"]
-        .iter()
-        .find_map(|fmt| NaiveDateTime::parse_from_str(trimmed, fmt).ok())?;
+    let naive = [
+        "%m/%d/%Y %I:%M:%S %p",
+        "%m/%d/%Y %H:%M:%S",
+        "%Y-%m-%dT%H:%M:%S",
+    ]
+    .iter()
+    .find_map(|fmt| NaiveDateTime::parse_from_str(trimmed, fmt).ok())?;
     if as_utc {
         Some(chrono::Utc.from_utc_datetime(&naive).timestamp())
     } else {
@@ -315,4 +319,3 @@ pub fn format_reading_age(age_minutes: Option<i64>) -> String {
         Some(m) => format!("{}h {:02}m ago", m / 60, m % 60),
     }
 }
-

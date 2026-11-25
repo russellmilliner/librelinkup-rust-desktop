@@ -6,7 +6,7 @@ use std::process::Command;
 use std::sync::OnceLock;
 use std::time::Duration;
 
-use reqwest::header::{HeaderMap, HeaderValue, ACCEPT, USER_AGENT};
+use reqwest::header::{ACCEPT, HeaderMap, HeaderValue, USER_AGENT};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
@@ -128,9 +128,11 @@ pub fn parse_sha256_checksum(
                 .next()
                 .unwrap_or("");
             if let Some(expected) = expected_file_name
-                && !clean_file.is_empty() && clean_file != expected {
-                    continue;
-                }
+                && !clean_file.is_empty()
+                && clean_file != expected
+            {
+                continue;
+            }
         }
         return Ok(hash.to_ascii_lowercase());
     }
@@ -268,8 +270,8 @@ pub fn parse_github_release_json(
     raw_json: &str,
     current_version: &str,
 ) -> Result<UpdateCheckResult, String> {
-    let val: Value = serde_json::from_str(raw_json)
-        .map_err(|e| format!("Invalid GitHub release JSON: {e}"))?;
+    let val: Value =
+        serde_json::from_str(raw_json).map_err(|e| format!("Invalid GitHub release JSON: {e}"))?;
 
     let tag_name = val
         .get("tag_name")
@@ -570,10 +572,11 @@ fn curl_get_github_release(
 async fn fetch_release_text(client: &reqwest::Client, url: &str) -> Option<String> {
     if let Ok(resp) = client.get(url).send().await
         && resp.status().is_success()
-            && let Ok(text) = read_response_text_bounded(resp, SMALL_TEXT_MAX_BYTES).await
-                && !text.trim().is_empty() {
-                    return Some(text);
-                }
+        && let Ok(text) = read_response_text_bounded(resp, SMALL_TEXT_MAX_BYTES).await
+        && !text.trim().is_empty()
+    {
+        return Some(text);
+    }
     #[cfg(unix)]
     if system_curl_available() {
         let owned = url.to_string();
@@ -581,9 +584,10 @@ async fn fetch_release_text(client: &reqwest::Client, url: &str) -> Option<Strin
             curl_get_github_release(&owned, env!("CARGO_PKG_VERSION"), SMALL_TEXT_MAX_BYTES)
         })
         .await
-            && !raw.trim().is_empty() {
-                return Some(raw);
-            }
+            && !raw.trim().is_empty()
+        {
+            return Some(raw);
+        }
     }
     None
 }
@@ -648,11 +652,7 @@ pub async fn check_for_updates_async(current_version: &str) -> Result<UpdateChec
             if system_curl_available() {
                 let cur = current_version.to_string();
                 if let Ok(Ok(raw)) = tokio::task::spawn_blocking(move || {
-                    curl_get_github_release(
-                        GITHUB_RELEASES_LATEST_URL,
-                        &cur,
-                        GITHUB_JSON_MAX_BYTES,
-                    )
+                    curl_get_github_release(GITHUB_RELEASES_LATEST_URL, &cur, GITHUB_JSON_MAX_BYTES)
                 })
                 .await
                 {
@@ -738,9 +738,8 @@ pub async fn download_and_install_update_async(
 
     // Strictly parse and reconstruct clean_ver from numeric (major, minor, patch) components
     // so version strings can never inject path traversal or shell characters.
-    let (major, minor, patch) = parse_semver(latest_version).ok_or_else(|| {
-        format!("Refusing update with invalid version tag: '{latest_version}'")
-    })?;
+    let (major, minor, patch) = parse_semver(latest_version)
+        .ok_or_else(|| format!("Refusing update with invalid version tag: '{latest_version}'"))?;
     let clean_ver = format!("{major}.{minor}.{patch}");
     if !is_newer_version(env!("CARGO_PKG_VERSION"), &clean_ver) {
         return Err(format!(
@@ -797,16 +796,12 @@ pub async fn download_and_install_update_async(
                 .ok()
                 .is_some_and(|s| !s.trim().is_empty());
         if !has_user_base {
-            return Err(
-                "Refusing update: update staging fell back to temporary directory.".into(),
-            );
+            return Err("Refusing update: update staging fell back to temporary directory.".into());
         }
         let meta = std::fs::symlink_metadata(&dest_dir)
             .map_err(|e| format!("Failed inspecting update staging directory: {e}"))?;
         if meta.file_type().is_symlink() || !meta.is_dir() || (meta.mode() & 0o077) != 0 {
-            return Err(
-                "Refusing update: unsafe permissions on update staging directory.".into(),
-            );
+            return Err("Refusing update: unsafe permissions on update staging directory.".into());
         }
     }
     #[cfg(windows)]
@@ -821,9 +816,7 @@ pub async fn download_and_install_update_async(
                 .ok()
                 .is_some_and(|s| !s.trim().is_empty());
         if !has_user_base {
-            return Err(
-                "Refusing update: update staging fell back to temporary directory.".into(),
-            );
+            return Err("Refusing update: update staging fell back to temporary directory.".into());
         }
     }
     crate::paths::prune_update_staging_dir(&dest_dir);
@@ -847,7 +840,9 @@ pub async fn download_and_install_update_async(
     let sha256_raw = fetch_release_text(client, &sha256_url)
         .await
         .ok_or_else(|| {
-            format!("Refusing to install update: could not fetch SHA-256 checksum from {sha256_url}")
+            format!(
+                "Refusing to install update: could not fetch SHA-256 checksum from {sha256_url}"
+            )
         })?;
     let expected_sha256 = parse_sha256_checksum(&sha256_raw, Some(asset_file_name))?;
 
@@ -855,11 +850,11 @@ pub async fn download_and_install_update_async(
     let mut downloaded: Option<Vec<u8>> = None;
     if let Ok(resp) = client.get(download_url).send().await
         && resp.status().is_success()
-            && let Ok(buf) = read_response_bytes_bounded(resp, UPDATE_BUNDLE_MAX_BYTES).await
-                && buf.len() > 1024
-            {
-                downloaded = Some(buf);
-            }
+        && let Ok(buf) = read_response_bytes_bounded(resp, UPDATE_BUNDLE_MAX_BYTES).await
+        && buf.len() > 1024
+    {
+        downloaded = Some(buf);
+    }
 
     #[cfg(unix)]
     if downloaded.is_none()
@@ -1240,7 +1235,9 @@ CwkbwGp+4TByUUf5t2zRCWvVkwdiTliNUMi8V5+91AenrDh/4eoeBNYWtKhcb/T3RFgv5+Udsj96Y5C+
         assert!(parse_sha256_checksum(&sha_file, Some("other.exe")).is_err());
 
         // Malformed digest must be rejected
-        assert!(parse_sha256_checksum("not_a_sha256  LibreLinkUp-Setup-0.5.0-x64.exe", None).is_err());
+        assert!(
+            parse_sha256_checksum("not_a_sha256  LibreLinkUp-Setup-0.5.0-x64.exe", None).is_err()
+        );
     }
 
     #[test]
@@ -1279,11 +1276,17 @@ CwkbwGp+4TByUUf5t2zRCWvVkwdiTliNUMi8V5+91AenrDh/4eoeBNYWtKhcb/T3RFgv5+Udsj96Y5C+
             "assets": []
         }"####;
         let downgrade = parse_github_release_json(older_release, "0.6.0").unwrap();
-        assert!(!downgrade.update_available, "older release must not offer downgrade");
+        assert!(
+            !downgrade.update_available,
+            "older release must not offer downgrade"
+        );
         let same = parse_github_release_json(older_release, "0.5.0").unwrap();
         assert!(!same.update_available, "equal release must not re-install");
         let upgrade = parse_github_release_json(older_release, "0.4.9").unwrap();
-        assert!(upgrade.update_available, "strictly newer release must offer update");
+        assert!(
+            upgrade.update_available,
+            "strictly newer release must offer update"
+        );
 
         // Crafted signature comment missing exact `artifact:<expected>` token fails even on valid payload
         const TEST_PUBKEY: &str = "RWRRI0rrvCS5oePZPKf/GuR5nGi7Y9L4V1r026s2IY9Ze0HhrIYHkjy6";

@@ -6,21 +6,19 @@ use librelinkup_core::api::{
     authenticate_async, normalize_country_code, publish_ha_medications_state_async,
     publish_ha_snooze_state_async, validate_ha_base_url,
 };
-use librelinkup_core::crypto::{try_load_host_ha_env, StoredCredentials};
+use librelinkup_core::crypto::{StoredCredentials, try_load_host_ha_env};
 use librelinkup_core::event_log::{log_error, log_info, log_warn};
 use librelinkup_core::medications::MedicationDoseLog;
-use librelinkup_core::models::{
-    format_glucose_value, save_default_settings, trend_arrow_symbol,
-};
+use librelinkup_core::models::{format_glucose_value, save_default_settings, trend_arrow_symbol};
 use librelinkup_core::session::{
     apply_ha_sync_from_states, fetch_snapshot_for_source_with_sync_async, reset_reauth_backoff,
 };
 use librelinkup_core::updater::{
-    check_for_updates_async, download_and_install_update_async, UpdateCheckResult,
+    UpdateCheckResult, check_for_updates_async, download_and_install_update_async,
 };
 use zeroize::Zeroizing;
 
-use super::{lock, now_epoch, Service};
+use super::{Service, lock, now_epoch};
 use crate::alerts;
 
 impl Service {
@@ -60,7 +58,8 @@ impl Service {
                         let mut s = lock(&shared);
                         s.installing_update = false;
                         if let Some(ref mut info) = s.update_info {
-                            info.message = format!("Installer launched ({latest_version}) — upgrading...");
+                            info.message =
+                                format!("Installer launched ({latest_version}) — upgrading...");
                         }
                     }
                     notifier.state_changed();
@@ -90,7 +89,10 @@ impl Service {
         }
         self.notifier.state_changed();
         if manual {
-            log_info("SYSTEM", "Checking GitHub Releases for application updates...");
+            log_info(
+                "SYSTEM",
+                "Checking GitHub Releases for application updates...",
+            );
         }
 
         let shared = self.shared.clone();
@@ -121,12 +123,16 @@ impl Service {
                     if update_available {
                         log_info(
                             "SYSTEM",
-                            format!("Update available: {latest} (current {current}). Release: {url}"),
+                            format!(
+                                "Update available: {latest} (current {current}). Release: {url}"
+                            ),
                         );
                         if should_notify {
                             alerts::show_notification(
                                 "LibreLinkUp Update Available",
-                                &format!("Version {latest} is available on GitHub Releases (you have {current})."),
+                                &format!(
+                                    "Version {latest} is available on GitHub Releases (you have {current})."
+                                ),
                             );
                         }
                     } else if manual {
@@ -143,8 +149,10 @@ impl Service {
                             update_available: false,
                             current_version: format!("v{}", env!("CARGO_PKG_VERSION")),
                             latest_version: String::new(),
-                            release_url: librelinkup_core::updater::GITHUB_RELEASES_PAGE_URL.to_string(),
-                            download_url: librelinkup_core::updater::GITHUB_RELEASES_PAGE_URL.to_string(),
+                            release_url: librelinkup_core::updater::GITHUB_RELEASES_PAGE_URL
+                                .to_string(),
+                            download_url: librelinkup_core::updater::GITHUB_RELEASES_PAGE_URL
+                                .to_string(),
                             sha256_url: String::new(),
                             signature_url: String::new(),
                             release_notes: String::new(),
@@ -168,7 +176,9 @@ impl Service {
     ) -> bool {
         let username = username.trim().to_string();
         if username.len() < 2 || password.len() < 2 {
-            self.update(|s| s.error = "Please enter both your LibreLinkUp email and password.".into());
+            self.update(|s| {
+                s.error = "Please enter both your LibreLinkUp email and password.".into()
+            });
             return false;
         }
         let country = if country.trim().is_empty() {
@@ -177,7 +187,10 @@ impl Service {
             normalize_country_code(&country)
         };
         reset_reauth_backoff();
-        log_info("AUTH", format!("Attempting LibreLinkUp login (region: {country})"));
+        log_info(
+            "AUTH",
+            format!("Attempting LibreLinkUp login (region: {country})"),
+        );
         self.update(|s| {
             s.busy = true;
             s.error.clear();
@@ -209,7 +222,10 @@ impl Service {
                 let has_ha_tok = creds.has_valid_ha_session();
                 self.save_vault(&creds);
                 self.creds = Some(creds);
-                log_info("AUTH", format!("Login succeeded (region '{auth_country}')."));
+                log_info(
+                    "AUTH",
+                    format!("Login succeeded (region '{auth_country}')."),
+                );
                 let country_for_settings = auth_country;
                 self.update_restore_demo(|s| {
                     s.busy = false;
@@ -255,11 +271,13 @@ impl Service {
         let clean_entity = ha_sensor_entity_id.trim().to_string();
         let clean_token = Zeroizing::new(ha_token.trim().to_string());
 
-        if clean_source == "home_assistant" && !clean_url.is_empty()
-            && let Err(e) = validate_ha_base_url(&clean_url) {
-                self.update(|s| s.error = e.to_string());
-                return false;
-            }
+        if clean_source == "home_assistant"
+            && !clean_url.is_empty()
+            && let Err(e) = validate_ha_base_url(&clean_url)
+        {
+            self.update(|s| s.error = e.to_string());
+            return false;
+        }
 
         let mut creds = self.creds.clone().unwrap_or_default();
         if !clean_token.is_empty() {
@@ -321,13 +339,17 @@ impl Service {
         let entity = lock(&self.shared).settings.ha_sensor_entity_id.clone();
         log_info(
             "SYSTEM",
-            format!("Imported Home Assistant URL ({env_url}) and token from ~/.config/home-assistant.env"),
+            format!(
+                "Imported Home Assistant URL ({env_url}) and token from ~/.config/home-assistant.env"
+            ),
         );
         self.save_ha_config("home_assistant".into(), env_url, env_token, entity)
     }
 
     pub(super) fn spawn_ha_medications_push(&self, last_logged_dose: Option<MedicationDoseLog>) {
-        let Some(creds) = self.creds.clone() else { return };
+        let Some(creds) = self.creds.clone() else {
+            return;
+        };
         if !creds.has_valid_ha_session() {
             return;
         }
@@ -356,13 +378,18 @@ impl Service {
                     format!("Failed to sync medications to Home Assistant: {err}"),
                 );
             } else {
-                log_info("MEDS", "Synced medication schedule & dose log to Home Assistant");
+                log_info(
+                    "MEDS",
+                    "Synced medication schedule & dose log to Home Assistant",
+                );
             }
         });
     }
 
     pub(super) fn spawn_ha_snooze_push(&self, snooze_until_epoch: i64, updated_at_epoch: i64) {
-        let Some(creds) = self.creds.clone() else { return };
+        let Some(creds) = self.creds.clone() else {
+            return;
+        };
         if !creds.has_valid_ha_session() {
             return;
         }
@@ -392,14 +419,18 @@ impl Service {
             } else {
                 log_info(
                     "ALERT",
-                    format!("Synced alert snooze state to Home Assistant (until={snooze_until_epoch})"),
+                    format!(
+                        "Synced alert snooze state to Home Assistant (until={snooze_until_epoch})"
+                    ),
                 );
             }
         });
     }
 
     pub(super) async fn refresh(&mut self) {
-        let Some(creds) = self.creds.clone() else { return };
+        let Some(creds) = self.creds.clone() else {
+            return;
+        };
         let (data_source, ha_url, ha_entity_id, sync_meds, sync_snooze) = {
             let s = lock(&self.shared);
             (

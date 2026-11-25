@@ -1,6 +1,6 @@
 use super::{
-    format_glucose_value, format_target_range, trend_arrow_description, AppSettings,
-    GlucoseRangeStatus, GlucoseSnapshot,
+    AppSettings, GlucoseRangeStatus, GlucoseSnapshot, format_glucose_value, format_target_range,
+    trend_arrow_description,
 };
 
 pub const MIN_UI_ZOOM_PERCENT: i32 = 75;
@@ -21,7 +21,11 @@ pub fn parse_hex_rgb(hex: &str) -> Option<(u8, u8, u8)> {
         return None;
     }
     let val = u32::from_str_radix(clean, 16).ok()?;
-    Some(((val >> 16) as u8, ((val >> 8) & 0xff) as u8, (val & 0xff) as u8))
+    Some((
+        (val >> 16) as u8,
+        ((val >> 8) & 0xff) as u8,
+        (val & 0xff) as u8,
+    ))
 }
 
 /// Computes the WCAG 2.1 relative luminance `L` in `[0.0, 1.0]` for an sRGB color.
@@ -80,4 +84,3 @@ pub fn accessible_glucose_announcement(
         val, settings.result_unit, trend, status, age_part, target
     )
 }
-

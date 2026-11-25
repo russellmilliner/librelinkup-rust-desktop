@@ -31,7 +31,7 @@ use std::sync::{Mutex, OnceLock};
 use crate::analytics::GlucoseHistoryStore;
 use crate::crypto::StoredCredentials;
 use crate::medications::MedicationStore;
-use crate::models::{GlucoseSnapshot, AlertKind};
+use crate::models::{AlertKind, GlucoseSnapshot};
 
 pub struct AppState {
     // ---- telemetry ----

@@ -14,25 +14,25 @@ use std::sync::{Arc, Mutex, OnceLock};
 use std::time::Duration;
 
 use librelinkup_core::analytics::{
-    save_default_glucose_history, try_load_default_glucose_history, GlucoseHistoryStore,
-    StatsWindow,
+    GlucoseHistoryStore, StatsWindow, save_default_glucose_history,
+    try_load_default_glucose_history,
 };
-use librelinkup_core::api::{normalize_country_code, HaPatientOption};
+use librelinkup_core::api::{HaPatientOption, normalize_country_code};
 use librelinkup_core::crypto::{
-    load_credentials_with_secret, save_credentials_with_secret, StoredCredentials,
+    StoredCredentials, load_credentials_with_secret, save_credentials_with_secret,
 };
 use librelinkup_core::event_log::{log_error, log_info, log_warn};
 use librelinkup_core::medications::{
-    save_default_medications, try_load_default_medications, MedicationSchedule, MedicationStore,
+    MedicationSchedule, MedicationStore, save_default_medications, try_load_default_medications,
 };
 use librelinkup_core::models::{
-    jittered_poll_interval, load_default_settings, save_default_settings, AlertKind, AppSettings,
-    GlucoseSnapshot,
+    AlertKind, AppSettings, GlucoseSnapshot, jittered_poll_interval, load_default_settings,
+    save_default_settings,
 };
 use librelinkup_core::paths::credentials_file_path;
 use librelinkup_core::updater::UpdateCheckResult;
-use tokio::sync::mpsc::{unbounded_channel, UnboundedReceiver, UnboundedSender};
-use tokio::time::{sleep_until, Instant};
+use tokio::sync::mpsc::{UnboundedReceiver, UnboundedSender, unbounded_channel};
+use tokio::time::{Instant, sleep_until};
 use zeroize::Zeroizing;
 
 use crate::platform;
@@ -92,7 +92,9 @@ pub enum Command {
     Snooze(i32),
     TestAlert,
     LoadDemo,
-    CheckUpdates { manual: bool },
+    CheckUpdates {
+        manual: bool,
+    },
     InstallUpdate,
     SetStatsWindow(StatsWindow),
     UpsertMedication {
@@ -127,7 +129,11 @@ impl fmt::Debug for Command {
                 .field("password", &"[REDACTED]")
                 .field("country", country)
                 .finish(),
-            Self::SaveHomeAssistantConfig { data_source, ha_sensor_entity_id, .. } => f
+            Self::SaveHomeAssistantConfig {
+                data_source,
+                ha_sensor_entity_id,
+                ..
+            } => f
                 .debug_struct("SaveHomeAssistantConfig")
                 .field("data_source", data_source)
                 .field("ha_url", &"[REDACTED]")
@@ -142,9 +148,10 @@ impl fmt::Debug for Command {
             Self::Snooze(m) => f.debug_tuple("Snooze").field(m).finish(),
             Self::TestAlert => write!(f, "TestAlert"),
             Self::LoadDemo => write!(f, "LoadDemo"),
-            Self::CheckUpdates { manual } => {
-                f.debug_struct("CheckUpdates").field("manual", manual).finish()
-            }
+            Self::CheckUpdates { manual } => f
+                .debug_struct("CheckUpdates")
+                .field("manual", manual)
+                .finish(),
             Self::InstallUpdate => write!(f, "InstallUpdate"),
             Self::SetStatsWindow(w) => f.debug_tuple("SetStatsWindow").field(w).finish(),
             Self::UpsertMedication { schedule, .. } => f
@@ -260,17 +267,27 @@ impl Service {
             let hist = Arc::clone(&s.glucose_history);
             s.last_history_persist_epoch = now;
             tokio::task::spawn_blocking(move || {
-                let _guard = history_save_lock().lock().unwrap_or_else(|e| e.into_inner());
+                let _guard = history_save_lock()
+                    .lock()
+                    .unwrap_or_else(|e| e.into_inner());
                 if let Err(e) = save_default_glucose_history(&hist) {
-                    log_error("CRYPTO", format!("Failed to persist glucose history vault: {e}"));
+                    log_error(
+                        "CRYPTO",
+                        format!("Failed to persist glucose history vault: {e}"),
+                    );
                 }
             });
             return;
         }
-        let _guard = history_save_lock().lock().unwrap_or_else(|e| e.into_inner());
+        let _guard = history_save_lock()
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
         match save_default_glucose_history(&s.glucose_history) {
             Ok(()) => s.last_history_persist_epoch = now,
-            Err(e) => log_error("CRYPTO", format!("Failed to persist glucose history vault: {e}")),
+            Err(e) => log_error(
+                "CRYPTO",
+                format!("Failed to persist glucose history vault: {e}"),
+            ),
         }
     }
 
@@ -316,7 +333,10 @@ impl Service {
     async fn run(mut self, mut rx: UnboundedReceiver<Command>) {
         log_info(
             "SYSTEM",
-            format!("Starting LibreLinkUp Rust Desktop v{} (Windows)", env!("CARGO_PKG_VERSION")),
+            format!(
+                "Starting LibreLinkUp Rust Desktop v{} (Windows)",
+                env!("CARGO_PKG_VERSION")
+            ),
         );
         self.load_startup_vaults().await;
         if lock(&self.shared).settings.check_updates_on_startup {
@@ -387,10 +407,18 @@ impl Service {
 
     async fn load_startup_vaults(&mut self) {
         let (hist_res, meds_res) = tokio::task::spawn_blocking(|| {
-            (try_load_default_glucose_history(), try_load_default_medications())
+            (
+                try_load_default_glucose_history(),
+                try_load_default_medications(),
+            )
         })
         .await
-        .unwrap_or_else(|e| (Err(format!("vault task panic: {e}")), Err(format!("vault task panic: {e}"))));
+        .unwrap_or_else(|e| {
+            (
+                Err(format!("vault task panic: {e}")),
+                Err(format!("vault task panic: {e}")),
+            )
+        });
 
         let (glucose_history, history_vault_load_failed) = match hist_res {
             Ok(store) => (store, false),
@@ -420,7 +448,9 @@ impl Service {
             let mut s = lock(&self.shared);
             if !s.demo {
                 s.glucose_history = Arc::new(glucose_history);
-                if s.medication_store.medications.is_empty() && s.medication_store.dose_logs.is_empty() {
+                if s.medication_store.medications.is_empty()
+                    && s.medication_store.dose_logs.is_empty()
+                {
                     s.medication_store = Arc::new(medication_store);
                 }
             }
@@ -504,7 +534,10 @@ impl Service {
                 let has_ha_tok = creds.has_valid_ha_session();
                 let has_any = creds.has_valid_llu_session() || has_ha_tok;
                 self.creds = Some(creds);
-                log_info("AUTH", "No active session for current source — awaiting configuration.");
+                log_info(
+                    "AUTH",
+                    "No active session for current source — awaiting configuration.",
+                );
                 self.update(|s| {
                     s.vault_ok = has_any;
                     s.ha_token_configured = has_ha_tok;
@@ -520,7 +553,10 @@ impl Service {
                 self.update(|s| s.status = "Please sign in to LibreLinkUp".into());
             }
             Err(e) => {
-                log_warn("CRYPTO", format!("Could not decrypt stored credentials: {e}"));
+                log_warn(
+                    "CRYPTO",
+                    format!("Could not decrypt stored credentials: {e}"),
+                );
                 self.update(|s| s.error = e);
             }
         }

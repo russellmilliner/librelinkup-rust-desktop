@@ -7,16 +7,16 @@ use std::sync::{Mutex, OnceLock};
 use chrono::{Duration as ChronoDuration, Local, TimeZone};
 
 use crate::api::{
-    authenticate_async, discover_ha_patients, fetch_cgm_snapshot_with_patient_hint_async,
-    fetch_ha_cgm_snapshot_and_states_async, fetch_ha_sync_states_async, parse_ha_remote_snooze,
-    ApiError, HaPatientOption,
+    ApiError, HaPatientOption, authenticate_async, discover_ha_patients,
+    fetch_cgm_snapshot_with_patient_hint_async, fetch_ha_cgm_snapshot_and_states_async,
+    fetch_ha_sync_states_async, parse_ha_remote_snooze,
 };
 use crate::crypto::StoredCredentials;
 use crate::event_log::{log_info, log_warn};
 use crate::medications::{MedicationReminder, MedicationStore};
 use crate::models::{
-    format_glucose_value, format_reading_age, reading_age_minutes, trend_arrow_symbol, AlertKind,
-    AppSettings, GlucoseSnapshot, GraphPoint, DEFAULT_TARGET_HIGH_MG_DL, DEFAULT_TARGET_LOW_MG_DL,
+    AlertKind, AppSettings, DEFAULT_TARGET_HIGH_MG_DL, DEFAULT_TARGET_LOW_MG_DL, GlucoseSnapshot,
+    GraphPoint, format_glucose_value, format_reading_age, reading_age_minutes, trend_arrow_symbol,
 };
 
 #[derive(Debug, Clone)]
@@ -89,8 +89,8 @@ pub async fn fetch_snapshot_with_reauth_async(
     let mut active_creds = creds.clone();
     let mut reauthenticated = false;
 
-    let patient_hint = (!active_creds.patient_id.trim().is_empty())
-        .then_some(active_creds.patient_id.as_str());
+    let patient_hint =
+        (!active_creds.patient_id.trim().is_empty()).then_some(active_creds.patient_id.as_str());
     let mut result = fetch_cgm_snapshot_with_patient_hint_async(
         &active_creds.country,
         &active_creds.token,
@@ -228,14 +228,10 @@ pub async fn fetch_snapshot_for_source_with_sync_async(
             && !ha_url.trim().is_empty()
             && !creds.ha_token.trim().is_empty()
         {
-            outcome.ha_states = fetch_ha_sync_states_async(
-                ha_url,
-                &creds.ha_token,
-                sync_meds,
-                sync_snooze,
-            )
-            .await
-            .ok();
+            outcome.ha_states =
+                fetch_ha_sync_states_async(ha_url, &creds.ha_token, sync_meds, sync_snooze)
+                    .await
+                    .ok();
         }
         Ok(outcome)
     }
@@ -612,7 +608,10 @@ mod tests {
         );
         // 4. Dead sensor: reading is 60 min old while a fetch succeeded right now -> Stale.
         snap.measured_at_epoch = Some(now - 60 * 60);
-        assert_eq!(effective_reading_age_minutes(&snap, now, Some(now)), Some(60));
+        assert_eq!(
+            effective_reading_age_minutes(&snap, now, Some(now)),
+            Some(60)
+        );
         let (decision, _) = evaluate_alert_decision(&settings, &snap, None, now, Some(now));
         let d = decision.expect("dead sensor stale alert expected");
         assert_eq!(d.kind, AlertKind::Stale);
@@ -662,13 +661,19 @@ mod tests {
 
         // 19 minutes old with fetch right now -> fresh
         snap.measured_at_epoch = Some(now - 19 * 60);
-        assert_eq!(effective_reading_age_minutes(&snap, now, Some(now)), Some(19));
+        assert_eq!(
+            effective_reading_age_minutes(&snap, now, Some(now)),
+            Some(19)
+        );
         let (d19, _) = evaluate_alert_decision(&settings, &snap, None, now, Some(now));
         assert!(d19.is_none());
 
         // Exactly 20 minutes old -> stale boundary triggers AlertKind::Stale
         snap.measured_at_epoch = Some(now - 20 * 60);
-        assert_eq!(effective_reading_age_minutes(&snap, now, Some(now)), Some(20));
+        assert_eq!(
+            effective_reading_age_minutes(&snap, now, Some(now)),
+            Some(20)
+        );
         let (d20, _) = evaluate_alert_decision(&settings, &snap, None, now, Some(now));
         assert_eq!(d20.expect("stale at threshold").kind, AlertKind::Stale);
 
@@ -679,7 +684,10 @@ mod tests {
         // Reading measured 25 min ago + last_fetch == None -> stale
         snap.measured_at_epoch = Some(now - 25 * 60);
         let (d_none_fetch, _) = evaluate_alert_decision(&settings, &snap, None, now, None);
-        assert_eq!(d_none_fetch.expect("stale with None fetch").kind, AlertKind::Stale);
+        assert_eq!(
+            d_none_fetch.expect("stale with None fetch").kind,
+            AlertKind::Stale
+        );
     }
 
     #[test]
@@ -698,7 +706,8 @@ mod tests {
                 "",
             )
             .unwrap();
-        meds.log_dose(&med_id, None, now - 600, Some(110.0), "").unwrap();
+        meds.log_dose(&med_id, None, now - 600, Some(110.0), "")
+            .unwrap();
 
         let states = vec![
             serde_json::json!({
@@ -728,7 +737,10 @@ mod tests {
         // Newer remote snooze wins over older local snooze updated_at
         let out_newer = apply_ha_sync_from_states(&states, &mut meds, true, true, 0, now - 60, now);
         assert_eq!(out_newer.discovered_patients.len(), 1);
-        assert!(out_newer.should_push_meds, "mismatch between remote empty recent_doses and local 1 dose");
+        assert!(
+            out_newer.should_push_meds,
+            "mismatch between remote empty recent_doses and local 1 dose"
+        );
         assert_eq!(out_newer.updated_snooze, Some((now + 900, now - 10)));
 
         // Stale remote snooze is ignored when local snooze updated_at is newer
@@ -781,7 +793,10 @@ mod tests {
         );
         assert_eq!(r1.due_medication_reminders.len(), 1);
         assert!(r1.meds_slots_recorded);
-        assert_eq!(r1.glucose_alert.as_ref().expect("urgent low").kind, AlertKind::UrgentLow);
+        assert_eq!(
+            r1.glucose_alert.as_ref().expect("urgent low").kind,
+            AlertKind::UrgentLow
+        );
         // Sensor expiry suppressed while snoozed
         assert!(r1.sensor_expiry_message.is_none());
 

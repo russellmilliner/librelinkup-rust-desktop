@@ -6,7 +6,7 @@ use librelinkup_core::event_log::{log_info, log_warn};
 use librelinkup_core::models::AppSettings;
 use librelinkup_core::session::evaluate_full_alert_cycle;
 
-use super::{lock, now_epoch, Service};
+use super::{Service, lock, now_epoch};
 use crate::alerts;
 
 impl Service {
@@ -74,8 +74,10 @@ impl Service {
 
     pub(super) fn fire(&self, settings: &AppSettings, title: &str, body: &str, critical: bool) {
         if settings.flash_window_enabled || settings.bring_to_front_enabled {
-            self.notifier
-                .attention(settings.flash_window_enabled, settings.bring_to_front_enabled);
+            self.notifier.attention(
+                settings.flash_window_enabled,
+                settings.bring_to_front_enabled,
+            );
         }
         if settings.audio_alert_enabled {
             let custom = settings.custom_sound_path.trim();
@@ -233,7 +235,9 @@ mod tests {
             false,
             now,
         );
-        let alert = res_urgent.glucose_alert.expect("urgent low must bypass snooze");
+        let alert = res_urgent
+            .glucose_alert
+            .expect("urgent low must bypass snooze");
         assert_eq!(alert.kind, AlertKind::UrgentLow);
         assert!(alert.critical);
     }

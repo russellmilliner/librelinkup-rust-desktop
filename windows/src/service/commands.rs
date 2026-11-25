@@ -7,15 +7,15 @@ use librelinkup_core::analytics::GlucoseHistoryStore;
 use librelinkup_core::api::normalize_country_code;
 use librelinkup_core::crypto::clear_credentials_at_path;
 use librelinkup_core::event_log::{log_error, log_info};
-use librelinkup_core::medications::{build_demo_medication_store, MedicationDoseLog};
+use librelinkup_core::medications::{MedicationDoseLog, build_demo_medication_store};
 use librelinkup_core::models::{
-    clamp_poll_interval, save_default_settings, AppSettings, GlucoseSnapshot,
+    AppSettings, GlucoseSnapshot, clamp_poll_interval, save_default_settings,
 };
 use librelinkup_core::paths::credentials_file_path;
 use librelinkup_core::session::{build_demo_snapshot, reset_reauth_backoff};
 use tokio::time::Instant;
 
-use super::{lock, now_epoch, Command, Service};
+use super::{Command, Service, lock, now_epoch};
 use crate::platform;
 
 pub(crate) fn sanitize_settings(mut settings: AppSettings) -> AppSettings {
@@ -36,9 +36,11 @@ impl Service {
     /// Returns true if an immediate refresh should follow.
     pub(super) async fn handle(&mut self, cmd: Command) -> bool {
         match cmd {
-            Command::Login { username, password, country } => {
-                self.login(username, password, country).await
-            }
+            Command::Login {
+                username,
+                password,
+                country,
+            } => self.login(username, password, country).await,
             Command::SaveHomeAssistantConfig {
                 data_source,
                 ha_url,
@@ -58,7 +60,11 @@ impl Service {
                     "API",
                     format!(
                         "Selected Home Assistant patient sensor entity: '{}'",
-                        if clean.is_empty() { "auto-discover" } else { &clean }
+                        if clean.is_empty() {
+                            "auto-discover"
+                        } else {
+                            &clean
+                        }
                     ),
                 );
                 self.notifier.state_changed();
@@ -122,15 +128,20 @@ impl Service {
                 self.pending_settings_save =
                     Some((Instant::now() + Duration::from_millis(400), settings));
                 if (country_changed || remember_changed)
-                    && let Some(ref creds) = self.creds {
-                        self.save_vault(creds);
-                    }
+                    && let Some(ref creds) = self.creds
+                {
+                    self.save_vault(creds);
+                }
                 self.evaluate_alerts();
                 country_changed
             }
             Command::Snooze(minutes) => {
                 let now = now_epoch();
-                let until = if minutes > 0 { now + i64::from(minutes.min(1440)) * 60 } else { 0 };
+                let until = if minutes > 0 {
+                    now + i64::from(minutes.min(1440)) * 60
+                } else {
+                    0
+                };
                 let settings = {
                     let mut s = lock(&self.shared);
                     s.settings.snooze_until_epoch = until;
@@ -143,7 +154,10 @@ impl Service {
                 let _ = save_default_settings(&settings);
                 self.spawn_ha_snooze_push(until, now);
                 if until > 0 {
-                    log_info("ALERT", format!("Alerts snoozed for {minutes} min (urgent low still alerts)."));
+                    log_info(
+                        "ALERT",
+                        format!("Alerts snoozed for {minutes} min (urgent low still alerts)."),
+                    );
                 } else {
                     log_info("ALERT", "Alert snooze cancelled.");
                 }
@@ -198,7 +212,10 @@ impl Service {
                 false
             }
             Command::SetStatsWindow(win) => {
-                log_info("GLUCOSE", format!("Selected glycemic stats window: {}", win.label()));
+                log_info(
+                    "GLUCOSE",
+                    format!("Selected glycemic stats window: {}", win.label()),
+                );
                 self.update(|s| {
                     s.stats_window = win;
                     s.settings.stats_window = win.code().to_string();
@@ -273,7 +290,13 @@ impl Service {
                 self.update(|s| {
                     let g = (s.snapshot.value_mg_dl > 0.0).then_some(s.snapshot.value_mg_dl);
                     let cd = (!custom_dosage.trim().is_empty()).then_some(custom_dosage.as_str());
-                    if let Ok(entry) = Arc::make_mut(&mut s.medication_store).log_dose(&medication_id, cd, now, g, &notes) {
+                    if let Ok(entry) = Arc::make_mut(&mut s.medication_store).log_dose(
+                        &medication_id,
+                        cd,
+                        now,
+                        g,
+                        &notes,
+                    ) {
                         Self::save_meds_if_safe(s, false);
                         log_info(
                             "MEDS",
@@ -296,7 +319,11 @@ impl Service {
                 let mut skipped_entry: Option<MedicationDoseLog> = None;
                 let mut push_ha = false;
                 self.update(|s| {
-                    if let Ok(entry) = Arc::make_mut(&mut s.medication_store).skip_dose(&medication_id, now, &notes) {
+                    if let Ok(entry) = Arc::make_mut(&mut s.medication_store).skip_dose(
+                        &medication_id,
+                        now,
+                        &notes,
+                    ) {
                         Self::save_meds_if_safe(s, false);
                         log_info(
                             "MEDS",

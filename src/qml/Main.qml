@@ -2,7 +2,6 @@ import QtQuick
 import QtQuick.Window
 import QtQuick.Layouts
 import QtQuick.Controls as QQC2
-import QtQuick.Dialogs
 import org.kde.kirigami as Kirigami
 import io.github.librelinkup 1.0
 

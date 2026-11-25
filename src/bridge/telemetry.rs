@@ -9,28 +9,28 @@ use std::pin::Pin;
 use cxx_qt::Threading;
 use cxx_qt_lib::QString;
 
-use crate::api::{authenticate_async, normalize_country_code, ApiError, AuthSuccess};
+use crate::api::{ApiError, AuthSuccess, authenticate_async, normalize_country_code};
 use crate::bridge::autostart::{
     background_runtime, fire_alert, is_flatpak, now_epoch, sync_autostart_desktop_file,
 };
 use crate::bridge::ops;
-use crate::bridge::qobject_bridge::{qobject, TelemetryControllerRust};
-use crate::bridge::state::{register_telemetry_qt_thread, with_state, AppState};
+use crate::bridge::qobject_bridge::{TelemetryControllerRust, qobject};
+use crate::bridge::state::{AppState, register_telemetry_qt_thread, with_state};
 use crate::crypto::{
-    clear_default_credentials, load_default_credentials, save_default_credentials,
-    try_load_host_ha_env, StoredCredentials,
+    StoredCredentials, clear_default_credentials, load_default_credentials,
+    save_default_credentials, try_load_host_ha_env,
 };
 use crate::event_log::{log_error, log_info, log_warn, mask_email};
 use crate::models::{
-    format_glucose_value, trend_arrow_symbol,
-    DEFAULT_TARGET_HIGH_MG_DL, DEFAULT_TARGET_LOW_MG_DL,
+    DEFAULT_TARGET_HIGH_MG_DL, DEFAULT_TARGET_LOW_MG_DL, format_glucose_value, trend_arrow_symbol,
 };
 use crate::session::{
-    apply_ha_sync_from_states, build_demo_snapshot, evaluate_full_alert_cycle,
+    RefreshOutcome, apply_ha_sync_from_states, build_demo_snapshot, evaluate_full_alert_cycle,
     fetch_snapshot_for_source_with_sync_async, record_reauth_success, reset_reauth_backoff,
-    RefreshOutcome,
 };
-use crate::updater::{check_for_updates_async, download_and_install_update_async, UpdateCheckResult};
+use crate::updater::{
+    UpdateCheckResult, check_for_updates_async, download_and_install_update_async,
+};
 use crate::zeroize::Zeroizing;
 
 impl Default for TelemetryControllerRust {
@@ -241,7 +241,10 @@ impl qobject::TelemetryController {
                 with_state(|s| s.status_message = "Please sign in to LibreLinkUp".to_string());
             }
             Err(e) => {
-                log_warn("CRYPTO", format!("Could not decrypt stored credentials: {e}"));
+                log_warn(
+                    "CRYPTO",
+                    format!("Could not decrypt stored credentials: {e}"),
+                );
                 with_state(|s| s.error_message = e);
             }
         }
@@ -338,7 +341,12 @@ impl qobject::TelemetryController {
             trend_description,
             trend_description
         );
-        sync_str!(self, set_range_status_label, range_status_label, range_status_label);
+        sync_str!(
+            self,
+            set_range_status_label,
+            range_status_label,
+            range_status_label
+        );
         sync_str!(self, set_range_color_hex, range_color_hex, range_color_hex);
         sync_str!(
             self,
@@ -349,7 +357,12 @@ impl qobject::TelemetryController {
         sync_val!(self, set_target_low_mg_dl, target_low_mg_dl, target_low);
         sync_val!(self, set_target_high_mg_dl, target_high_mg_dl, target_high);
         sync_str!(self, set_last_updated, last_updated, last_updated);
-        sync_str!(self, set_graph_points_json, graph_points_json, graph_points_json);
+        sync_str!(
+            self,
+            set_graph_points_json,
+            graph_points_json,
+            graph_points_json
+        );
         sync_str!(
             self,
             set_reading_age_display,
@@ -395,7 +408,12 @@ impl qobject::TelemetryController {
         );
         sync_str!(self, set_sensor_serial, sensor_serial, sensor_sn);
         sync_val!(self, set_sensor_in_warmup, sensor_in_warmup, warmup);
-        sync_val!(self, set_sensor_expiring_soon, sensor_expiring_soon, exp_soon);
+        sync_val!(
+            self,
+            set_sensor_expiring_soon,
+            sensor_expiring_soon,
+            exp_soon
+        );
     }
 
     /// The single periodic entry point: apply derived state, refresh the tray, evaluate alerts,
@@ -550,7 +568,10 @@ impl qobject::TelemetryController {
                         );
                         with_state(|s| s.credentials_encrypted = true);
                     }
-                    Err(e) => log_error("CRYPTO", format!("Failed to save encrypted credentials: {e}")),
+                    Err(e) => log_error(
+                        "CRYPTO",
+                        format!("Failed to save encrypted credentials: {e}"),
+                    ),
                 }
 
                 with_state(|s| {
@@ -690,7 +711,10 @@ impl qobject::TelemetryController {
         if sanitized.has_valid_session()
             && let Err(e) = save_default_credentials(&sanitized)
         {
-            log_error("CRYPTO", format!("Failed to save encrypted credentials: {e}"));
+            log_error(
+                "CRYPTO",
+                format!("Failed to save encrypted credentials: {e}"),
+            );
         }
 
         let valid_active = sanitized.has_valid_session_for(&src_clean, &clean_url);
@@ -748,14 +772,12 @@ impl qobject::TelemetryController {
         let entity = with_state(|s| s.ha_sensor_entity_id.clone());
         log_info(
             "API",
-            format!("Loaded Home Assistant URL '{url}' and token from ~/.config/home-assistant.env"),
+            format!(
+                "Loaded Home Assistant URL '{url}' and token from ~/.config/home-assistant.env"
+            ),
         );
-        self.as_mut().save_home_assistant_config_internal(
-            "home_assistant",
-            &url,
-            &token,
-            &entity,
-        )
+        self.as_mut()
+            .save_home_assistant_config_internal("home_assistant", &url, &token, &entity)
     }
 
     /// Selects a specific Home Assistant patient glucose sensor entity (or empty string for
@@ -795,16 +817,18 @@ impl qobject::TelemetryController {
         if with_state(|s| s.active_refresh.is_some() || s.login_in_flight) {
             return;
         }
-        let (Some(creds), data_source, ha_url, ha_entity, sync_meds, sync_snooze) = with_state(|s| {
-            (
-                s.creds.clone(),
-                s.data_source.clone(),
-                s.ha_url.clone(),
-                s.ha_sensor_entity_id.clone(),
-                s.ha_sync_medications,
-                s.ha_sync_snooze,
-            )
-        }) else {
+        let (Some(creds), data_source, ha_url, ha_entity, sync_meds, sync_snooze) =
+            with_state(|s| {
+                (
+                    s.creds.clone(),
+                    s.data_source.clone(),
+                    s.ha_url.clone(),
+                    s.ha_sensor_entity_id.clone(),
+                    s.ha_sync_medications,
+                    s.ha_sync_snooze,
+                )
+            })
+        else {
             return;
         };
         if !creds.has_valid_session_for(&data_source, &ha_url) {
@@ -1096,11 +1120,10 @@ impl qobject::TelemetryController {
                 let now = now_epoch();
                 let mut latest_dose = None;
                 for med_id in &ids {
-                    if let Ok(dose) = s.medication_store.skip_dose(
-                        med_id,
-                        now,
-                        "Skipped from desktop reminder",
-                    ) {
+                    if let Ok(dose) =
+                        s.medication_store
+                            .skip_dose(med_id, now, "Skipped from desktop reminder")
+                    {
                         latest_dose = Some(dose);
                     }
                 }
@@ -1118,7 +1141,9 @@ impl qobject::TelemetryController {
         if let Some(minutes) = crate::models::parse_notification_snooze_action(&key) {
             log_info(
                 "ALERT",
-                format!("Desktop notification action '{key}' clicked -> snoozing alerts for {minutes} min."),
+                format!(
+                    "Desktop notification action '{key}' clicked -> snoozing alerts for {minutes} min."
+                ),
             );
             self.snooze_alerts(minutes);
             return true;
@@ -1270,7 +1295,8 @@ impl qobject::TelemetryController {
                             .iter()
                             .filter(|m| {
                                 m.enabled
-                                    && m.schedule != crate::medications::MedicationSchedule::AsNeeded
+                                    && m.schedule
+                                        != crate::medications::MedicationSchedule::AsNeeded
                                     && matches!(
                                         s.medication_store.medication_status(m, now).0,
                                         crate::medications::DoseStatusKind::DueNow
@@ -1305,7 +1331,10 @@ impl qobject::TelemetryController {
                     let summary = logged_names.join(", ");
                     log_info(
                         "MEDS",
-                        format!("Shortcut marked {} medication(s) taken.", logged_names.len()),
+                        format!(
+                            "Shortcut marked {} medication(s) taken.",
+                            logged_names.len()
+                        ),
                     );
                     qobject::librelinkup_show_notification(
                         &QString::from("Medication Logged"),
@@ -1372,9 +1401,10 @@ impl qobject::TelemetryController {
             let _ = ops::persist_settings(s);
         });
         qobject::librelinkup_show_main_window();
-        let stale_check = !is_offscreen() && with_state(|s| {
-            s.check_updates_on_startup && now_epoch() - s.last_update_check_epoch >= 3600
-        });
+        let stale_check = !is_offscreen()
+            && with_state(|s| {
+                s.check_updates_on_startup && now_epoch() - s.last_update_check_epoch >= 3600
+            });
         if stale_check {
             self.as_mut().start_update_check(false);
         }
@@ -1420,9 +1450,8 @@ impl qobject::TelemetryController {
         if with_state(|s| s.installing_update) {
             return;
         }
-        let (download_url, latest_ver) = with_state(|s| {
-            (s.update_download_url.clone(), s.latest_version.clone())
-        });
+        let (download_url, latest_ver) =
+            with_state(|s| (s.update_download_url.clone(), s.latest_version.clone()));
         let Some(runtime) = background_runtime() else {
             return;
         };
@@ -1525,9 +1554,7 @@ impl qobject::TelemetryController {
                         ),
                     );
                     if manual || !already_notified {
-                        with_state(|s| {
-                            s.last_notified_update_version = res.latest_version.clone()
-                        });
+                        with_state(|s| s.last_notified_update_version = res.latest_version.clone());
                         qobject::librelinkup_show_notification(
                             &QString::from("LibreLinkUp Update Available"),
                             &QString::from(
@@ -1656,8 +1683,10 @@ fn build_tray_payload(s: &mut AppState) -> qobject::TrayPayload {
     }
     if !s.reading_age_display.is_empty() && !snapshot.timestamp.is_empty() {
         let measured = format!("Measured: {}", snapshot.timestamp);
-        tooltip_text = tooltip_text
-            .replace(&measured, &format!("{measured} ({})", s.reading_age_display));
+        tooltip_text = tooltip_text.replace(
+            &measured,
+            &format!("{measured} ({})", s.reading_age_display),
+        );
     }
     if s.reading_stale && settings.show_glucose_in_tray_tooltip {
         tooltip_text = format!(
@@ -1665,7 +1694,10 @@ fn build_tray_payload(s: &mut AppState) -> qobject::TrayPayload {
             s.reading_age_display
         );
     }
-    if s.alerts_snoozed && settings.show_glucose_in_tray_tooltip && !s.snooze_until_display.is_empty() {
+    if s.alerts_snoozed
+        && settings.show_glucose_in_tray_tooltip
+        && !s.snooze_until_display.is_empty()
+    {
         tooltip_text.push_str(&format!("\n{}", s.snooze_until_display));
     }
 

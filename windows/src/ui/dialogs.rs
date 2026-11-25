@@ -19,7 +19,11 @@ impl LibreLinkUpApp {
         ui.heading("Diagnostic Log");
         let levels = ["ALL", "INFO", "WARN", "ERROR"];
         ui.horizontal(|ui| {
-            ui.add(egui::TextEdit::singleline(&mut self.log_filter).hint_text("Search…").desired_width(220.0));
+            ui.add(
+                egui::TextEdit::singleline(&mut self.log_filter)
+                    .hint_text("Search…")
+                    .desired_width(220.0),
+            );
             egui::ComboBox::from_id_salt("log-level")
                 .selected_text(levels[self.log_min_level])
                 .show_ui(ui, |ui| {
@@ -31,7 +35,10 @@ impl LibreLinkUpApp {
                 clear_events();
             }
             let exporting = self.pending_export_rx.is_some();
-            if ui.add_enabled(!exporting, egui::Button::new("Export…")).clicked() {
+            if ui
+                .add_enabled(!exporting, egui::Button::new("Export…"))
+                .clicked()
+            {
                 let (tx, rx) = std::sync::mpsc::channel();
                 let ui_handle = self.ui_handle.clone();
                 self.pending_export_rx = Some(rx);
@@ -78,7 +85,10 @@ impl LibreLinkUpApp {
 
     pub(super) fn about_view(&mut self, ui: &mut egui::Ui, state: &Shared) {
         ui.heading("LibreLinkUp Rust Desktop for Windows");
-        ui.label(format!("Version {} • Native Rust + egui/eframe (Windows 10/11 x64)", env!("CARGO_PKG_VERSION")));
+        ui.label(format!(
+            "Version {} • Native Rust + egui/eframe (Windows 10/11 x64)",
+            env!("CARGO_PKG_VERSION")
+        ));
         ui.add_space(8.0);
         ui.label(
             "Continuous blood glucose monitor for LibreLinkUp featuring Windows DPAPI + AES-256-GCM \
@@ -88,47 +98,58 @@ impl LibreLinkUpApp {
              with scroll-wheel transparency and quick action buttons. Contains zero tracking and zero advertisements — forever.",
         );
         ui.add_space(8.0);
-        egui::Frame::group(ui.style()).inner_margin(12).show(ui, |ui| {
-            ui.horizontal(|ui| {
-                let btn_label = if state.checking_updates {
-                    "Checking..."
-                } else {
-                    "🔄 Check for Updates"
-                };
-                if ui
-                    .add_enabled(!state.checking_updates, egui::Button::new(btn_label))
-                    .clicked()
-                {
-                    self.send(Command::CheckUpdates { manual: true });
-                }
-                if let Some(ref upd) = state.update_info {
-                    ui.label(&upd.message);
-                    if upd.update_available {
-                        let inst_label = if state.installing_update {
-                            "Installing...".to_string()
-                        } else {
-                            format!("⬇ Install {}", upd.latest_version)
-                        };
-                        if ui
-                            .add_enabled(!state.installing_update, egui::Button::new(inst_label))
-                            .clicked()
-                        {
-                            self.send(Command::InstallUpdate);
-                        }
-                        ui.hyperlink_to("View Release", &upd.release_url);
+        egui::Frame::group(ui.style())
+            .inner_margin(12)
+            .show(ui, |ui| {
+                ui.horizontal(|ui| {
+                    let btn_label = if state.checking_updates {
+                        "Checking..."
+                    } else {
+                        "🔄 Check for Updates"
+                    };
+                    if ui
+                        .add_enabled(!state.checking_updates, egui::Button::new(btn_label))
+                        .clicked()
+                    {
+                        self.send(Command::CheckUpdates { manual: true });
                     }
-                } else {
-                    ui.label(format!("Installed: v{}", env!("CARGO_PKG_VERSION")));
-                }
+                    if let Some(ref upd) = state.update_info {
+                        ui.label(&upd.message);
+                        if upd.update_available {
+                            let inst_label = if state.installing_update {
+                                "Installing...".to_string()
+                            } else {
+                                format!("⬇ Install {}", upd.latest_version)
+                            };
+                            if ui
+                                .add_enabled(
+                                    !state.installing_update,
+                                    egui::Button::new(inst_label),
+                                )
+                                .clicked()
+                            {
+                                self.send(Command::InstallUpdate);
+                            }
+                            ui.hyperlink_to("View Release", &upd.release_url);
+                        }
+                    } else {
+                        ui.label(format!("Installed: v{}", env!("CARGO_PKG_VERSION")));
+                    }
+                });
             });
-        });
         ui.add_space(8.0);
         ui.label(RichText::new("Unofficial app — not affiliated with or endorsed by Abbott. LibreLinkUp is a trademark of Abbott.").weak());
         ui.label(RichText::new("Not a medical device. Do not use for treatment decisions.").weak());
         ui.add_space(8.0);
-        ui.hyperlink_to("GitHub: russellmilliner/librelinkup-rust-desktop", "https://github.com/russellmilliner/librelinkup-rust-desktop");
+        ui.hyperlink_to(
+            "GitHub: russellmilliner/librelinkup-rust-desktop",
+            "https://github.com/russellmilliner/librelinkup-rust-desktop",
+        );
         ui.hyperlink_to("Windows Documentation (windows/README.md)", "https://github.com/russellmilliner/librelinkup-rust-desktop/blob/main/windows/README.md");
-        ui.hyperlink_to("Based on Crazy-Marvin/LibreLinkUpDesktop (Apache-2.0)", "https://github.com/Crazy-Marvin/LibreLinkUpDesktop");
+        ui.hyperlink_to(
+            "Based on Crazy-Marvin/LibreLinkUpDesktop (Apache-2.0)",
+            "https://github.com/Crazy-Marvin/LibreLinkUpDesktop",
+        );
         ui.hyperlink_to("☕ Support on Ko-fi", "https://ko-fi.com/russellmilliner");
         ui.add_space(8.0);
         ui.label("Licensed under the Apache License 2.0.");

@@ -4,10 +4,10 @@ use std::path::Path;
 use serde::{Deserialize, Serialize};
 
 use super::{
-    clamp_ui_zoom_percent, format_glucose_value, format_target_range, trend_arrow_description,
-    trend_arrow_symbol, GlucoseRangeStatus, GlucoseSnapshot, DEFAULT_ALERT_REPEAT_MINUTES,
-    DEFAULT_STALE_AFTER_MINUTES, DEFAULT_TARGET_HIGH_MG_DL, DEFAULT_TARGET_LOW_MG_DL,
-    DEFAULT_URGENT_LOW_MG_DL, MAX_POLL_INTERVAL_SECONDS, MIN_POLL_INTERVAL_SECONDS,
+    DEFAULT_ALERT_REPEAT_MINUTES, DEFAULT_STALE_AFTER_MINUTES, DEFAULT_TARGET_HIGH_MG_DL,
+    DEFAULT_TARGET_LOW_MG_DL, DEFAULT_URGENT_LOW_MG_DL, GlucoseRangeStatus, GlucoseSnapshot,
+    MAX_POLL_INTERVAL_SECONDS, MIN_POLL_INTERVAL_SECONDS, clamp_ui_zoom_percent,
+    format_glucose_value, format_target_range, trend_arrow_description, trend_arrow_symbol,
 };
 use crate::paths::{settings_file_path, write_file_atomic_0600};
 
@@ -232,7 +232,11 @@ impl AppSettings {
 
     /// Returns `true` when the reading is fresh and below the urgent-low threshold, so the
     /// StatusNotifierItem can request `NeedsAttention` status on KDE Plasma.
-    pub fn is_tray_urgent_attention(&self, snapshot: &GlucoseSnapshot, reading_stale: bool) -> bool {
+    pub fn is_tray_urgent_attention(
+        &self,
+        snapshot: &GlucoseSnapshot,
+        reading_stale: bool,
+    ) -> bool {
         !reading_stale
             && snapshot.value_mg_dl.is_finite()
             && snapshot.value_mg_dl > 0.0
@@ -260,9 +264,13 @@ impl AppSettings {
         let high = self.effective_target_high(snapshot.target_high_mg_dl);
         let status = GlucoseRangeStatus::classify(snapshot.value_mg_dl, low, high);
         let range_str = format_target_range(low, high, &self.result_unit);
-        let patient = format!("{} {}", snapshot.first_name.trim(), snapshot.last_name.trim())
-            .trim()
-            .to_string();
+        let patient = format!(
+            "{} {}",
+            snapshot.first_name.trim(),
+            snapshot.last_name.trim()
+        )
+        .trim()
+        .to_string();
 
         let mut lines = vec![
             format!(
@@ -287,11 +295,12 @@ impl AppSettings {
 
 pub fn load_settings_from_path(path: &Path) -> AppSettings {
     if let Ok(raw) = fs::read_to_string(path)
-        && let Ok(mut parsed) = serde_json::from_str::<AppSettings>(&raw) {
-            parsed.poll_interval_seconds = clamp_poll_interval(parsed.poll_interval_seconds);
-            parsed.ui_text_scale = clamp_ui_zoom_percent(parsed.ui_text_scale);
-            return parsed;
-        }
+        && let Ok(mut parsed) = serde_json::from_str::<AppSettings>(&raw)
+    {
+        parsed.poll_interval_seconds = clamp_poll_interval(parsed.poll_interval_seconds);
+        parsed.ui_text_scale = clamp_ui_zoom_percent(parsed.ui_text_scale);
+        return parsed;
+    }
     AppSettings::default()
 }
 

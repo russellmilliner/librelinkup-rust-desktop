@@ -1,20 +1,20 @@
 use librelinkup_kde::api::{
-    authenticate_async, fetch_cgm_snapshot_async, normalize_country_code, resolve_base_url,
-    sha256_account_id, ApiError,
+    ApiError, authenticate_async, fetch_cgm_snapshot_async, normalize_country_code,
+    resolve_base_url, sha256_account_id,
 };
 use librelinkup_kde::crypto::{
-    bytes_to_hex, decrypt_credentials_with_secret, encrypt_credentials_with_secret, hex_to_bytes,
-    load_credentials_from_path, save_credentials_to_path, try_migrate_legacy_leveldb_credentials,
-    StoredCredentials,
+    StoredCredentials, bytes_to_hex, decrypt_credentials_with_secret,
+    encrypt_credentials_with_secret, hex_to_bytes, load_credentials_from_path,
+    save_credentials_to_path, try_migrate_legacy_leveldb_credentials,
 };
 use librelinkup_kde::event_log::{
     clear_events, export_events_to_path, filter_events, format_events_as_text, get_all_events,
     get_event_count, get_events_json, log_error, log_info, log_warn,
 };
 use librelinkup_kde::models::{
-    convert_mg_dl_to_unit, format_glucose_value, format_target_range, load_settings_from_path,
-    save_settings_to_path, trend_arrow_description, trend_arrow_symbol, AppSettings,
-    GlucoseRangeStatus, GlucoseSnapshot, GraphPoint,
+    AppSettings, GlucoseRangeStatus, GlucoseSnapshot, GraphPoint, convert_mg_dl_to_unit,
+    format_glucose_value, format_target_range, load_settings_from_path, save_settings_to_path,
+    trend_arrow_description, trend_arrow_symbol,
 };
 use std::io::{Read, Write};
 use std::net::TcpListener;
@@ -594,7 +594,7 @@ fn test_security_hardening_regions_opt_in_password_autostart_and_redaction() {
 #[test]
 fn test_estimated_a1c_and_medication_tracking_lifecycle() {
     use librelinkup_kde::analytics::{
-        calculate_ea1c_adag, calculate_gmi, GlucoseHistoryStore, StatsWindow,
+        GlucoseHistoryStore, StatsWindow, calculate_ea1c_adag, calculate_gmi,
     };
     use librelinkup_kde::medications::{MedicationSchedule, MedicationStore};
     use librelinkup_kde::session::build_demo_snapshot;
@@ -637,8 +637,10 @@ fn test_estimated_a1c_and_medication_tracking_lifecycle() {
 #[test]
 fn test_kde_notifyrc_and_desktop_shortcut_actions_manifest() {
     let manifest_dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
-    let notifyrc_path = manifest_dir.join("data/io.github.russellmilliner.LibreLinkUpDesktop.notifyrc");
-    let desktop_path = manifest_dir.join("data/io.github.russellmilliner.LibreLinkUpDesktop.desktop");
+    let notifyrc_path =
+        manifest_dir.join("data/io.github.russellmilliner.LibreLinkUpDesktop.notifyrc");
+    let desktop_path =
+        manifest_dir.join("data/io.github.russellmilliner.LibreLinkUpDesktop.desktop");
 
     let notifyrc = std::fs::read_to_string(&notifyrc_path).expect("read .notifyrc");
     for event_id in [

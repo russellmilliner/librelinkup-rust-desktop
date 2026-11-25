@@ -2,7 +2,6 @@ import QtQuick
 import QtQuick.Window
 import QtQuick.Layouts
 import QtQuick.Controls as QQC2
-import org.kde.kirigami as Kirigami
 
 Window {
     id: overlayWindow

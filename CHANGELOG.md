@@ -2,6 +2,23 @@
 
 All notable changes and bumped dependencies for `russellmilliner/librelinkup-rust-desktop` are documented in this file.
 
+## [v0.5.17-deps](https://github.com/russellmilliner/librelinkup-rust-desktop/releases/tag/v0.5.17-deps) — 2026-11-25
+
+### 📦 Bumped Dependencies (10 packages)
+
+| Package | Previous | Updated | Scope |
+| :--- | :--- | :--- | :--- |
+| `zeroize` | `1.9.1` | **`1.9.2`** | Direct (`Cargo.toml`) |
+| `bytes` | `1.12.1` | **`1.12.2`** | Lockfile (`windows/Cargo.lock`) |
+| `clap` | `4.6.7` | **`4.6.8`** | Lockfile (`Cargo.lock`) |
+| `clap_lex` | `1.1.1` | **`1.1.2`** | Lockfile (`Cargo.lock`) |
+| `form_urlencoded` | `1.2.3` | **`1.2.2`** | Lockfile (`windows/Cargo.lock`) |
+| `pollster` | `1.0.1` | **`1.0.2`** | Lockfile (`windows/Cargo.lock`) |
+| `rand_pcg` | `0.10.2` | **`0.10.3`** | Lockfile (`windows/Cargo.lock`) |
+| `smallvec` | `1.16.5` | **`1.16.6`** | Lockfile (`windows/Cargo.lock`) |
+| `url` | `2.5.9` | **`2.5.8`** | Lockfile (`windows/Cargo.lock`) |
+| `uuid` | `1.29.2` | **`1.29.3`** | Lockfile (`windows/Cargo.lock`) |
+
 ## [v0.5.17](https://github.com/russellmilliner/librelinkup-rust-desktop/releases/tag/v0.5.17) — 2026-11-23
 
 ### Highlights

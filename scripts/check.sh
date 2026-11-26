@@ -77,11 +77,12 @@ if command -v g++ >/dev/null 2>&1 && pkg-config --exists Qt6Core Qt6Gui Qt6Widge
     if [[ -n "$KF6_CFLAGS" ]]; then
         # shellcheck disable=SC2086
         echo '#include "app_helper.h"' | g++ -std=c++17 -fsyntax-only -Wall -Wextra -Werror -Isrc/cpp $QT_CFLAGS $KF6_CFLAGS -x c++ -
-        for cpp in src/cpp/*.cpp; do
+        CPP_FILES=(src/cpp/*.cpp)
+        for cpp in "${CPP_FILES[@]}"; do
             # shellcheck disable=SC2086
             g++ -std=c++17 -fsyntax-only -Wall -Wextra -Werror -Isrc/cpp $QT_CFLAGS $KF6_CFLAGS "$cpp"
         done
-        echo "  OK: app_helper.h and $(ls -1 src/cpp/*.cpp | wc -l) C++ translation unit(s)"
+        echo "  OK: app_helper.h and ${#CPP_FILES[@]} C++ translation unit(s)"
     else
         echo "  SKIP C++ check: KF6 headers not found"
     fi

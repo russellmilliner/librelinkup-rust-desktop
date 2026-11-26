@@ -54,11 +54,11 @@ if [[ -n "$STAGED_QML" ]]; then
             done
         fi
         echo "[pre-commit] Running Qt 6 qmllint on staged QML files..."
-        # shellcheck disable=SC2086
+        mapfile -t STAGED_QML_ARR <<< "$STAGED_QML"
         if [[ -n "$QML_IMPORT_DIR" ]]; then
-            "$QMLLINT_BIN" -I "$QML_IMPORT_DIR" -I src/qml $STAGED_QML
+            "$QMLLINT_BIN" -I "$QML_IMPORT_DIR" -I src/qml "${STAGED_QML_ARR[@]}"
         else
-            "$QMLLINT_BIN" -I src/qml $STAGED_QML
+            "$QMLLINT_BIN" -I src/qml "${STAGED_QML_ARR[@]}"
         fi
     fi
 fi

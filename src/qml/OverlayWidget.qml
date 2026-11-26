@@ -154,6 +154,8 @@ Window {
         visible: overlayWindow.visible && overlayWindow.displayedTooltipText.length > 0
         width: Math.max(80, Math.ceil(overlayTooltipText.implicitWidth) + 20)
         height: Math.max(26, Math.ceil(overlayTooltipText.implicitHeight) + 12)
+        // Qt <= 6.10 qmllint types Window.screen as QObject instead of QQuickScreenInfo.
+        // qmllint disable missing-property
         x: {
             const idealX = overlayWindow.x + overlayWindow.width - width
             if (overlayWindow.isWaylandPlatform) {
@@ -177,6 +179,7 @@ Window {
             const scY = overlayWindow.screen ? overlayWindow.screen.virtualY : 0
             return (belowY + height + 8 <= scY + scH) ? belowY : Math.max(scY + 6, aboveY)
         }
+        // qmllint enable missing-property
 
         Rectangle {
             objectName: "overlayTooltipBubble"

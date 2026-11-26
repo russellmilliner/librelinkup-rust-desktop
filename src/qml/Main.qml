@@ -248,6 +248,9 @@ Kirigami.ApplicationWindow {
     //   settings    - preferences, window/overlay placement, updater status, log viewer
     //   medications - medication schedule and dose log
     // ---------------------------------------------------------------------------------
+    // Qt <= 6.10 qmllint cascades [missing-property] onto `objectName` inside
+    // compiled CXX-Qt bridge types whose module is unresolved in standalone lint.
+    // qmllint disable missing-property
     TelemetryController {
         id: telemetry
         objectName: "librelinkupAppController"
@@ -278,6 +281,7 @@ Kirigami.ApplicationWindow {
         id: medications
         objectName: "librelinkupMedicationsController"
     }
+    // qmllint enable missing-property
     // Coarse staleness sweep (signal loss must be flagged even when fetches keep failing).
     Timer {
         id: stalenessTimer

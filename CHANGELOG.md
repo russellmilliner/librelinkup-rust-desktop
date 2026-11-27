@@ -2,13 +2,21 @@
 
 All notable changes and bumped dependencies for `russellmilliner/librelinkup-rust-desktop` are documented in this file.
 
-## [v0.5.17-deps](https://github.com/russellmilliner/librelinkup-rust-desktop/releases/tag/v0.5.17-deps) — 2026-11-26
+## [v0.5.17-deps](https://github.com/russellmilliner/librelinkup-rust-desktop/releases/tag/v0.5.17-deps) — 2026-11-27
 
-### 📦 Bumped Dependencies (1 package)
+### 📦 Bumped Dependencies (9 packages)
 
 | Package | Previous | Updated | Scope |
 | :--- | :--- | :--- | :--- |
-| `pollster` | `1.0.2` | **`1.0.3`** | Lockfile (`windows/Cargo.lock`) |
+| `cc` | `1.11.2` | **`1.11.3`** | Lockfile (`windows/Cargo.lock`) |
+| `clap` | `4.6.8` | **`4.6.9`** | Lockfile (`Cargo.lock`) |
+| `pin-project` | `1.1.13` | **`1.2.0`** | Lockfile (`windows/Cargo.lock`) |
+| `pin-project-internal` | `1.1.13` | **`1.2.0`** | Lockfile (`windows/Cargo.lock`) |
+| `pin-project-lite` | `0.2.17` | **`0.2.18`** | Lockfile (`windows/Cargo.lock`) |
+| `zbus` | `6.3.0` | **`6.4.0`** | Lockfile (`windows/Cargo.lock`) |
+| `zbus_macros` | `6.3.0` | **`6.4.0`** | Lockfile (`windows/Cargo.lock`) |
+| `zcheapstr` | `1.2.0` | **`1.3.0`** | Lockfile (`windows/Cargo.lock`) |
+| `zruntime` | `0.2.3` | **`0.2.4`** | Lockfile (`windows/Cargo.lock`) |
 
 ## [v0.5.17](https://github.com/russellmilliner/librelinkup-rust-desktop/releases/tag/v0.5.17) — 2026-11-23
 
